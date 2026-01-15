@@ -37,12 +37,14 @@
 (defun try-read-clojure-file (path)
   "Try to read a Clojure file. Returns :success if readable, :error if not."
   (handler-case
-      (with-open-file (s path :direction :input)
-        ;; Use Clojure readtable only for reading the file content
-        (let ((*readtable* (ensure-clojure-readtable)))
-          (loop for form = (read s nil :eof)
-                until (eq form :eof)
-                count t)))
+      (progn
+        (with-open-file (s path :direction :input)
+          ;; Use Clojure readtable only for reading the file content
+          (let ((*readtable* (ensure-clojure-readtable)))
+            (loop for form = (read s nil :eof)
+                  until (eq form :eof)
+                  count t)))
+        :success)
     (error (c)
       (declare (ignore c))
       :error)))

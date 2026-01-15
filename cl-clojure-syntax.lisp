@@ -23,7 +23,10 @@
     (set-macro-character #\} #'right-delimiter-reader nil *clojure-readtable*)
 
     ;; ::foo - auto-resolved keyword
-    (set-macro-character #\: #'read-colon-dispatch nil *clojure-readtable*))
+    (set-macro-character #\: #'read-colon-dispatch nil *clojure-readtable*)
+
+    ;; #"regex" - regex literal
+    (set-dispatch-macro-character #\# #\" #'read-regex *clojure-readtable*))
   *clojure-readtable*)
 
 (defun read-vector (stream char)
@@ -57,6 +60,35 @@
                       (symbol-name token)
                       (princ-to-string token))))
     (intern (concatenate 'string ns-name "/" kw-name) :keyword)))
+
+(defun read-regex (stream sub-char num)
+  "Read a Clojure regex literal: #\"pattern\"
+   Returns a list (regex pattern) to represent the regex.
+   In a full implementation, this would compile to a regex object."
+  (declare (ignore sub-char num))
+  ;; After #\" is consumed, we need to read the string content manually
+  ;; since the opening quote has already been consumed by the dispatch reader
+  (let ((chars '()))
+    ;; Read characters until we find an unescaped closing quote
+    (loop
+      (let ((char (read-char stream t nil)))
+        (cond
+          ;; Escaped character - read and add the next char literally
+          ((eql char #\\)
+           (push #\\ chars)
+           (push (read-char stream t nil) chars))
+          ;; Closing quote - we're done
+          ((eql char #\")
+           (return))
+          ;; Regular character - add to list
+          (t
+           (push char chars)))))
+    ;; Reverse and convert to string
+    (let ((pattern (coerce (nreverse chars) 'string)))
+      ;; Return a regex representation as a list
+      ;; For now, we use (regex pattern) as a marker
+      ;; TODO: In a full implementation, this would compile to a regex object
+      (list 'regex pattern))))
 
 (defun read-colon-dispatch (stream char)
   "Dispatch for : character. If followed by :, it's auto-resolved. Otherwise normal keyword."

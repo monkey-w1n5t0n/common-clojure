@@ -1,76 +1,121 @@
-# Common Lisp Clojure Syntax
+# Clojure on SBCL
 
-A Common Lisp library that adds Clojure-like syntax support, enabling the use of vector (`[]`) and map (`{}`) literals in Common Lisp code.
+A Clojure implementation built on top of Steel Bank Common Lisp (SBCL).
 
 ## Overview
 
-This library extends the Common Lisp reader to support Clojure's concise syntax for collections:
+This project aims to implement Clojure on SBCL, using the official Clojure test suite as our north star for correctness and completeness. We're following Test-Driven Development, tracking progress with beads issues, and working through features in a logical dependency order.
 
-- **Vector literals** `[...]` → Common Lisp vectors
-- **Map literals** `{...}` → Common Lisp hash tables
+## Goal
 
-## Installation
+Make all 68 Clojure core test files pass. These tests cover:
+- Reader (parsing)
+- Core evaluation
+- Collections (vectors, maps, sets, sequences, transducers)
+- Concurrency (refs, atoms, agents, volatiles)
+- Namespaces
+- Metadata
+- Protocols and multimethods
+- Java interop
+- And more...
 
-Load the system using ASDF:
+## Current Status
 
-```lisp
-(asdf:load-system :cl-clojure-syntax)
+**Phase: Foundation - Reader Implementation**
+
+Currently implementing the reader layer. The parser can read Clojure's vector `[...]` and map `{...}` literals, but needs significant expansion:
+
+- [ ] Keywords (`:foo`, `:ns/foo`, `::auto-resolve`)
+- [ ] Symbols and namespace-qualified symbols
+- [ ] Numbers (ints, floats, ratios, BigInt, radix notation)
+- [ ] Set literals (`#{...}`)
+- [ ] Quote/syntax-quote (`'`, `` ` ``, `~`, `~@`)
+- [ ] Metadata (`^{:foo 1}`)
+- [ ] Var quote (`#'foo`)
+- [ ] Anonymous function literals (`#(...)`)
+- [ ] Regex literals (`#"\d+"`)
+- [ ] Character literals (`\a`, `\newline`, etc.)
+- [ ] Dispatch literals (`#inst`, `#uuid`)
+- [ ] Comments (`;`, `(comment ...)`, `#_`)
+
+## Development
+
+### Tracking Progress
+
+We use [beads](https://github.com/monadplus/beads) for issue tracking with 93 tasks organized in dependency chains:
+
+```bash
+# See what's ready to work on (no blockers)
+bd ready
+
+# Show the foundation issue (start here)
+bd show common-clojure-wxt
+
+# Mark work in progress
+bd set-state in-progress common-clojure-wxt
+
+# Complete and close
+bd close common-clojure-wxt
 ```
 
-## Usage
+### Running Tests
 
-### Enabling Clojure Syntax
+```bash
+# Run the Clojure test suite scanner
+sbcl --script test-runner.lisp
 
-```lisp
-(cl-clojure-syntax:enable-clojure-syntax)
+# Run existing Common Lisp tests
+sbcl --script tests.lisp
 ```
 
-Once enabled, you can use Clojure-style syntax in your code:
+The test runner shows:
+- Which test files exist and what features they need
+- Parse status (can we read the file?)
+- Categorization by feature layer (Reader, Eval, Collections, etc.)
 
-```lisp
-;; Vector literals
-[1 2 3 4 5]
-["a" "b" "c"]
+### Project Structure
 
-;; Map literals
-{:name "John" :age 30}
-{"key1" "value1" "key2" "value2"}
+```
+├── clojure-tests/          # Official Clojure test suite (68 files)
+├── test-runner.lisp        # Test scanner/runner
+├── cl-clojure-syntax.lisp  # Reader implementation
+├── cl-clojure-syntax.asd   # ASDF definition
+├── package.lisp            # Package definition
+└── tests.lisp              # Original Common Lisp tests
 ```
 
-### Disabling Clojure Syntax
+## Implementation Layers
 
-To revert to standard Common Lisp syntax:
+Features are implemented in dependency order:
 
-```lisp
-(cl-clojure-syntax:disable-clojure-syntax)
+1. **Reader Layer** - Parse Clojure syntax into Lisp data structures
+2. **Eval Layer** - Evaluate forms (def, fn, if, let, etc.)
+3. **Namespace Layer** - ns, require, use, import
+4. **Collection Layer** - Persistent data structures
+5. **Concurrency Layer** - Refs, atoms, agents, STM
+6. **Metadata Layer** - with-meta, meta, reader metadata
+7. **Macro Layer** - defmacro, core macros
+8. **Protocol Layer** - defprotocol, extend-type, reify
+9. **Multimethod Layer** - defmulti, defmethod
+10. **Java Interop Layer** - gen-class, proxy, arrays
+11. **Printer Layer** - pr-str, pprint, EDN
+12. **REPL Layer** - Read-eval-print loop
+
+## Contributing
+
+Work follows the beads dependency chain:
+
+1. Run `bd ready` to see available work
+2. Pick up a task: `bd set-state in-progress <issue>`
+3. Implement the feature
+4. Run tests to verify
+5. Close: `bd close <issue>`
+
+Use Conventional Commits:
 ```
-
-## Implementation Details
-
-### Vector Literals (`[]`)
-
-Vector literals `[...]` are converted to Common Lisp vectors using the `VECTOR` function.
-
-```lisp
-[1 2 3] → #(1 2 3)
-```
-
-### Map Literals (`{}`)
-
-Map literals `{...}` are converted to Common Lisp hash tables with `:test 'equal` for flexible key matching. The contents must have an even number of elements (alternating keys and values).
-
-```lisp
-{:a 1 :b 2} → #<HASH-TABLE :test EQUAL>
-```
-
-If an odd number of elements is provided, an error is raised.
-
-## Testing
-
-Run the test suite:
-
-```lisp
-(asdf:test-system :cl-clojure-syntax)
+feat(reader): implement keyword parsing
+fix(eval): handle nil in if conditional
+test: add vector equality tests
 ```
 
 ## License

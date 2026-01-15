@@ -33,18 +33,16 @@
 
 (defvar *test-dir* (get-test-dir))
 
-;;; Enable Clojure syntax (vectors and maps)
-(enable-clojure-syntax)
-
 ;;; Try to read a Clojure file and report results
 (defun try-read-clojure-file (path)
   "Try to read a Clojure file. Returns :success if readable, :error if not."
   (handler-case
       (with-open-file (s path :direction :input)
-        (enable-clojure-syntax)
-        (loop for form = (read s nil :eof)
-              until (eq form :eof)
-              count t))
+        ;; Use Clojure readtable only for reading the file content
+        (let ((*readtable* (ensure-clojure-readtable)))
+          (loop for form = (read s nil :eof)
+                until (eq form :eof)
+                count t)))
     (error (c)
       (declare (ignore c))
       :error)))

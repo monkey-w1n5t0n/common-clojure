@@ -39,9 +39,9 @@
   (handler-case
       (progn
         (with-open-file (s path :direction :input)
-          ;; Use Clojure readtable only for reading the file content
+          ;; Use Clojure readtable and read-clojure for reading the file content
           (let ((*readtable* (ensure-clojure-readtable)))
-            (loop for form = (read s nil :eof)
+            (loop for form = (read-clojure s nil :eof)
                   until (eq form :eof)
                   count t)))
         :success)

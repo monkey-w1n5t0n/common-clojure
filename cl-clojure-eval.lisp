@@ -1317,6 +1317,7 @@
            ((and head-name (string= head-name "var")) (eval-var-quote form env))
            ((and head-name (string= head-name "def")) (eval-def form env))
            ((and head-name (string= head-name "defn")) (eval-defn form env))
+           ((and head-name (string= head-name "defn-")) (eval-defn form env))  ; private defn, same as defn for now
            ((and head-name (string= head-name "defmacro")) (eval-defmacro form env))
            ((and head-name (string= head-name "deftest")) (eval-deftest form env))
            ((and head-name (string= head-name "->")) (eval-thread-first form env))

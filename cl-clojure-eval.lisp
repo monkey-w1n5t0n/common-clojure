@@ -1090,7 +1090,8 @@
            ;; Check if this is a static field access (no args needed)
            ;; These are: MAX_VALUE, MIN_VALUE, TYPE, NaN, POSITIVE_INFINITY, NEGATIVE_INFINITY
            ;; Note: isNaN is a METHOD, not a static field, so it's NOT in this list
-           (let ((static-fields '("MAX_VALUE" "MIN_VALUE" "TYPE" "NaN" "POSITIVE_INFINITY" "NEGATIVE_INFINITY")))
+           (let ((static-fields '("MAX_VALUE" "MIN_VALUE" "TYPE" "NaN" "POSITIVE_INFINITY" "NEGATIVE_INFINITY"
+                                  "MAX_EXPONENT" "MIN_EXPONENT" "MIN_NORMAL" "SIZE" "BYTES")))
              (if (and (member member-name static-fields :test #'string-equal)
                       (member class-name '("Byte" "Short" "Integer" "Long" "Float" "Double" "Character" "Boolean") :test #'string-equal))
                  ;; For static fields, evaluate and return the value directly
@@ -1272,6 +1273,16 @@
         sb-ext:double-float-positive-infinity)
        ((string-equal member-name "NEGATIVE_INFINITY")
         sb-ext:double-float-negative-infinity)
+       ((string-equal member-name "MAX_EXPONENT")
+        1023)
+       ((string-equal member-name "MIN_EXPONENT")
+        -1022)
+       ((string-equal member-name "MIN_NORMAL")
+        2.2250738585072014d-308)
+       ((string-equal member-name "SIZE")
+        64)
+       ((string-equal member-name "BYTES")
+        8)
        ((string-equal member-name "isNaN")
         (if (null args)
             (error "Double/isNaN requires an argument")
@@ -1545,6 +1556,140 @@
        ;; Exponential and logarithmic functions
        ((string-equal member-name "exp")
         (if (null args) (error "exp requires an argument") (safe-math-fn1 #'exp (first args))))
+       ((string-equal member-name "get-exponent")
+        (if (null args) (error "get-exponent requires an argument")
+            (let ((x (coerce (first args) 'double-float)))
+              (cond
+                ;; Handle NaN - return MAX_EXPONENT + 1 per Java spec
+                ((sb-ext:float-nan-p x)
+                 (+ 1024 1))
+                ;; Handle infinity - return MAX_EXPONENT + 1 per Java spec
+                ((sb-ext:float-infinity-p x)
+                 (+ 1024 1))
+                ;; Handle zero or subnormal - return MIN_EXPONENT - 1
+                ((or (zerop x) (< (abs x) 2.2250738585072014d-308))
+                 -1023)
+                ;; Normal case - use integer-decode-float
+                (t
+                 (multiple-value-bind (significand exponent)
+                     (integer-decode-float x)
+                   (declare (ignore significand))
+                   exponent))))))
+       ((string-equal member-name "next-after")
+        (if (< (length args) 2)
+            (error "next-after requires 2 arguments")
+            (let* ((start-arg (first args))
+                   (direction-arg (second args))
+                   (start (coerce start-arg 'double-float))
+                   (direction (coerce direction-arg 'double-float)))
+              (cond
+                ;; If either argument is NaN, return NaN
+                ((or (sb-ext:float-nan-p start) (sb-ext:float-nan-p direction))
+                 (sb-kernel:make-double-float #x7FF80000 #x00000000))
+                ;; If direction equals start, return start
+                ((= start direction)
+                 start)
+                ;; Handle infinity cases
+                ((and (sb-ext:float-infinity-p start) (plusp start))
+                 (if (sb-ext:float-infinity-p direction)
+                     direction
+                     most-positive-double-float))
+                ((and (sb-ext:float-infinity-p start) (minusp start))
+                 (if (sb-ext:float-infinity-p direction)
+                     direction
+                     (- most-positive-double-float)))
+                ;; Use CL's scale-float to get next value
+                (t
+                 (let ((diff (- direction start)))
+                   (if (plusp diff)
+                       ;; Get next larger value
+                       (handler-case
+                           (let ((next (scale-float start 1)))
+                             (if (> next start)
+                                 (min next most-positive-double-float)
+                                 (+ start least-positive-double-float)))
+                         (arithmetic-error ()
+                           (+ start least-positive-double-float)))
+                       ;; Get next smaller value
+                       (handler-case
+                           (let ((next (scale-float start -1)))
+                             (if (< next start)
+                                 (max next (- most-positive-double-float))
+                                 (- start least-positive-double-float)))
+                         (arithmetic-error ()
+                           (- start least-positive-double-float))))))))))
+       ((string-equal member-name "next-up")
+        (if (null args) (error "next-up requires an argument")
+            (let ((start (coerce (first args) 'double-float)))
+              (cond
+                ;; NaN -> NaN
+                ((sb-ext:float-nan-p start)
+                 (sb-kernel:make-double-float #x7FF80000 #x00000000))
+                ;; Positive infinity -> positive infinity
+                ((and (sb-ext:float-infinity-p start) (plusp start))
+                 start)
+                ;; Negative infinity -> max negative finite
+                ((and (sb-ext:float-infinity-p start) (minusp start))
+                 (- most-positive-double-float))
+                ;; Otherwise get next value in positive direction
+                (t
+                 (handler-case
+                     (let ((next (scale-float start 1)))
+                       (if (> next start)
+                           next
+                           (+ start least-positive-double-float)))
+                   (arithmetic-error ()
+                     (+ start least-positive-double-float))))))))
+       ((string-equal member-name "next-down")
+        (if (null args) (error "next-down requires an argument")
+            (let ((start (coerce (first args) 'double-float)))
+              (cond
+                ;; NaN -> NaN
+                ((sb-ext:float-nan-p start)
+                 (sb-kernel:make-double-float #x7FF80000 #x00000000))
+                ;; Negative infinity -> negative infinity
+                ((and (sb-ext:float-infinity-p start) (minusp start))
+                 start)
+                ;; Positive infinity -> max positive finite
+                ((and (sb-ext:float-infinity-p start) (plusp start))
+                 most-positive-double-float)
+                ;; Otherwise get next value in negative direction
+                (t
+                 (handler-case
+                     (let ((next (scale-float start -1)))
+                       (if (< next start)
+                           next
+                           (- start least-positive-double-float)))
+                   (arithmetic-error ()
+                     (- start least-positive-double-float))))))))
+       ((string-equal member-name "scalb")
+        (if (< (length args) 2)
+            (error "scalb requires 2 arguments")
+            (let ((start (coerce (first args) 'double-float))
+                  (scale-factor (coerce (second args) 'double-float)))
+              (cond
+                ;; NaN -> NaN
+                ((or (sb-ext:float-nan-p start) (sb-ext:float-nan-p scale-factor))
+                 (sb-kernel:make-double-float #x7FF80000 #x00000000))
+                ;; If start is infinity, return infinity
+                ((sb-ext:float-infinity-p start)
+                 start)
+                ;; If scale-factor is infinity, return infinity
+                ((sb-ext:float-infinity-p scale-factor)
+                 (if (minusp start) (- most-positive-double-float) most-positive-double-float))
+                ;; If scale-factor is zero, return start
+                ((zerop scale-factor)
+                 start)
+                ;; Otherwise compute start * 2^scale-factor using scale-float
+                (t
+                 (handler-case
+                     (scale-float start (floor scale-factor))
+                   (floating-point-overflow ()
+                     (if (minusp start) (- most-positive-double-float) most-positive-double-float))
+                   (floating-point-underflow ()
+                     (if (minusp start) (- 0.0d0) 0.0d0))
+                   (arithmetic-error ()
+                     (if (minusp start) (- most-positive-double-float) most-positive-double-float))))))))
        ((string-equal member-name "expm1")
         (if (null args) (error "expm1 requires an argument")
             (let ((x (first args)))

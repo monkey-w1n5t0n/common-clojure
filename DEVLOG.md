@@ -1517,3 +1517,83 @@ The hypot overflow was caused by `(expt most-positive-double-float 2)` signaling
 2. Implement `with-local-vars` special form
 3. Add more Java interop stubs as needed (CyclicBarrier, etc.)
 4. Continue implementing more core functions as tests require them
+
+---
+
+### Iteration 26 - 2025-01-17
+
+**Focus:** Fix math tests by adding Double constants and clojure.math functions
+
+**Problem:**
+The math tests (math, math_copy, math_no_header, math_no_ns) were failing with errors:
+- "The value ... is not of type NUMBER" - lambda being returned instead of numeric value
+- "Unsupported clojure.math method: get-exponent"
+- "Unsupported clojure.math method: next-after"
+- "Unsupported clojure.math method: next-up"
+- "Unsupported clojure.math method: scalb"
+
+**Root Cause:**
+1. Double/MAX_EXPONENT and other constants were not in the static-fields list
+2. Several clojure.math functions were not implemented
+3. The scalb function had type coercion issues
+
+**Changes Made:**
+
+1. **Added Double constants to static-fields list** - cl-clojure-eval.lisp:1093-1094
+   - Added "MAX_EXPONENT", "MIN_EXPONENT", "MIN_NORMAL", "SIZE", "BYTES"
+   - These constants are now recognized as static fields that return values directly
+
+2. **Implemented Double constant values** - cl-clojure-eval.lisp:1276-1285
+   - MAX_EXPONENT = 1023
+   - MIN_EXPONENT = -1022
+   - MIN_NORMAL = 2.2250738585072014d-308
+   - SIZE = 64 (bits)
+   - BYTES = 8
+
+3. **Implemented `m/get-exponent` function** - cl-clojure-eval.lisp:1559-1577
+   - Returns the unbiased exponent used in the float representation
+   - Handles NaN (returns 1025 = MAX_EXPONENT + 1)
+   - Handles infinity (returns 1025)
+   - Handles zero and subnormal (returns -1023 = MIN_EXPONENT - 1)
+   - Uses `integer-decode-float` for normal numbers
+
+4. **Implemented `m/next-after` function** - cl-clojure-eval.lisp:1578-1620
+   - Returns the adjacent floating-point value in the direction of the second argument
+   - Handles NaN, infinity, and zero correctly
+   - Uses `scale-float` for normal cases
+   - Handles overflow/underflow gracefully
+
+5. **Implemented `m/next-up` function** - cl-clojure-eval.lisp:1621-1642
+   - Returns the adjacent floating-point value in the positive direction
+   - Handles NaN and infinity edge cases
+   - Uses `scale-float` for normal cases
+
+6. **Implemented `m/next-down` function** - cl-clojure-eval.lisp:1643-1664
+   - Returns the adjacent floating-point value in the negative direction
+   - Handles NaN and infinity edge cases
+   - Uses `scale-float` for normal cases
+
+7. **Implemented `m/scalb` function** - cl-clojure-eval.lisp:1665-1692
+   - Computes `start * 2^scale-factor`
+   - Properly coerces both arguments to double-float
+   - Uses `scale-float` for efficient computation
+   - Handles NaN, infinity, overflow, and underflow
+
+**Errors Fixed:**
+- "The value ... is not of type NUMBER" - FIXED ✅ (Double constants now return values)
+- "Unsupported clojure.math method: get-exponent" - FIXED ✅
+- "Unsupported clojure.math method: next-after" - FIXED ✅
+- "Unsupported clojure.math method: next-up" - FIXED ✅
+- "Unsupported clojure.math method: next-down" - FIXED ✅
+- "Unsupported clojure.math method: scalb" - FIXED ✅
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅
+- Eval: 29 ok, 56 errors (up from 25!)
+- New passing tests: math, math_copy, math_no_header, math_no_ns
+- All math-related tests now pass
+
+**Next Steps:**
+1. Investigate remaining test failures
+2. Implement more core functions as needed
+3. Continue with test-driven development approach

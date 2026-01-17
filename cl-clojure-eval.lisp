@@ -598,6 +598,56 @@
       (clojure-eval expr env))
     name))
 
+(defun eval-thread-first (form env)
+  "Evaluate a thread-first (->) form: (-> x form1 form2 ...)
+   Threads the expression as the first argument through the forms.
+   (-> x (f) (g a b)) becomes (g (f x) a b)"
+  (let* ((forms (cdr form)))
+    (if (null forms)
+        (error "thread-first requires at least one expression")
+        ;; Start with the first expression
+        (let ((result (clojure-eval (car forms) env)))
+          ;; Thread through remaining forms
+          (dolist (form-expr (cdr forms))
+            (typecase form-expr
+              ;; If it's a list, insert result as first arg
+              (cons
+               (let ((fn-sym (car form-expr))
+                     (args (cdr form-expr)))
+                 (setq result (clojure-eval (cons fn-sym (cons result args)) env))))
+              ;; If it's a symbol, just call it with result
+              (symbol
+               (setq result (clojure-eval (list form-expr result) env))))
+            ;; If it's a vector or other non-list, just use it as-is
+            (unless (or (consp form-expr) (symbolp form-expr))
+              (setq result (clojure-eval form-expr env))))
+          result))))
+
+(defun eval-thread-last (form env)
+  "Evaluate a thread-last (->>) form: (->> x form1 form2 ...)
+   Threads the expression as the last argument through the forms.
+   (->> x (f) (g a b)) becomes (g a b (f x))"
+  (let* ((forms (cdr form)))
+    (if (null forms)
+        (error "thread-last requires at least one expression")
+        ;; Start with the first expression
+        (let ((result (clojure-eval (car forms) env)))
+          ;; Thread through remaining forms
+          (dolist (form-expr (cdr forms))
+            (typecase form-expr
+              ;; If it's a list, insert result as last arg
+              (cons
+               (let ((fn-sym (car form-expr))
+                     (args (cdr form-expr)))
+                 (setq result (clojure-eval (append (list fn-sym) args (list result)) env))))
+              ;; If it's a symbol, just call it with result
+              (symbol
+               (setq result (clojure-eval (list form-expr result) env))))
+            ;; If it's a vector or other non-list, just use it as-is
+            (unless (or (consp form-expr) (symbolp form-expr))
+              (setq result (clojure-eval form-expr env))))
+          result))))
+
 ;;; ============================================================
 ;;; Lazy Range representation
 ;;; ============================================================
@@ -1269,6 +1319,8 @@
            ((and head-name (string= head-name "defn")) (eval-defn form env))
            ((and head-name (string= head-name "defmacro")) (eval-defmacro form env))
            ((and head-name (string= head-name "deftest")) (eval-deftest form env))
+           ((and head-name (string= head-name "->")) (eval-thread-first form env))
+           ((and head-name (string= head-name "->>")) (eval-thread-last form env))
            ((and head-name (string= head-name "is")) (eval-is form env))
            ((and head-name (string= head-name "testing")) (eval-testing form env))
            ((and head-name (string= head-name "are")) (eval-are form env))

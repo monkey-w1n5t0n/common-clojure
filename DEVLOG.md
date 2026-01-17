@@ -113,3 +113,65 @@
 3. Add more core functions as tests require them
 
 ---
+
+### Iteration 3 - 2025-01-17
+
+**Focus:** Implement do-template, array functions, and destructuring support
+
+**Changes Made:**
+
+1. **Implemented `do-template` special form** - cl-clojure-eval.lisp:1756-1810
+   - Performs symbol substitution on template expression before evaluating
+   - Handles vector destructuring (vectors are recursively traversed)
+   - Compares symbols by name (ignoring package differences)
+   - Added `substitute-symbols` helper function
+
+2. **Implemented array creation functions** - cl-clojure-eval.lisp:1239-1296
+   - `byte-array`, `short-array`, `char-array`, `int-array`, `long-array`, `float-array`, `double-array`
+   - `aset` for array element setting
+   - Stub implementations that use CL vectors
+
+3. **Implemented unchecked cast functions** - cl-clojure-eval.lisp:1287-1294
+   - `unchecked-byte`, `unchecked-short`, `unchecked-char`, `unchecked-int`
+   - `unchecked-long`, `unchecked-float`, `unchecked-double`
+   - Currently just return the value unchanged
+
+4. **Implemented type conversion functions** - cl-clojure-eval.lisp:1270-1285
+   - `char` - convert number to character (code-char)
+   - `int` - truncate to integer
+   - `long`, `float`, `double` - type conversions
+
+5. **Added hexadecimal literal support** - cl-clojure-eval.lisp:1910-1918
+   - When a symbol like `0xFFFF` is not found, it's parsed as hexadecimal
+   - Fallback in symbol evaluation to handle `0x` prefix
+
+6. **Implemented destructuring support for `for` and `doseq`** - cl-clojure-eval.lisp:352-395, 423-464
+   - Updated `parse-for-clauses` to accept vector bindings (not just symbols)
+   - Added `extend-binding` function to handle both symbol and list destructuring
+   - Supports `&` for rest parameters: `[a b & rest]`
+
+**Errors Fixed:**
+- "Undefined symbol: do-template" - FIXED ✅
+- "Cannot apply non-function: byte-array" - FIXED ✅
+- "Undefined symbol: char" - FIXED ✅
+- "Undefined symbol: 0xFFFF" (hexadecimal) - FIXED ✅
+- "Invalid clause in for: #(f vals)" - FIXED ✅ (destructuring support)
+
+**Known Issues:**
+- "numbers" test now fails with: "#(#(_ |inputs|) & |expectations|) is not a string designator."
+  - This appears to be related to destructuring with `&` in nested let forms
+  - The error message is from SBCL, suggesting something is being used where a string is expected
+  - More investigation needed to trace the exact source
+
+**Test Results:**
+- Parse: 68 ok, 0 errors ✅
+- Eval: 4 ok, 64 errors (same count, but errors have changed)
+- The "numbers" test now gets past `do-template` but fails on a destructuring issue
+
+**Next Steps:**
+1. Debug and fix the "is not a string designator" error in the numbers test
+2. Investigate the `&` rest parameter handling in destructuring
+3. Implement stubs for Java interop symbols (Class/MAX_VALUE, Byte., etc.)
+4. Add more core functions as tests require them
+
+---

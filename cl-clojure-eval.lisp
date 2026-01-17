@@ -351,8 +351,13 @@
 
 (defun parse-for-clauses (clauses)
   "Parse for clauses into ((binding-expr . local-modifiers)...) structure.
-   Each binding-expr is (symbol . collection-expr) and local-modifiers is a list
+   Each binding-expr is (binding-form . collection-expr) and local-modifiers is a list
    of modifiers that apply to this specific binding.
+
+   The binding-form can be:
+   - A symbol: [x coll] => ((x . coll) ())
+   - A vector for destructuring: [[a b] coll] => (((a b) . coll) ())
+
    E.g., [x (range 10) :when (odd? x) y (range 4)]
    => (((x . (range 10)) ((:when . (odd? x)))) ((y . (range 4)) ()))"
   (let (result)
@@ -372,12 +377,16 @@
                   (setf (cdr (car result))
                         (cons (list clause (car rest)) (cdr (car result))))
                   (setf clauses (cdr rest)))
-                 ;; Regular binding: symbol expr
-                 ((symbolp clause)
+                 ;; Regular binding: symbol expr OR vector-binding expr
+                 ((or (symbolp clause) (vectorp clause))
                   (when (null rest)
                     (error "Missing expression for binding ~A in for" clause))
-                  (push (cons (cons clause (car rest)) nil) result)
-                  (setf clauses (cdr rest)))
+                  ;; For vector bindings, convert to list for destructuring
+                  (let ((binding-form (if (vectorp clause)
+                                         (coerce clause 'list)
+                                         clause)))
+                    (push (cons (cons binding-form (car rest)) nil) result)
+                    (setf clauses (cdr rest))))
                  (t
                   (error "Invalid clause in for: ~A" clause)))))
     (values (mapcar (lambda (binding)
@@ -411,10 +420,54 @@
                    do (let ((val (clojure-eval val-expr env)))
                         (setf env (env-extend-lexical env name val)))))))))))
 
+(defun extend-binding (env binding-form value)
+  "Extend environment with a binding.
+   binding-form can be:
+   - A symbol: bind value to that symbol
+   - A list: destructuring - bind each element of value list to corresponding symbol
+   - Supports & for rest parameters: [a b & rest] binds first two to a,b and rest to remaining
+   Returns the new environment."
+  (cond
+    ((symbolp binding-form)
+     (env-extend-lexical env binding-form value))
+    ((listp binding-form)
+     ;; Destructuring: value should be a sequence
+     ;; Check for & rest parameter
+     (let ((amp-pos (position (intern "&") binding-form :test #'eq)))
+       (if amp-pos
+           ;; Has rest parameter
+           (let* ((regular-bindings (subseq binding-form 0 amp-pos))
+                  (rest-binding (when (< (1+ amp-pos) (length binding-form))
+                                (nth (1+ amp-pos) binding-form)))
+                  (value-list (if (consp value) value (coerce value 'list)))
+                  (new-env env)
+                  (regular-count (min (length regular-bindings)
+                                      (length value-list)))
+                  (rest-values (nthcdr regular-count value-list)))
+             ;; Bind regular parameters
+             (loop for i below regular-count
+                   for sym in regular-bindings
+                   for val in value-list
+                   do (setf new-env (env-extend-lexical new-env sym val)))
+             ;; Bind rest parameter if present
+             (when rest-binding
+               (setf new-env (env-extend-lexical new-env rest-binding rest-values)))
+             new-env)
+           ;; No rest parameter - simple destructuring
+           (let ((value-list (if (consp value) value (coerce value 'list))))
+             (loop for sym in binding-form
+                   for val in value-list
+                   with new-env = env
+                   do (setf new-env (env-extend-lexical new-env sym val))
+                   finally (return new-env))))))
+    (t
+     (error "Invalid binding form: ~A" binding-form))))
+
 (defun eval-for-nested (bindings body-expr env)
   "Evaluate nested for comprehension, producing list of results.
-   bindings is (((symbol . unevaluated-expr) . local-modifiers)...) - exprs are
-   evaluated with current env, and modifiers apply to each iteration of that binding."
+   bindings is (((binding-form . unevaluated-expr) . local-modifiers)...) - exprs are
+   evaluated with current env, and modifiers apply to each iteration of that binding.
+   binding-form can be a symbol or a list for destructuring."
   (if (null bindings)
       ;; Base case: evaluate body
       ;; Vectors need to be evaluated element-wise
@@ -445,7 +498,7 @@
                      (loop for i from start below end by step
                            for iter-count from 0
                            while (< iter-count iter-limit)
-                           do (let* ((new-env (env-extend-lexical env first-binding i))
+                           do (let* ((new-env (extend-binding env first-binding i))
                                      (filtered-env (apply-local-modifiers new-env local-modifiers)))
                                 (when filtered-env
                                   (let ((nested-results (eval-for-nested rest-bindings
@@ -455,7 +508,7 @@
                    ;; Infinite range - limit iterations
                    (loop for i from start by step
                          repeat 1000
-                         do (let* ((new-env (env-extend-lexical env first-binding i))
+                         do (let* ((new-env (extend-binding env first-binding i))
                                    (filtered-env (apply-local-modifiers new-env local-modifiers)))
                               (when filtered-env
                                 (let ((nested-results (eval-for-nested rest-bindings
@@ -468,7 +521,7 @@
                                         first-coll
                                         (coerce first-coll 'list))))
                (dolist (elem first-coll-list)
-                 (let* ((new-env (env-extend-lexical env first-binding elem))
+                 (let* ((new-env (extend-binding env first-binding elem))
                         (filtered-env (apply-local-modifiers new-env local-modifiers)))
                    (when filtered-env
                      (let ((nested-results (eval-for-nested rest-bindings
@@ -858,6 +911,32 @@
   (register-core-function env 'with-meta #'clojure-with-meta)
   (register-core-function env 'vary-meta #'clojure-vary-meta)
 
+  ;; Array functions
+  (register-core-function env 'byte-array #'clojure-byte-array)
+  (register-core-function env 'short-array #'clojure-short-array)
+  (register-core-function env 'char-array #'clojure-char-array)
+  (register-core-function env 'int-array #'clojure-int-array)
+  (register-core-function env 'long-array #'clojure-long-array)
+  (register-core-function env 'float-array #'clojure-float-array)
+  (register-core-function env 'double-array #'clojure-double-array)
+  (register-core-function env 'aset #'clojure-aset)
+
+  ;; Unchecked cast functions
+  (register-core-function env 'unchecked-byte #'clojure-unchecked-byte)
+  (register-core-function env 'unchecked-short #'clojure-unchecked-short)
+  (register-core-function env 'unchecked-char #'clojure-unchecked-char)
+  (register-core-function env 'unchecked-int #'clojure-unchecked-int)
+  (register-core-function env 'unchecked-long #'clojure-unchecked-long)
+  (register-core-function env 'unchecked-float #'clojure-unchecked-float)
+  (register-core-function env 'unchecked-double #'clojure-unchecked-double)
+
+  ;; Type conversion functions
+  (register-core-function env 'char #'clojure-char)
+  (register-core-function env 'int #'clojure-int)
+  (register-core-function env 'long #'clojure-long)
+  (register-core-function env 'float #'clojure-float)
+  (register-core-function env 'double #'clojure-double)
+
   env)
 
 ;;; Arithmetic implementations
@@ -1197,6 +1276,82 @@
                           ((listp aseq) aseq)
                           (t (coerce aseq 'list)))))
     (coerce seq-to-convert 'vector)))
+
+;; Array creation functions - stubs that create vectors
+(defun clojure-byte-array (&optional size-or-seq)
+  "Create a byte array. Returns a vector for SBCL."
+  (if (integerp size-or-seq)
+      (make-array size-or-seq :initial-element 0)
+      (coerce (or size-or-seq '()) 'vector)))
+
+(defun clojure-short-array (&optional size-or-seq)
+  "Create a short array. Returns a vector for SBCL."
+  (if (integerp size-or-seq)
+      (make-array size-or-seq :initial-element 0)
+      (coerce (or size-or-seq '()) 'vector)))
+
+(defun clojure-char-array (&optional size-or-seq)
+  "Create a char array. Returns a vector for SBCL."
+  (if (integerp size-or-seq)
+      (make-array size-or-seq :initial-element #\Nul)
+      (coerce (or size-or-seq '()) 'vector)))
+
+(defun clojure-int-array (&optional size-or-seq)
+  "Create an int array. Returns a vector for SBCL."
+  (if (integerp size-or-seq)
+      (make-array size-or-seq :initial-element 0)
+      (coerce (or size-or-seq '()) 'vector)))
+
+(defun clojure-long-array (&optional size-or-seq)
+  "Create a long array. Returns a vector for SBCL."
+  (if (integerp size-or-seq)
+      (make-array size-or-seq :initial-element 0)
+      (coerce (or size-or-seq '()) 'vector)))
+
+(defun clojure-float-array (&optional size-or-seq)
+  "Create a float array. Returns a vector for SBCL."
+  (if (integerp size-or-seq)
+      (make-array size-or-seq :initial-element 0.0)
+      (coerce (or size-or-seq '()) 'vector)))
+
+(defun clojure-double-array (&optional size-or-seq)
+  "Create a double array. Returns a vector for SBCL."
+  (if (integerp size-or-seq)
+      (make-array size-or-seq :initial-element 0.0d0)
+      (coerce (or size-or-seq '()) 'vector)))
+
+;; Array operations
+(defun clojure-aset (array index value)
+  "Set array element at index to value. Returns value."
+  (when (arrayp array)
+    (setf (aref array index) value))
+  value)
+
+;; Type conversion functions
+(defun clojure-char (x)
+  "Convert a number to a character. Stub for SBCL."
+  (if (integerp x)
+      (code-char x)
+      x))
+
+(defun clojure-int (x)
+  "Convert to an integer. Stub for SBCL."
+  (if (integerp x)
+      x
+      (truncate x)))
+
+(defun clojure-long (x) (clojure-int x))
+(defun clojure-float (x) (coerce x 'single-float))
+(defun clojure-double (x) (coerce x 'double-float))
+
+;; Unchecked cast operations - stubs that just return the value
+(defun clojure-unchecked-byte (x) x)
+(defun clojure-unchecked-short (x) x)
+(defun clojure-unchecked-char (x) x)
+(defun clojure-unchecked-int (x) x)
+(defun clojure-unchecked-long (x) x)
+(defun clojure-unchecked-float (x) x)
+(defun clojure-unchecked-double (x) x)
 
 (defun clojure-identity (x) x)
 
@@ -1675,6 +1830,68 @@
                  (push (clojure-eval expr-expr new-env) results))))
     (nreverse results)))
 
+(defun eval-do-template (form env)
+  "Evaluate a do-template form: (do-template argv expr & values)
+   Repeatedly evaluates expr for each group of arguments in values.
+   values are partitioned by the number of arguments in argv.
+
+   This performs symbol substitution on the template expression before
+   evaluating, similar to how Clojure's macro expansion works."
+  ;; Syntax: (do-template [x y] expr v1 v2 v3 v4 ...)
+  ;; Expands to: (do (expr with v1,v2 substituted) (expr with v3,v4 substituted) ...)
+  (let* ((argv (cadr form))        ; argument vector, e.g., [x y]
+         (template-expr (caddr form)) ; template expression using args
+         (values (cdddr form))     ; remaining values (as literal forms)
+         (argc (length (coerce argv 'list))) ; number of arguments
+         (arg-names (coerce argv 'list)) ; argument names as symbols
+         (results nil))
+    ;; Process values in chunks of argc
+    (loop for remaining = values then (nthcdr argc remaining)
+          for iter-count from 0
+          while (and remaining (< iter-count 10000))
+          do (let ((chunk (subseq remaining 0 (min argc (length remaining)))))
+               ;; If incomplete chunk, ignore it (Clojure does this)
+               (when (= (length chunk) argc)
+                 ;; Substitute symbols in template-expr with values from chunk
+                 ;; This is the key: we replace the SYMBOL itself, not bind it
+                 (let ((substituted-expr (substitute-symbols template-expr arg-names chunk)))
+                   ;; Evaluate the substituted expression
+                   (push (clojure-eval substituted-expr env) results)))))
+    ;; Return the last result (like do), or nil if no results
+    (if results
+        (car (last results))
+        nil)))
+
+(defun substitute-symbols (expr old-symbols new-values)
+  "Recursively replace symbols in expr with corresponding values from old-symbols/new-values.
+   This performs structural substitution, preserving the structure of expr.
+   Compares symbols by name (string comparison) to handle package differences.
+   Handles both cons cells (lists) and vectors."
+  (flet ((symbol-match-p (s1 s2)
+            ;; Compare symbols by name, ignoring package
+            (and (symbolp s1) (symbolp s2)
+                 (string= (symbol-name s1) (symbol-name s2)))))
+    (cond
+      ;; If expr is a symbol in old-symbols, replace it
+      ((and (symbolp expr)
+            (member expr old-symbols :test #'symbol-match-p))
+       (let ((pos (position expr old-symbols :test #'symbol-match-p)))
+         (nth pos new-values)))
+      ;; If expr is a cons cell, recursively substitute in car and cdr
+      ((consp expr)
+       (let ((new-car (substitute-symbols (car expr) old-symbols new-values))
+             (new-cdr (substitute-symbols (cdr expr) old-symbols new-values)))
+         (cons new-car new-cdr)))
+      ;; If expr is a vector, recursively substitute in each element
+      ((vectorp expr)
+       (let ((new-vec (make-array (length expr))))
+         (loop for i below (length expr)
+               do (setf (aref new-vec i)
+                        (substitute-symbols (aref expr i) old-symbols new-values)))
+         new-vec))
+      ;; Otherwise, return as-is
+      (t expr))))
+
 (defun setup-test-macros (env)
   "Set up test helper symbols - no longer needed as they are special forms."
   (declare (ignore env))
@@ -1733,7 +1950,15 @@
            (let ((var (env-get-var env form)))
              (if var
                  (var-value var)
-                 (error "Undefined symbol: ~A" form)))))
+                 ;; Check for hexadecimal literal symbols (e.g., 0xFFFF)
+                 ;; These are read as symbols due to reader limitations
+                 (let ((name (symbol-name form)))
+                   (if (and (> (length name) 2)
+                            (char= (char name 0) #\0)
+                            (char-equal (char name 1) #\x))
+                       ;; Parse as hexadecimal
+                       (parse-integer name :start 2 :radix 16)
+                       (error "Undefined symbol: ~A" form)))))))
 
       ;; List - evaluate as function call or special form
       (cons
@@ -1771,6 +1996,7 @@
            ((and head-name (string= head-name "is")) (eval-is form env))
            ((and head-name (string= head-name "testing")) (eval-testing form env))
            ((and head-name (string= head-name "are")) (eval-are form env))
+           ((and head-name (string= head-name "do-template")) (eval-do-template form env))
            ((and head-name (string= head-name "fn")) (eval-fn form env))
            ((and head-name (string= head-name "fn*")) (eval-fn form env))
            ((and head-name (string= head-name "let")) (eval-let form env))

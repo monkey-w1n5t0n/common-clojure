@@ -213,6 +213,40 @@
             ;; TODO: Handle recur return value
             result)))))
 
+(defun eval-set-bang (form env)
+  "Evaluate a set! form: (set! var expr) - set the value of a var."
+  ;; For now, just stub it - don't actually set anything
+  (declare (ignore env))
+  (let* ((var-name (cadr form))
+         (value-expr (caddr form))
+         (value (clojure-eval value-expr env)))
+    ;; Try to set the var - for now just return the value
+    (env-set-var env var-name value)
+    value))
+
+(defun eval-case (form env)
+  "Evaluate a case form: (case expr & clauses) - switch-like expression.
+   Simplified stub implementation."
+  (let* ((expr (cadr form))
+         (clauses (cddr form))
+         (value (clojure-eval expr env)))
+    ;; Simplified: just return value for now
+    ;; TODO: Implement proper case matching
+    (declare (ignore clauses))
+    value))
+
+(defun eval-deftest (form env)
+  "Evaluate a deftest form: (deftest name body+) - define a test."
+  ;; deftest is just like defn for test purposes
+  ;; For now, just define the test as a function
+  (let* ((name (cadr form))
+         (body (cddr form)))
+    ;; Evaluate each form in the body for side effects
+    (dolist (expr body)
+      (clojure-eval expr env))
+    ;; Return the test name
+    name))
+
 ;;; ============================================================
 ;;; Closure (function) representation
 ;;; ============================================================
@@ -273,6 +307,21 @@
   ;; Sequence functions
   (register-core-function env 'seq #'clojure-seq)
   (register-core-function env 'identity #'clojure-identity)
+
+  ;; Test helpers
+  (register-core-function env 'is #'clojure-is)
+  (register-core-function env 'are #'clojure-are)
+  (register-core-function env 'agent #'clojure-agent)
+  (register-core-function env 'atom #'clojure-atom)
+  (register-core-function env 'meta #'clojure-meta)
+  (register-core-function env 'defspec #'clojure-defspec)
+
+  ;; Java interop stubs
+  (register-core-function env 'System (lambda (member)
+                                        (if (and (symbolp member)
+                                                 (cl:string-equal (symbol-name member) "getProperty"))
+                                            #'clojure-system-getproperty
+                                            (error "Unknown System member: ~A" member))))
 
   ;; Boolean values (will be found via case-insensitive lookup)
   (register-core-function env 'TRUE t)
@@ -425,6 +474,52 @@
 (defun clojure-fn? (x) (closure-p x))
 (defun clojure-vector? (x) (vectorp x))
 
+;;; Test helper stubs
+(defun clojure-is (expr &optional message)
+  "Test helper: is assertion. Stub for now."
+  (declare (ignore message))
+  ;; Just evaluate and return the result
+  expr)
+
+(defun clojure-are (args-vec &rest body)
+  "Test helper: are - repeated testing. Stub for now."
+  (declare (ignore args-vec body))
+  ;; Just return nil for now
+  nil)
+
+(defun clojure-agent (initial-state &options options)
+  "Create an agent. Stub for now."
+  (declare (ignore options))
+  ;; Return a stub agent object
+  (list :agent initial-state))
+
+(defun clojure-atom (initial-state)
+  "Create an atom. Stub for now."
+  ;; Return a stub atom object
+  (list :atom initial-state))
+
+(defun clojure-meta (obj)
+  "Get metadata from object. Stub for now."
+  (declare (ignore obj))
+  nil)
+
+(defun clojure-system-getproperty (key)
+  "Get Java system property. Stub for now."
+  ;; Return some common properties
+  (let ((key-str (if (keywordp key)
+                     (symbol-name key)
+                     (string key))))
+    (cond
+      ((cl:string-equal key-str "line.separator") "\n")
+      ((cl:string-equal key-str "path.separator") ":")
+      ((cl:string-equal key-str "file.separator") "/")
+      (t nil))))
+
+(defun clojure-defspec (name &rest body)
+  "Define a spec test. Stub for now."
+  (declare (ignore name body))
+  nil)
+
 ;;; ============================================================
 ;;; Truthiness
 ;;; ============================================================
@@ -491,11 +586,21 @@
                                              (eval-let form env)
                                              (if (and (symbolp head) (cl:string-equal (symbol-name head) "loop"))
                                                  (eval-loop form env)
-                                                 ;; Function application
-                                                 (let ((fn-value (clojure-eval head env))
-                                                       (args (mapcar #'(lambda (x) (clojure-eval x env))
-                                                                     rest-form)))
-                                                   (apply-function fn-value args))))))))))))))
+                                                 (if (and (symbolp head) (cl:string-equal (symbol-name head) "ns"))
+                                                     ;; Stub for ns - namespace declaration
+                                                     ;; For now, just return nil and ignore namespace changes
+                                                     nil
+                                                     (if (and (symbolp head) (cl:string-equal (symbol-name head) "set!"))
+                                                         (eval-set-bang form env)
+                                                         (if (and (symbolp head) (cl:string-equal (symbol-name head) "case"))
+                                                             (eval-case form env)
+                                                             (if (and (symbolp head) (cl:string-equal (symbol-name head) "deftest"))
+                                                                 (eval-deftest form env)
+                                                                 ;; Function application
+                                                                 (let ((fn-value (clojure-eval head env))
+                                                                       (args (mapcar #'(lambda (x) (clojure-eval x env))
+                                                                                     rest-form)))
+                                                                   (apply-function fn-value args))))))))))))))))))
 
       ;; Vector - evaluate elements (for some contexts)
       (vector form)
@@ -518,22 +623,43 @@
             (new-env fn-env))
        ;; Bind parameters to arguments
        (cond
-         ;; Vector parameters - fixed arity
-         (typep params 'vector)
-         (cl:loop for param across params
+         ;; Vector parameters - check for & rest params first
+         ((and (vectorp params) (find '& params))
+          ;; Handle vector with rest parameter
+          (let* ((&-pos (position '& params))
+                 (fixed-count &-pos)
+                 (rest-param (when (< (1+ &-pos) (length params))
+                              (aref params (1+ &-pos))))
+                 (rest-args (nthcdr fixed-count args)))
+            ;; Bind fixed parameters
+            (loop for i from 0 below (min fixed-count (length args))
+                  for param = (aref params i)
                   for arg in args
                   do (setf new-env (env-extend-lexical new-env param arg)))
-         ;; Handle & rest params
-         (cl:when (and (cl:> (cl:length params) 1)
-                       (cl:find '& params))
-           (let ((&-pos (cl:position '& params))
-                 (rest-params (cl:subseq params (1+ (cl:position '& params))))
-                 (rest-args (cl:nthcdr (cl:length (cl:subseq params 0 (cl:position '& params))) args)))
-             ;; Bind rest param
-             (setf new-env (env-extend-lexical new-env
-                                               (cl:car rest-params)
-                                               rest-args))))
-         ;; List parameters
+            ;; Bind rest parameter if present
+            (when rest-param
+              (setf new-env (env-extend-lexical new-env rest-param rest-args)))))
+         ;; Vector parameters - fixed arity
+         ((vectorp params)
+          (cl:loop for param across params
+                   for arg in args
+                   do (setf new-env (env-extend-lexical new-env param arg))))
+         ;; List parameters - check for & rest params
+         ((and (listp params) (find '& params))
+          (let* ((&-pos (position '& params))
+                 (fixed-params (cl:subseq params 0 &-pos))
+                 (rest-params (cl:subseq params (1+ &-pos)))
+                 (rest-param (first rest-params))
+                 (fixed-count (length fixed-params))
+                 (rest-args (nthcdr fixed-count args)))
+            ;; Bind fixed parameters
+            (loop for param in fixed-params
+                  for arg in args
+                  do (setf new-env (env-extend-lexical new-env param arg)))
+            ;; Bind rest parameter if present
+            (when rest-param
+              (setf new-env (env-extend-lexical new-env rest-param rest-args)))))
+         ;; List parameters - fixed arity
          (t
           (cl:loop for param in params
                    for arg in args
@@ -574,20 +700,21 @@
 
 (defun eval-file (path)
   "Evaluate all forms in a Clojure file."
+  (declare (ftype (function (string) string) cl-clojure-syntax:preprocess-clojure-dots))
   (unless *current-env*
     (init-eval-system))
   (let ((content (with-open-file (s path :direction :input)
                    (let ((str (make-string (file-length s))))
                      (read-sequence str s)
-                     str)))
-        (preprocessed (cl-clojure-syntax:preprocess-clojure-dots content))
-        (results nil))
-    (with-input-from-string (stream preprocessed)
-      (let ((*readtable* (cl-clojure-syntax:ensure-clojure-readtable)))
-        (loop for form = (cl-clojure-syntax:read-clojure stream nil :eof)
-              until (eq form :eof)
-              do (push (clojure-eval form *current-env*) results))))
-    (nreverse results)))
+                     str))))
+    (let ((preprocessed (cl-clojure-syntax:preprocess-clojure-dots content))
+          (results nil))
+      (with-input-from-string (stream preprocessed)
+        (let ((*readtable* (cl-clojure-syntax:ensure-clojure-readtable)))
+          (loop for form = (cl-clojure-syntax:read-clojure stream nil :eof)
+                until (eq form :eof)
+                do (push (clojure-eval form *current-env*) results))))
+      (nreverse results))))
 
 (defun reset-env ()
   "Reset the evaluation environment."

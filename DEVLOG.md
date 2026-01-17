@@ -2475,3 +2475,74 @@ not fall through to check vars and special forms.
 1. Implement `cast` function for numbers test
 2. Continue implementing more core functions as tests require them
 3. Debug remaining "Undefined symbol" errors in various tests
+
+---
+
+### Iteration 41 - 2026-01-17
+
+**Focus:** Improve substitute-symbols to handle binding forms correctly
+
+**Problem:**
+The `do-template` macro was not substituting symbols that appeared inside binding forms like `let`.
+For example, in `(do-template [prim-array cast] (let [a (prim-array 1)] (aset a 0 (cast n))) ...)`:
+- `prim-array` appears in the binding vector value position
+- `cast` appears in the body
+- Both need to be substituted, but binding variable names should NOT be substituted
+
+**Changes Made:**
+
+1. **Rewrote `substitute-symbols` function** - cl-clojure-eval.lisp:4666-4750
+   - Simplified the function structure to avoid complex nested binding form handling
+   - Removed `process-binding-form` in favor of simpler `process-list` approach
+   - Added `process-binding-vector` to handle vector binding forms like `[a (prim-array 1)]`
+   - Added `process-binding-list` to handle list binding forms
+   - Substitutes in VALUES of bindings but NOT in VARIABLE NAMES
+   - Uses odd/even index detection to distinguish names from values
+
+2. **Fixed binding form detection** - cl-clojure-eval.lisp:4676-4682
+   - Added `"are"` to the list of binding forms
+   - `are` is a test helper macro that uses binding syntax
+
+**Implementation Details:**
+The new `process-binding-vector` function:
+```lisp
+(let ((result (make-array (length vec))))
+  (loop for i below (length vec)
+        do (setf (aref result i)
+                 (if (oddp i)
+                     ;; Odd indices are values - substitute
+                     (substitute-symbols (aref vec i) old-symbols new-values)
+                     ;; Even indices are variable names - keep as-is
+                     (aref vec i))))
+  result)
+```
+
+This correctly handles bindings like `[a (prim-array 1) b (cast 2)]`:
+- `a` (index 0, even) - kept as-is (variable name)
+- `(prim-array 1)` (index 1, odd) - substituted
+- `b` (index 2, even) - kept as-is
+- `(cast 2)` (index 3, odd) - substituted
+
+**Known Issues:**
+- The numbers test still fails with "Undefined symbol: cast"
+- Debug output shows that substitution works correctly in isolation
+- The issue appears to be with how the do-template form is being parsed or evaluated
+- The `cadr` of the do-template form returns a SYMBOL instead of a VECTOR
+- This suggests the vector is not being read correctly by the Clojure reader
+
+**Investigation Notes:**
+- Direct test of `substitute-symbols` shows correct substitution
+- The issue is likely in the `eval-do-template` function or the reader initialization
+- The `*clojure-readtable*` may not be properly initialized when `eval-do-template` runs
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅
+- Eval: 30 ok, 55 errors (no change from iteration 40)
+- substitute-symbols function now correctly handles binding forms in isolation
+- Need to debug the integration with do-template evaluation
+
+**Next Steps:**
+1. Debug why `(cadr form)` in `eval-do-template` returns a SYMBOL instead of VECTOR
+2. Check if the Clojure readtable is properly initialized during test evaluation
+3. Investigate the vector reading mechanism for `do-template` forms
+4. Continue implementing more core functions as tests require them

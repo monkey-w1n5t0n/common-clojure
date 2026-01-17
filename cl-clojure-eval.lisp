@@ -4662,12 +4662,14 @@
         (car (last results))
         nil)))
 
+
 (defun substitute-symbols (expr old-symbols new-values)
   "Recursively replace symbols in expr with corresponding values from old-symbols/new-values.
    This performs structural substitution, preserving the structure of expr.
    Compares symbols by name (string comparison) to handle package differences.
    Handles both cons cells (lists) and vectors.
-   Does NOT substitute symbols inside nested binding scopes (fn, let, loop, etc.)."
+   For binding forms (fn, let, loop, etc.), skips substitution in binding vectors
+   but DOES substitute in the body forms."
   (labels ((symbol-match-p (s1 s2)
              ;; Compare symbols by name, ignoring package
              (and (symbolp s1) (symbolp s2)
@@ -4676,25 +4678,67 @@
              ;; Check if a symbol is a binding form (fn, let, loop, etc.)
              (and (symbolp sym)
                   (member (symbol-name sym)
-                          '("fn" "fn*" "let" "let*" "loop" "for" "doseq" "when-let" "if-let" "when-first")
-                          :test #'string=))))
+                          '("fn" "fn*" "let" "let*" "loop" "for" "doseq" "when-let" "if-let" "when-first" "are")
+                          :test #'string=)))
+           (process-list (form)
+             ;; Process a list, handling binding forms specially
+             (if (and (consp form)
+                      (symbolp (car form))
+                      (binding-form-p (car form)))
+                 ;; This is a binding form - substitute in binding values and body
+                 ;; but NOT in binding variable names
+                 (let ((head (car form))
+                       (rest (cdr form)))
+                   (if (and rest (or (vectorp (car rest)) (listp (car rest))))
+                       ;; Has binding vector - process it specially
+                       (let* ((bindings (car rest))
+                              (processed-bindings
+                                (if (vectorp bindings)
+                                    (process-binding-vector bindings old-symbols new-values)
+                                    (process-binding-list bindings old-symbols new-values))))
+                         (cons head (cons processed-bindings
+                                         (mapcar (lambda (x) (substitute-symbols x old-symbols new-values))
+                                                 (cdr rest)))))
+                       ;; No binding vector - substitute in rest
+                       (cons head (mapcar (lambda (x) (substitute-symbols x old-symbols new-values))
+                                          rest))))
+                 ;; Not a binding form - process normally
+                 (let ((new-car (substitute-symbols (car form) old-symbols new-values))
+                       (new-cdr (substitute-symbols (cdr form) old-symbols new-values)))
+                   (cons new-car new-cdr))))
+           (process-binding-vector (vec old-symbols new-values)
+             ;; Process a vector binding form like [a (prim-array 1) b val]
+             ;; Substitute in values but not in variable names
+             (let ((result (make-array (length vec))))
+               (loop for i below (length vec)
+                     do (setf (aref result i)
+                              (if (oddp i)
+                                  ;; Odd indices are values - substitute
+                                  (substitute-symbols (aref vec i) old-symbols new-values)
+                                  ;; Even indices are variable names - keep as-is
+                                  (aref vec i))))
+               result))
+           (process-binding-list (lst old-symbols new-values)
+             ;; Process a list binding form like (a (prim-array 1) b val)
+             ;; Substitute in values but not in variable names
+             (let (result)
+               (loop for (var val) on lst by #'cddr
+                     while var
+                     do (progn
+                          (push var result)
+                          (if val
+                              (push (substitute-symbols val old-symbols new-values) result))))
+               (nreverse result)))    ; close process-binding-list
+    )    ; close labels function-list
     (cond
       ;; If expr is a symbol in old-symbols, replace it
       ((and (symbolp expr)
             (member expr old-symbols :test #'symbol-match-p))
        (let ((pos (position expr old-symbols :test #'symbol-match-p)))
          (nth pos new-values)))
-      ;; If expr is a cons cell starting with a binding form, skip substituting in the binding body
-      ((and (consp expr)
-            (symbolp (car expr))
-            (binding-form-p (car expr)))
-       ;; Don't substitute inside binding forms - they establish their own scope
-       expr)
-      ;; If expr is a cons cell, recursively substitute in car and cdr
+      ;; If expr is a cons cell, process it (handles both binding forms and regular lists)
       ((consp expr)
-       (let ((new-car (substitute-symbols (car expr) old-symbols new-values))
-             (new-cdr (substitute-symbols (cdr expr) old-symbols new-values)))
-         (cons new-car new-cdr)))
+       (process-list expr))
       ;; If expr is a vector, recursively substitute in each element
       ((vectorp expr)
        (let ((new-vec (make-array (length expr))))
@@ -4704,7 +4748,6 @@
          new-vec))
       ;; Otherwise, return as-is
       (t expr))))
-
 (defun setup-test-macros (env)
   "Set up test helper symbols - no longer needed as they are special forms."
   (declare (ignore env))

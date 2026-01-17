@@ -848,6 +848,36 @@
       ;; Otherwise return the value (no-op for unsupported targets)
       (t value))))
 
+(defun eval-binding (form env)
+  "Evaluate a binding form: (binding [var-name value*] body+).
+   This creates dynamic bindings for vars (similar to Clojure's binding).
+   For our simplified implementation, we create a new environment with the bindings
+   and evaluate the body in that environment."
+  (let* ((bindings-vec (cadr form))
+         (body (cddr form))
+         ;; Convert vector to list and process pairwise
+         (bindings-list (if (vectorp bindings-vec)
+                           (coerce bindings-vec 'list)
+                           bindings-vec)))
+    ;; Create new environment with bindings
+    (let ((new-env env))
+      ;; Bind each var to its value
+      (loop for (var-sym value-expr) on bindings-list by #'cddr
+            while var-sym  ; Stop if we run out of pairs
+            do (let* ((value (clojure-eval value-expr env))
+                      ;; For var names like *warn-on-reflection*, we create a lexical binding
+                      ;; In real Clojure, these would be dynamic var bindings
+                      (name (if (symbolp var-sym)
+                                (symbol-name var-sym)
+                                var-sym)))
+                 ;; Store as lexical binding
+                 (setf new-env (env-extend-lexical new-env var-sym value))))
+      ;; Evaluate body expressions in the new environment
+      ;; Return the result of the last expression
+      (let ((result nil))
+        (dolist (expr body result)
+          (setf result (clojure-eval expr new-env)))))))
+
 (defun eval-deftest (form env)
   "Evaluate a deftest form: (deftest name body+) - define a test."
   ;; For now, deftest just evaluates the body to check for errors
@@ -1188,6 +1218,9 @@
         most-positive-fixnum)
        ((string-equal member-name "MIN_VALUE")
         most-negative-fixnum)
+       ((string-equal member-name "valueOf")
+        ;; valueOf takes a value and returns it (stub for SBCL)
+        (if (null args) 0 (first args)))
        (t
         (error "Unsupported Long field: ~A" member-name))))
     ;; Float class fields
@@ -1496,6 +1529,22 @@
        ;; Exponential and logarithmic functions
        ((string-equal member-name "exp")
         (if (null args) (error "exp requires an argument") (safe-math-fn1 #'exp (first args))))
+       ((string-equal member-name "expm1")
+        (if (null args) (error "expm1 requires an argument")
+            (let ((x (first args)))
+              (cond
+                ;; NaN input -> NaN output
+                ((and (floatp x) (sb-ext:float-nan-p x))
+                 (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))
+                ;; Infinity input -> Infinity output
+                ((and (floatp x) (= x most-positive-double-float))
+                 most-positive-double-float)
+                ;; Negative infinity -> -1.0
+                ((and (floatp x) (= x most-negative-double-float))
+                 -1.0d0)
+                ;; Otherwise compute e^x - 1
+                (t
+                 (safe-math-fn1 #'(lambda (v) (- (exp v) 1)) x))))))
        ((string-equal member-name "log")
         (if (null args) (error "log requires an argument") (safe-math-fn1 #'log (first args))))
        ((string-equal member-name "log10")
@@ -1565,15 +1614,27 @@
                 (if (some #'(lambda (x) (and (floatp x) (sb-ext:float-nan-p x))) args)
                     (first args)  ; Return NaN
                     (apply #'max args)))))
-       ;; Hypotenuse - NaN-safe
+       ;; Hypotenuse - NaN-safe and infinity-safe
        ((string-equal member-name "hypot")
         (if (< (length args) 2) (error "hypot requires 2 arguments")
             (let ((x (first args))
                   (y (second args)))
-              (if (or (and (floatp x) (sb-ext:float-nan-p x))
-                      (and (floatp y) (sb-ext:float-nan-p y)))
-                  (coerce 0f0 'single-float)  ; Return NaN indicator
-                  (sqrt (+ (expt x 2) (expt y 2)))))))
+              (cond
+                ;; Return NaN if either input is NaN
+                ((or (and (floatp x) (sb-ext:float-nan-p x))
+                     (and (floatp y) (sb-ext:float-nan-p y)))
+                 (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))
+                ;; Return infinity if either input is infinity
+                ;; Check if value equals positive or negative infinity
+                ((or (and (floatp x) (or (= x most-positive-double-float) (= x most-negative-double-float)))
+                     (and (floatp y) (or (= y most-positive-double-float) (= y most-negative-double-float))))
+                 most-positive-double-float)
+                ;; Otherwise compute sqrt(x^2 + y^2)
+                (t
+                 (handler-case
+                     (sqrt (+ (expt x 2) (expt y 2)))
+                   (floating-point-overflow ()
+                     most-positive-double-float)))))))
        ;; Signum (sign of number: -1, 0, or 1)
        ((string-equal member-name "signum")
         (if (null args) (error "signum requires an argument")
@@ -1598,8 +1659,10 @@
        ((string-equal member-name "to-degrees")
         (if (null args) (error "to-degrees requires an argument")
             (safe-math-fn1 #'(lambda (x) (* x (/ 180 pi))) (first args))))
-       ;; Copy sign
-       ((string-equal member-name "copySign")
+       ;; Copy sign (handles copySign, copysign, and copy-sign)
+       ((or (string-equal member-name "copySign")
+            (string-equal member-name "copysign")
+            (string-equal member-name "copy-sign"))
         (if (< (length args) 2) (error "copySign requires 2 arguments")
             (let ((magnitude (first args))
                   (sign (second args)))
@@ -1774,6 +1837,21 @@
   (register-core-function env 'inc #'clojure-inc)
   (register-core-function env 'dec #'clojure-dec)
 
+  ;; Unchecked arithmetic functions
+  (register-core-function env 'unchecked-inc #'clojure-unchecked-inc)
+  (register-core-function env 'unchecked-dec #'clojure-unchecked-dec)
+  (register-core-function env 'unchecked-add #'clojure-unchecked-add)
+  (register-core-function env 'unchecked-subtract #'clojure-unchecked-subtract)
+  (register-core-function env 'unchecked-multiply #'clojure-unchecked-multiply)
+  (register-core-function env 'unchecked-negate #'clojure-unchecked-negate)
+  (register-core-function env 'unchecked-divide #'clojure-unchecked-divide)
+  (register-core-function env 'unchecked-remainder #'clojure-unchecked-remainder)
+
+  ;; Integer division functions
+  (register-core-function env 'quot #'clojure-quot)
+  (register-core-function env 'rem #'clojure-rem)
+  (register-core-function env 'mod #'clojure-mod)
+
   ;; Comparison functions
   (register-core-function env '= #'clojure=)
   (register-core-function env '== #'clojure=)
@@ -1874,6 +1952,9 @@
   (register-core-function env 'atom #'clojure-atom)
   (register-core-function env 'deref #'clojure-deref)
   (register-core-function env 'swap-vals! #'clojure-swap-vals!)
+  (register-core-function env 'swap! #'clojure-swap!)
+  (register-core-function env 'reset! #'clojure-reset!)
+  (register-core-function env 'reset-vals! #'clojure-reset-vals!)
   (register-core-function env 'hash-set #'clojure-hash-set)
   (register-core-function env 'sorted-set #'clojure-sorted-set)
   (register-core-function env 'read-string #'clojure-read-string)
@@ -1971,17 +2052,22 @@
   "Multiply all arguments. Returns 1 if no args."
   (if (null args)
       1
-      ;; Use a safe multiplication that checks for overflow
-      ;; SBCL's constant folding might cause issues, so we disable it locally
-      (locally (declare (optimize (speed 0) (safety 3) (debug 3)))
-        (handler-case
-            (reduce #'* args)
-          (floating-point-overflow ()
-            ;; Return infinity for overflow (Java behavior)
-            most-positive-double-float)
-          (floating-point-invalid-operation ()
-            ;; Return NaN for invalid operations
-            (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))))))
+      ;; Use safe multiplication that handles overflow
+      ;; We need to wrap each multiplication individually because
+      ;; reduce with #'* will call CL's * which signals overflow
+      (let ((result 1))
+        (dolist (arg args result)
+          (setq result
+                (handler-case
+                    ;; Force runtime evaluation by storing arg in a variable
+                    (let ((a result) (b arg))
+                      (* a b))
+                  (floating-point-overflow ()
+                    ;; Return infinity for overflow (Java behavior)
+                    most-positive-double-float)
+                  (floating-point-invalid-operation ()
+                    ;; Return NaN for invalid operations
+                    (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))))))))
 
 (defun clojure/ (first-arg &rest args)
   "Divide. Inverse if one arg, divide first by rest if multiple."
@@ -1991,6 +2077,29 @@
 
 (defun clojure-inc (n) (1+ n))
 (defun clojure-dec (n) (1- n))
+
+;; Unchecked arithmetic functions - these don't check for overflow
+;; In Java/Clojure, "unchecked" means wrapping on overflow
+;; For SBCL, we just use regular arithmetic (may signal or wrap)
+(defun clojure-unchecked-inc (n) (1+ n))
+(defun clojure-unchecked-dec (n) (1- n))
+(defun clojure-unchecked-add (x y) (+ x y))
+(defun clojure-unchecked-subtract (x y) (- x y))
+(defun clojure-unchecked-multiply (x y) (* x y))
+(defun clojure-unchecked-negate (x) (- x))
+(defun clojure-unchecked-divide (x y) (/ x y))
+(defun clojure-unchecked-remainder (x y) (rem x y))
+
+;; Integer division functions (quotient, remainder, modulo)
+(defun clojure-quot (x y) (floor (/ x y)))
+(defun clojure-rem (x y) (rem x y))
+(defun clojure-mod (x y)
+  "Modulo with same sign as divisor (Java behavior)."
+  (let ((r (rem x y)))
+    (if (or (and (>= x 0) (>= y 0))
+            (and (< x 0) (< y 0)))
+        r
+        (+ r y))))
 
 ;;; Comparison implementations
 (defun clojure= (&rest args)
@@ -2917,6 +3026,31 @@
       ;; Return vector [old-value new-value]
       (vector old-value new-value))))
 
+(defun clojure-swap! (atom-obj fn-arg &rest args)
+  "Atomically swap the value of an atom, returning the new value.
+   Similar to swap-vals! but only returns the new value."
+  ;; Ensure fn-arg is callable (wrap closures if needed)
+  (let ((callable-fn (ensure-callable fn-arg))
+        ;; Get old value from atom (car of the list)
+        (old-value (car atom-obj)))
+    ;; Compute new value by applying function to old value and args
+    (let ((new-value (apply callable-fn old-value args)))
+      ;; Update the atom with new value (setf car)
+      (setf (car atom-obj) new-value)
+      ;; Return new value only
+      new-value)))
+
+(defun clojure-reset! (atom-obj new-value)
+  "Reset the value of an atom to new-value, returning the new value."
+  (setf (car atom-obj) new-value)
+  new-value)
+
+(defun clojure-reset-vals! (atom-obj new-value)
+  "Reset the value of an atom to new-value, returning [old-value new-value]."
+  (let ((old-value (car atom-obj)))
+    (setf (car atom-obj) new-value)
+    (vector old-value new-value)))
+
 (defun clojure-deref (ref)
   "Dereference a ref (atom, delay, future, etc.), returning its value.
    For atoms, the value is in the car of the cons cell.
@@ -3795,6 +3929,7 @@
            ((and head-name (string= head-name "import")) (eval-import form env))
            ((and head-name (string= head-name "set!")) (eval-set-bang form env))
            ((and head-name (string= head-name "declare")) (eval-declare form env))
+           ((and head-name (string= head-name "binding")) (eval-binding form env))
            ((and head-name (string= head-name "delay"))
             ;; delay creates a lazy computation: (delay body)
             ;; Returns a delay object that will evaluate body when forced

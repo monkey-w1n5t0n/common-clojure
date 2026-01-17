@@ -1373,3 +1373,83 @@ The `@` reader macro was not implemented, causing `@a` to be read as an undefine
 2. Implement `swap!` function
 3. Implement `binding` special form
 4. Implement `re-find` and regex support
+
+---
+
+### Iteration 23 - 2026-01-17
+
+**Focus:** Fix overflow in hypot, add math functions, unchecked arithmetic, binding, and swap!
+
+**Changes Made:**
+
+1. **Fixed overflow in `m/hypot` function** - cl-clojure-eval.lisp:1568-1588
+   - The `hypot` function computes `sqrt(x^2 + y^2)` which overflows when x or y is infinity
+   - Added check for infinity before computing expt
+   - Added handler-case for floating-point-overflow
+   - Returns infinity when either input is infinity
+
+2. **Implemented `m/expm1` function** - cl-clojure-eval.lisp:1499-1514
+   - Computes e^x - 1 (exp minus one)
+   - Handles NaN, positive infinity, and negative infinity correctly
+   - Uses safe-math-fn1 wrapper
+
+3. **Fixed `m/copy-sign` name handling** - cl-clojure-eval.lisp:1630-1632
+   - Added support for `copy-sign` (kebab-case) in addition to `copySign` (camelCase)
+   - The reader preserves kebab-case, so both need to be handled
+
+4. **Implemented unchecked arithmetic functions** - cl-clojure-eval.lisp:2030-2051
+   - `unchecked-inc`, `unchecked-dec`, `unchecked-add`, `unchecked-subtract`
+   - `unchecked-multiply`, `unchecked-negate`, `unchecked-divide`, `unchecked-remainder`
+   - These functions don't check for overflow (Java/Clojure semantics)
+   - For SBCL, we just use regular arithmetic
+
+5. **Implemented integer division functions** - cl-clojure-eval.lisp:2042-2051
+   - `quot` - quotient (floor division)
+   - `rem` - remainder (same sign as dividend)
+   - `mod` - modulo (same sign as divisor)
+
+6. **Added `Long/valueOf` support** - cl-clojure-eval.lisp:1191-1193
+   - Static method stub that returns the input value
+   - Needed for numbers test
+
+7. **Implemented `binding` special form** - cl-clojure-eval.lisp:851-879
+   - `(binding [var value*] body+)` creates dynamic bindings
+   - For our implementation, creates lexical bindings in a new environment
+   - Evaluates body expressions in the new environment
+   - Returns the result of the last expression
+
+8. **Implemented atom swap and reset functions** - cl-clojure-eval.lisp:3026-3049
+   - `swap!` - atomically swap atom value, return new value
+   - `reset!` - reset atom to new value, return new value
+   - `reset-vals!` - reset atom, return [old-value new-value]
+   - All use `ensure-callable` to handle closure arguments
+
+9. **Registered new functions in setup-core-functions** - cl-clojure-eval.lisp:1807-1820, 1954-1957
+   - Registered all unchecked arithmetic functions
+   - Registered quot, rem, mod functions
+   - Registered swap!, reset!, reset-vals!
+
+**Root Cause Analysis:**
+The hypot overflow was caused by `(expt most-positive-double-float 2)` signaling overflow. SBCL's `expt` function doesn't automatically return infinity for overflow cases. We added explicit infinity checks and overflow handling.
+
+**Errors Fixed:**
+- "arithmetic error FLOATING-POINT-OVERFLOW" in hypot - FIXED ✅
+- "Unsupported clojure.math method: expm1" - FIXED ✅
+- "Unsupported clojure.math method: copy-sign" - FIXED ✅
+- "Undefined symbol: unchecked-inc" - FIXED ✅
+- "Unsupported Long field: valueOf" - FIXED ✅
+- "Undefined symbol: binding" - FIXED ✅
+- "Undefined symbol: swap!" - FIXED ✅
+- "Undefined symbol: reset-vals!" - FIXED ✅
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅
+- Eval: 25 ok, 60 errors (same count as iteration 22, but different errors)
+- New test files now get further: atoms, delays, numbers, vars
+- Remaining issues are mostly Java interop and more esoteric features
+
+**Next Steps:**
+1. Investigate and fix the remaining "The value" error in atoms and math tests
+2. Implement `with-local-vars` special form
+3. Add more Java interop stubs as needed (CyclicBarrier, etc.)
+4. Continue implementing more core functions as tests require them

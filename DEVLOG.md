@@ -654,3 +654,55 @@ After extensive debugging, I discovered the root cause of "Undefined symbol: a":
 2. Implement `mapcat` function
 3. Implement `re-find` and regex support
 4. Add more core functions as tests require them
+
+---
+
+### Iteration 12 - 2025-01-17 (IN PROGRESS)
+
+**Focus:** Implement letfn special form and Float/NaN Java interop support
+
+**Changes Made:**
+
+1. **Implemented `letfn` special form** - cl-clojure-eval.lisp:380-438
+   - Supports local recursive function definitions
+   - All function names are visible within all function bodies (mutual recursion)
+   - Two-pass approach: create stub closures first, then update environments
+
+2. **Added `extract-param-names` helper** - cl-clojure-eval.lisp:380-398
+   - Extracts parameter names from potentially metadata-wrapped parameters
+   - Handles `[^Float x]` → extracts `x` from `(with-meta x Float)`
+   - Needed because Clojure type hints use metadata on parameters
+
+3. **Updated `java-interop-stub-lookup`** - cl-clojure-eval.lisp:888-894
+   - Added `NaN`, `POSITIVE_INFINITY`, `NEGATIVE_INFINITY`, `isNaN` to static fields list
+   - These are now evaluated immediately instead of returning a lambda
+
+4. **Implemented Float/NaN and Double/NaN support** - cl-clojure-eval.lisp:1036-1070
+   - Float/NaN returns IEEE 754 quiet NaN (single float)
+   - Double/NaN returns IEEE 754 quiet NaN (double float)
+   - Float/isNaN and Double/isNaN predicates added
+   - POSITIVE_INFINITY and NEGATIVE_INFINITY constants added
+
+**Known Issues:**
+- The letfn form with metadata-wrapped parameters `[^Float x]` still causes errors
+- The reader converts `[^Float x]` to `#((with-meta x Float))`
+- The extract-param-names function handles this, but there may be an evaluation order issue
+- The error "junk in string Float/NaN" suggests the issue is during evaluation, not reading
+
+**Test Results:**
+- Parse: 60 ok, 8 errors ✅
+- Eval: 5 ok, 63 errors (no change from iteration 11)
+- The "numbers" test still fails on "junk in string Float/NaN"
+
+**Investigation Notes:**
+- Direct test of `Float/NaN` evaluation works correctly (returns NaN)
+- The issue is specifically with the letfn form: `(letfn [(fnan? [^Float x] (Float/isNaN x)) ...] ...)`
+- The parameters `[^Float x]` are read as `#((with-meta x Float))`
+- Need to trace exact execution path to find where the parse error occurs
+
+**Next Steps:**
+1. Debug the "junk in string Float/NaN" error in letfn context
+2. The error type is SIMPLE-PARSE-ERROR, suggesting a reader issue
+3. May need to investigate if there's an unexpected `read` call somewhere
+4. Implement `mapcat` function
+5. Implement `re-find` and regex support

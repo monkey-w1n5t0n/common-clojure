@@ -377,6 +377,70 @@
             (clojure-eval expr new-env))
           (clojure-eval last-expr new-env)))))
 
+(defun extract-param-names (params-vector)
+  "Extract parameter names from a vector that may contain metadata-wrapped parameters.
+   For example, #((WITH-META X FLOAT)) becomes #(X).
+   Handles nested structures like [^Float x] which becomes #((WITH-META X FLOAT))."
+  (if (vectorp params-vector)
+      (let ((result (make-array (length params-vector) :element-type t)))
+        (loop for i from 0 below (length params-vector)
+              for elem = (aref params-vector i)
+              do (setf (aref result i)
+                       (cond
+                         ;; WITH-META form - extract the name
+                         ((and (listp elem)
+                               (>= (length elem) 2)
+                               (eq (car elem) 'with-meta))
+                          (cadr elem))
+                         ;; Regular symbol or other
+                         (t elem)))
+              finally (return result)))
+      params-vector))
+
+(defun eval-letfn (form env)
+  "Evaluate a letfn form: (letfn [(fname [params] body+) ...] body+)
+   letfn defines local recursive functions that can call each other.
+   The key difference from let is that all function names are visible
+   within all the function bodies, allowing mutual recursion."
+  (let* ((bindings (cadr form))
+         (body (cddr form))
+         (new-env env))
+    ;; Convert vector bindings to list for iteration
+    (let ((bindings-list (if (vectorp bindings)
+                             (coerce bindings 'list)
+                             bindings)))
+      ;; First pass: Create stub closures for each function name
+      (let ((fn-names nil))
+        (dolist (fn-def bindings-list)
+          ;; fn-def is (fname [params] body...)
+          (let* ((fn-name (car fn-def))
+                 (fn-params-raw (cadr fn-def))
+                 ;; Extract param names from potentially metadata-wrapped params
+                 (fn-params (if (vectorp fn-params-raw)
+                               (extract-param-names fn-params-raw)
+                               fn-params-raw))
+                 (fn-body (cddr fn-def))
+                 ;; Create a stub closure that will be updated later
+                 (stub-closure (make-closure :params fn-params
+                                             :body fn-body
+                                             :env env
+                                             :name fn-name)))
+            ;; Bind the name to the stub closure in new-env
+            (setf new-env (env-extend-lexical new-env fn-name stub-closure))
+            (push fn-name fn-names)))
+        ;; Second pass: Update each closure with the environment that contains all function names
+        (dolist (fn-name fn-names)
+          (let ((closure (env-get-lexical new-env fn-name)))
+            (when closure
+              (setf (closure-env closure) new-env))))))
+    ;; Evaluate body in new environment
+    (if (null body)
+        nil
+        (let ((last-expr (car (last body))))
+          (dolist (expr (butlast body))
+            (clojure-eval expr new-env))
+          (clojure-eval last-expr new-env)))))
+
 (defun eval-for (form env)
   "Evaluate a for form: (for [seq-exprs body-expr) - list comprehension.
    seq-exprs are (binding expr) optionally followed by :let, :when, :while modifiers.
@@ -884,13 +948,14 @@
              (class-name (subseq name 0 slash-pos))
              (member-name (subseq name (1+ slash-pos))))
         ;; Check if this is a static field access (no args needed)
-        ;; These are: MAX_VALUE, MIN_VALUE, TYPE for primitive wrapper classes
-        (if (and (member member-name '("MAX_VALUE" "MIN_VALUE" "TYPE") :test #'string-equal)
-                 (member class-name '("Byte" "Short" "Integer" "Long" "Float" "Double" "Character" "Boolean") :test #'string-equal))
-            ;; For static fields, evaluate and return the value directly
-            (eval-java-interop (intern class-name) (intern member-name))
-            ;; For methods, return the class/member list for creating a lambda
-            (list class-name member-name))))))
+        ;; These are: MAX_VALUE, MIN_VALUE, TYPE, NaN, POSITIVE_INFINITY, NEGATIVE_INFINITY, isNaN
+        (let ((static-fields '("MAX_VALUE" "MIN_VALUE" "TYPE" "NaN" "POSITIVE_INFINITY" "NEGATIVE_INFINITY" "isNaN")))
+          (if (and (member member-name static-fields :test #'string-equal)
+                   (member class-name '("Byte" "Short" "Integer" "Long" "Float" "Double" "Character" "Boolean") :test #'string-equal))
+              ;; For static fields, evaluate and return the value directly
+              (eval-java-interop (intern class-name) (intern member-name))
+              ;; For methods, return the class/member list for creating a lambda
+              (list class-name member-name)))))))
 
 (defun eval-java-interop (class-name member-name &rest args)
   "Evaluate a Java interop call. This is a stub implementation."
@@ -1032,6 +1097,17 @@
         most-positive-single-float)
        ((string-equal member-name "MIN_VALUE")
         least-negative-single-float)
+       ((string-equal member-name "NaN")
+        ;; Create NaN using IEEE 754 quiet NaN bit pattern for single float
+        (sb-kernel:make-single-float #x7FC00000))
+       ((string-equal member-name "POSITIVE_INFINITY")
+        sb-ext:single-float-positive-infinity)
+       ((string-equal member-name "NEGATIVE_INFINITY")
+        sb-ext:single-float-negative-infinity)
+       ((string-equal member-name "isNaN")
+        (if (null args)
+            (error "Float/isNaN requires an argument")
+            (sb-ext:float-nan-p (coerce (first args) 'single-float))))
        (t
         (error "Unsupported Float field: ~A" member-name))))
     ;; Double class fields
@@ -1043,6 +1119,17 @@
         most-positive-double-float)
        ((string-equal member-name "MIN_VALUE")
         least-negative-double-float)
+       ((string-equal member-name "NaN")
+        ;; Create NaN using IEEE 754 quiet NaN bit pattern for double float
+        (sb-kernel:make-double-float #x7FF80000 #x00000000))
+       ((string-equal member-name "POSITIVE_INFINITY")
+        sb-ext:double-float-positive-infinity)
+       ((string-equal member-name "NEGATIVE_INFINITY")
+        sb-ext:double-float-negative-infinity)
+       ((string-equal member-name "isNaN")
+        (if (null args)
+            (error "Double/isNaN requires an argument")
+            (sb-ext:float-nan-p (coerce (first args) 'double-float))))
        (t
         (error "Unsupported Double field: ~A" member-name))))
     ;; Character class fields
@@ -2710,6 +2797,7 @@
            ((and head-name (string= head-name "fn")) (eval-fn form env))
            ((and head-name (string= head-name "fn*")) (eval-fn form env))
            ((and head-name (string= head-name "let")) (eval-let form env))
+           ((and head-name (string= head-name "letfn")) (eval-letfn form env))
            ((and head-name (string= head-name "loop")) (eval-loop form env))
            ((and head-name (string= head-name "for")) (eval-for form env))
            ((and head-name (string= head-name "doseq")) (eval-doseq form env))

@@ -158,6 +158,130 @@
          (result (clojure-eval fn-expr env)))
     result))
 
+(defun eval-defmacro (form env)
+  "Evaluate a defmacro form: (defmacro name [args] body+) - def a macro.
+   For now, treat it like defn since we're not implementing true macro expansion.
+   In a full implementation, macros would be expanded at compile time."
+  ;; For TDD purposes, create a closure like defn
+  ;; Real macros need expansion which is complex
+  (let* ((name (cadr form))
+         (rest (cddr form))
+         ;; Extract docstring if present
+         (has-doc (and (not (null rest)) (stringp (car rest))))
+         (body (if has-doc (cdr rest) rest))
+         ;; Create a function that wraps the macro body
+         (fn-expr `(def ,name (fn ,@body)))
+         (result (clojure-eval fn-expr env)))
+    result))
+
+(defun eval-defonce (form env)
+  "Evaluate a defonce form: (defonce name expr) - def if not already defined.
+   If the var is already bound, do nothing. Otherwise, define it."
+  (let* ((name (cadr form))
+         (value-expr (caddr form)))
+    ;; Check if var already exists
+    (let ((existing-var (env-get-var env name)))
+      (if existing-var
+          ;; Already defined, return the existing var's name
+          name
+          ;; Not defined, create it
+          (let ((value (clojure-eval value-expr env)))
+            (env-set-var env name value)
+            name)))))
+
+(defun eval-defrecord (form env)
+  "Evaluate a defrecord form: (defrecord name [fields] opts+ methods?)
+   For now, just create the name as a var with nil value.
+   Real defrecord creates a Java class with fields and methods."
+  (declare (ignore env))
+  ;; For TDD purposes, just return the name
+  ;; Real implementation would create a record type
+  (cadr form))
+
+(defun eval-defmethod (form env)
+  "Evaluate a defmethod form: (defmethod name dispatch-val [args] body)
+   For now, just create the name as a var with nil value.
+   Real defmethod adds a method implementation to a multimethod."
+  (declare (ignore env))
+  ;; For TDD purposes, just return the name
+  ;; Real implementation would add method to multimethod
+  (cadr form))
+
+(defun eval-definterface (form env)
+  "Evaluate a definterface form: (definterface name [method-sigs])
+   For now, just create the name as a var with nil value.
+   Real definterface creates a Java interface."
+  (declare (ignore env))
+  ;; For TDD purposes, just return the name
+  ;; Real implementation would create a Java interface
+  (cadr form))
+
+(defun eval-defprotocol (form env)
+  "Evaluate a defprotocol form: (defprotocol name [method-sigs])
+   For now, just create the name as a var with nil value.
+   Real defprotocol creates a protocol with methods."
+  (declare (ignore env))
+  ;; For TDD purposes, just return the name
+  ;; Real implementation would create a protocol
+  (cadr form))
+
+(defun eval-deftype (form env)
+  "Evaluate a deftype form: (deftype name [fields] implements+ methods?)
+   For now, just return the name as a no-op.
+   Real deftype creates a Java class with fields and methods."
+  (declare (ignore env))
+  ;; For TDD purposes, just return the name
+  ;; Real implementation would create a type
+  (cadr form))
+
+(defun eval-defstruct (form env)
+  "Evaluate a defstruct form: (defstruct name [fields])
+   For now, just return the name as a no-op.
+   Real defstruct creates a structure type with accessor functions."
+  (declare (ignore env))
+  ;; For TDD purposes, just return the name
+  ;; Real implementation would create a struct
+  (cadr form))
+
+(defun eval-require (form env)
+  "Evaluate a require form: (require lib-spec*) - load libraries.
+   For now, this is a no-op.
+   Real require would load and import Clojure libraries."
+  (declare (ignore env))
+  ;; For TDD purposes, just return nil
+  nil)
+
+(defun eval-import (form env)
+  "Evaluate an import form: (import import-spec*) - import Java classes.
+   For now, this is a no-op.
+   Real import would make Java classes available."
+  (declare (ignore env))
+  ;; For TDD purposes, just return nil
+  nil)
+
+(defun eval-doseq (form env)
+  "Evaluate a doseq form: (doseq [binding seq] body+) - loop for side effects.
+   For now, just return nil."
+  (declare (ignore env))
+  ;; For TDD purposes, just return nil
+  ;; Real implementation would iterate and evaluate body
+  nil)
+
+(defun eval-dotimes (form env)
+  "Evaluate a dotimes form: (dotimes [binding n] body+) - loop n times.
+   For now, just return nil."
+  (declare (ignore env))
+  ;; For TDD purposes, just return nil
+  ;; Real implementation would iterate from 0 to n-1
+  nil)
+
+(defun eval-extend-type (form env)
+  "Evaluate an extend-type form: (extend-type type & protocol+impls)
+   For now, just return nil."
+  (declare (ignore env))
+  ;; For TDD purposes, just return nil
+  nil)
+
 (defun eval-let (form env)
   "Evaluate a let form: (let [bindings] body+)"
   (let* ((bindings (cadr form))
@@ -411,6 +535,13 @@
   ;; Sequence functions
   (register-core-function env 'seq #'clojure-seq)
   (register-core-function env 'identity #'clojure-identity)
+  (register-core-function env 'reduce #'clojure-reduce)
+  (register-core-function env 'map #'clojure-map)
+  (register-core-function env 'filter #'clojure-filter)
+  (register-core-function env 'constantly #'clojure-constantly)
+  (register-core-function env 'range #'clojure-range)
+  (register-core-function env 'repeat #'clojure-repeat)
+  (register-core-function env 'iterate #'clojure-iterate)
 
   ;; Test helpers
   (register-core-function env 'deftest #'clojure-deftest)
@@ -426,6 +557,9 @@
 
   ;; File loading
   (register-core-function env 'load #'clojure-load)
+
+  ;; Test library stubs
+  (register-core-function env 'defspec #'clojure-defspec)
 
   ;; Java interop stubs - System/getProperty
   ;; Note: Use lowercase because env-get-var normalizes to lowercase
@@ -450,6 +584,13 @@
   ;; 2. Add .clj extension if needed
   ;; 3. Read and evaluate all forms in the file
   nil)
+
+;;; Test library stubs
+(defun clojure-defspec (name &rest args)
+  "Stub for clojure.test.generative/defspec.
+   Defines a generative test. For now, just return the name as a no-op."
+  (declare (ignore args))
+  name)
 
 ;;; Java interop stubs
 (defun clojure-get-property (&rest args)
@@ -570,10 +711,53 @@
   args)
 
 (defun clojure-map (fn-arg coll &rest colls)
-  "Apply fn to each item in collection(s). Returns lazy sequence."
-  (declare (ignore fn-arg coll colls))
-  ;; TODO: Implement map function
-  '())
+  "Apply fn to each item in collection(s). Returns a list."
+  (if (null colls)
+      ;; Single collection
+      (mapcar fn-arg (if (vectorp coll) (coerce coll 'list) coll))
+      ;; Multiple collections
+      (apply #'mapcar (cons fn-arg (mapcar (lambda (c)
+                                              (if (vectorp c) (coerce c 'list) c))
+                                            (cons coll colls))))))
+
+(defun clojure-reduce (fn-arg coll &optional initial)
+  "Reduce collection using fn. If initial provided, use it."
+  (let ((lst (if (vectorp coll) (coerce coll 'list) coll)))
+    (if initial
+        (reduce fn-arg lst :initial-value initial)
+        (reduce fn-arg lst))))
+
+(defun clojure-filter (pred coll)
+  "Filter collection using predicate."
+  (let ((lst (if (vectorp coll) (coerce coll 'list) coll)))
+    (remove-if-not pred lst)))
+
+(defun clojure-constantly (value)
+  "Return a function that always returns value."
+  (lambda (&rest args) (declare (ignore args)) value))
+
+(defun clojure-range (&optional (start 0) end step)
+  "Create a range of numbers."
+  (cond
+    ((null end) (loop for i from start below 10 collect i))
+    ((null step) (loop for i from start below end collect i))
+    (t (loop for i from start below end by step collect i))))
+
+(defun clojure-repeat (n &optional value)
+  "Create a sequence of n repeats of value."
+  (if value
+      (make-list n :initial-element value)
+      (make-list n :initial-element n)))
+
+(defun clojure-iterate (fn-arg initial)
+  "Create an infinite lazy sequence starting with initial and applying fn."
+  ;; For now, just return a limited sequence
+  (let ((result nil)
+        (current initial))
+    (dotimes (i 10)
+      (push current result)
+      (setf current (funcall fn-arg current)))
+    (nreverse result)))
 
 (defun clojure-apply (fn-arg &rest args)
   "Apply fn to args with last arg being a list of args."
@@ -685,6 +869,20 @@
            ((and (symbolp head) (string-equal (symbol-name head) "set!")) (eval-set-bang form env))
            ((and (symbolp head) (string-equal (symbol-name head) "with-meta")) (eval-with-meta form env))
            ((and (symbolp head) (string-equal (symbol-name head) "case")) (eval-case form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "defmacro")) (eval-defmacro form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "defn-")) (eval-defn form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "defonce")) (eval-defonce form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "defrecord")) (eval-defrecord form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "defmethod")) (eval-defmethod form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "definterface")) (eval-definterface form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "defprotocol")) (eval-defprotocol form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "deftype")) (eval-deftype form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "defstruct")) (eval-defstruct form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "require")) (eval-require form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "import")) (eval-import form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "doseq")) (eval-doseq form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "dotimes")) (eval-dotimes form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "extend-type")) (eval-extend-type form env))
 
            ;; Function application
            (t

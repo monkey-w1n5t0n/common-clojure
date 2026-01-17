@@ -325,6 +325,41 @@
     (setup-test-macros env)
     ns-name))
 
+(defun eval-import (form env)
+  "Evaluate an import form: (import & import-lists) - import Java classes.
+   Since we're on SBCL without Java interop, this is a no-op that just records imports.
+   Supports:
+   - (import 'java.lang.String)
+   - (import '(java.util List Map))
+   - (import [java.util List Map])"
+  (declare (ignore env))
+  ;; For SBCL without Java, we just return nil - the import syntax is parsed but does nothing
+  ;; Real Clojure would add these to the namespace's imports map
+  nil)
+
+(defun eval-set-bang (form env)
+  "Evaluate a set! form: (set! var-name value) - set the value of a var.
+   For now, this is a simplified version that just stores the value."
+  ;; (set! target value) - sets the value of target to value
+  ;; Target can be a var, a field (Java interop), or an atomic reference
+  (let* ((target (cadr form))
+         (value-expr (caddr form))
+         (value (clojure-eval value-expr env)))
+    ;; For now, just set the var's value if it exists
+    ;; Real Clojure would handle Java fields, atoms, refs, etc.
+    (typecase target
+      ;; If target is a symbol, set the var's value
+      (symbol
+       (let ((var (env-get-var env target)))
+         (if var
+             (progn
+               (setf (var-value var) value)
+               value)
+             ;; If no var exists, create one
+             (env-set-var env target value))))
+      ;; Otherwise return the value (no-op for unsupported targets)
+      (t value))))
+
 (defun eval-deftest (form env)
   "Evaluate a deftest form: (deftest name body+) - define a test."
   ;; For now, deftest just evaluates the body to check for errors
@@ -393,6 +428,10 @@
   (register-core-function env 'map #'clojure-map)
   (register-core-function env 'apply #'clojure-apply)
   (register-core-function env 'str #'clojure-str)
+  (register-core-function env 'into #'clojure-into)
+  (register-core-function env 'concat #'clojure-concat)
+  (register-core-function env 'range #'clojure-range)
+  (register-core-function env 'into-array #'clojure-into-array)
 
   ;; Predicate functions
   (register-core-function env 'nil? #'clojure-nil?)
@@ -408,6 +447,7 @@
   (register-core-function env 'seq #'clojure-seq)
   (register-core-function env 'identity #'clojure-identity)
   (register-core-function env 'reduce #'clojure-reduce)
+  (register-core-function env 'eval #'clojure-eval-fn)
 
   env)
 
@@ -578,6 +618,58 @@
         coll
         (coerce coll 'list))))
 
+(defun clojure-into (to from)
+  "Conjoin elements from `from` into `to`.
+   (into [] coll) returns a vector with coll's elements
+   (into () coll) returns a list with coll's elements
+   (into x y) uses conj to add y's elements to x"
+  (let ((from-seq (if (listp from) from (coerce from 'list))))
+    (cond
+      ;; If to is a vector, build a new vector
+      ((vectorp to)
+       (coerce (append (coerce to 'list) from-seq) 'vector))
+      ;; If to is a list, append to front (reverse, append, reverse)
+      ((listp to)
+       (append (reverse from-seq) to))
+      ;; If to is nil or empty, return from as-is
+      ((null to)
+       from-seq)
+      ;; Default: just return from (not fully implemented)
+      (t from))))
+
+(defun clojure-concat (&rest colls)
+  "Concatenate sequences together. Returns a lazy sequence."
+  ;; Flatten all collections into a single list
+  (let ((result '()))
+    (dolist (coll (reverse colls))
+      (when coll
+        (let ((coll-list (if (listp coll) coll (coerce coll 'list))))
+          (setf result (append coll-list result)))))
+    result))
+
+(defun clojure-range (&optional (start 0) end step)
+  "Return a lazy sequence of numbers from start (inclusive) to end (exclusive).
+   (range) -> 0 1 2 3 ...
+   (range 10) -> 0 1 2 ... 9
+   (range 1 10) -> 1 2 3 ... 9
+   (range 1 10 2) -> 1 3 5 7 9"
+  (if (null end)
+      ;; One argument: treat as end, start from 0
+      (if (null start)
+          '()
+          (loop for i from 0 below start collect i))
+      ;; Two or three arguments
+      (let ((actual-step (if (null step) 1 step))
+            (actual-end end))
+        (loop for i from start below actual-end by actual-step collect i))))
+
+(defun clojure-into-array (aseq &optional type)
+  "Convert a sequence to a Java array. For SBCL, we return a vector instead."
+  (declare (ignore type))
+  (if (listp aseq)
+      (coerce aseq 'vector)
+      (coerce aseq 'vector)))
+
 (defun clojure-identity (x) x)
 
 (defun clojure-reduce (f init &optional coll)
@@ -591,6 +683,10 @@
       (if (null init)
           (error "Cannot reduce empty collection")
           (reduce f (cdr init) :initial-value (car init)))))
+
+(defun clojure-eval-fn (form)
+  "Evaluate a Clojure form at runtime. This is the eval function available to Clojure code."
+  (clojure-eval form *current-env*))
 
 ;;; Predicate implementations
 (defun clojure-nil? (x) (null x))
@@ -712,6 +808,8 @@
            ((string= head-name "let") (eval-let form env))
            ((string= head-name "loop") (eval-loop form env))
           ((string= head-name "ns") (eval-ns form env))
+           ((string= head-name "import") (eval-import form env))
+           ((string= head-name "set!") (eval-set-bang form env))
 
            ;; Function application
            (t

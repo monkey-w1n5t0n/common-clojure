@@ -2546,3 +2546,49 @@ This correctly handles bindings like `[a (prim-array 1) b (cast 2)]`:
 2. Check if the Clojure readtable is properly initialized during test evaluation
 3. Investigate the vector reading mechanism for `do-template` forms
 4. Continue implementing more core functions as tests require them
+
+---
+
+### Iteration 42 - 2026-01-17
+
+**Focus:** Fix numbers test by implementing cast function and Java class reference handling
+
+**Problem:**
+The numbers test was failing with "Undefined symbol: cast". This was actually due to a different issue than expected - the test had a direct call to the `cast` function (not in `do-template`):
+```clojure
+(let [nan Double/NaN
+      onan (cast Object Double/NaN)]
+  ...)
+```
+
+**Root Cause Analysis:**
+1. `cast` is a Clojure core function for type casting that wasn't implemented
+2. `Object` is a Java class name without package prefix that wasn't recognized
+3. The code only handled fully-qualified class names like `java.lang.Object`
+4. Common Java classes are implicitly imported in Clojure and can be referenced without package prefix
+
+**Changes Made:**
+
+1. **Implemented `clojure-cast` function** - cl-clojure-eval.lisp:3873-3882
+   - Takes a type and a value, returns the value (stub implementation)
+   - For SBCL, we don't have true Java type casting, so just return the value
+   - Registered in `setup-core-functions` at line 2267
+
+2. **Added common Java class name handling** - cl-clojure-eval.lisp:4903-4913
+   - Symbols like `Object`, `String`, `Number`, etc. are now recognized as class references
+   - These are returned as-is (as symbols) for use in type hints and `cast` calls
+   - Supports: Object, String, Number, Integer, Long, Double, Float, Boolean, Character, Byte, Short, Void, Class, and common exception types
+
+**Errors Fixed:**
+- "Undefined symbol: cast" - FIXED ✅ (implemented cast function)
+- "Undefined symbol: Object" - FIXED ✅ (added common Java class name handling)
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅
+- Eval: 31 ok, 54 errors (up from 30!)
+- New passing test: **numbers** ✅
+
+**Next Steps:**
+1. Continue with other test failures
+2. Look at the macros test (still has "Undefined symbol: x" error)
+3. Implement more core functions as tests require them

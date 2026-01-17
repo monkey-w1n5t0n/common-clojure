@@ -6,7 +6,4 @@
   :depends-on ()
   :components ((:file "package")
                (:file "cl-clojure-syntax")
-               (:file "cl-clojure-eval"))
-  :around-compile (lambda (thunk)
-                    (handler-bind ((warning #'muffle-warning))
-                      (funcall thunk))))
+               (:file "cl-clojure-eval")))

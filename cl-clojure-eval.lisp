@@ -328,13 +328,17 @@
 
 (defun clojure-conj (coll &rest xs)
   "Conjoin elements to collection. For lists, adds to front."
-  (declare (notinline arrayp))  ; Avoid type inference issues
   (cond
     ((null xs) coll)
     ((listp coll) (append (reverse xs) coll))
-    ((vectorp coll) (coerce (append (coerce coll 'list) xs) 'vector))
-    ((arrayp coll) (coerce (append (coerce coll 'list) xs) 'vector))
-    (t (append (coerce coll 'list) xs))))
+    ((vectorp coll)
+     ;; Vector - add elements to end
+     (let ((list-coll (coerce coll 'list)))
+       (coerce (append list-coll xs) 'vector)))
+    (t
+     ;; Other types - try to treat as sequence
+     (let ((as-list (coerce coll 'list)))
+       (append (reverse xs) as-list)))))
 
 (defun clojure-first (seq)
   "Return first element of sequence."
@@ -485,20 +489,26 @@
        ;; Bind parameters to arguments
        (cond
          ;; Vector parameters - fixed arity
-         (vectorp params)
-         (loop for param across params
-               for arg in args
-               do (setf new-env (env-extend-lexical new-env param arg)))
-         ;; Handle & rest params
-         (when (and (> (length params) 1)
-                    (find '& params))
-           (let ((&-pos (position '& params))
-                 (rest-params (subseq params (1+ (position '& params))))
-                 (rest-args (nthcdr (length (subseq params 0 (position '& params))) args)))
-             ;; Bind rest param
-             (setf new-env (env-extend-lexical new-env
-                                               (car rest-params)
-                                               rest-args))))
+         ((vectorp params)
+          (loop for param across params
+                for arg in args
+                do (setf new-env (env-extend-lexical new-env param arg))))
+         ;; Vector parameters with & rest params
+         ((and (vectorp params)
+               (> (length params) 1)
+               (find '& params))
+          (let* ((&-pos (position '& params))
+                 (rest-params (subseq params (1+ &-pos)))
+                 (fixed-count &-pos)
+                 (rest-args (nthcdr fixed-count args)))
+            ;; Bind fixed params
+            (loop for i from 0 below &-pos
+                  for arg in args
+                  do (setf new-env (env-extend-lexical new-env (aref params i) arg)))
+            ;; Bind rest param
+            (setf new-env (env-extend-lexical new-env
+                                              (car rest-params)
+                                              rest-args))))
          ;; List parameters
          (t
           (loop for param in params

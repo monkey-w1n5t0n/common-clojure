@@ -296,73 +296,94 @@
     (let ((binding-list (if (vectorp bindings)
                             (coerce bindings 'list)
                             bindings)))
-      ;; Evaluate the for comprehension directly
-      (eval-for-comprehension binding-list body-expr env))))
-
-(defun eval-for-comprehension (clauses body-expr env)
-  "Evaluate a for comprehension by processing clauses and generating results."
-  ;; Parse clauses into binding clauses and modifiers
-  (multiple-value-bind (bindings modifiers)
-      (parse-for-clauses clauses)
-    ;; Evaluate each binding's collection and build results
-    (let ((collections (mapcar (lambda (b) (clojure-eval (cdr b) env))
-                               bindings)))
-      (eval-for-nested bindings collections body-expr modifiers env))))
+      ;; Parse clauses into binding specs with local modifiers
+      ;; and evaluate the for comprehension
+      (eval-for-nested (parse-for-clauses binding-list) body-expr env))))
 
 (defun parse-for-clauses (clauses)
-  "Parse for clauses into ((symbol . expr)...) bindings and ((:when/:while/:let . expr)...) modifiers."
-  (let ((bindings nil)
-        (modifiers nil))
+  "Parse for clauses into ((binding-expr . local-modifiers)...) structure.
+   Each binding-expr is (symbol . collection-expr) and local-modifiers is a list
+   of modifiers that apply to this specific binding.
+   E.g., [x (range 10) :when (odd? x) y (range 4)]
+   => (((x . (range 10)) ((:when . (odd? x)))) ((y . (range 4)) ()))"
+  (let (result)
     (loop while clauses
           do (let ((clause (car clauses))
                    (rest (cdr clauses)))
                (cond
-                 ;; Keyword modifiers
-                 ((member clause '(:when :while :let))
+                 ;; Keyword modifiers - collect for current binding
+                 ((and (symbolp clause)
+                       (keywordp clause)
+                       (member (symbol-name clause) '("when" "while" "let") :test #'string=))
                   (when (null rest)
                     (error "Missing value for ~A in for" clause))
-                  (push (cons clause (car rest)) modifiers)
+                  (when (null result)
+                    (error "Modifier ~A without preceding binding" clause))
+                  ;; Add modifier to the most recent binding's modifiers
+                  (setf (cdr (car result))
+                        (cons (list clause (car rest)) (cdr (car result))))
                   (setf clauses (cdr rest)))
                  ;; Regular binding: symbol expr
                  ((symbolp clause)
                   (when (null rest)
                     (error "Missing expression for binding ~A in for" clause))
-                  (push (cons clause (car rest)) bindings)
+                  (push (cons (cons clause (car rest)) nil) result)
                   (setf clauses (cdr rest)))
                  (t
                   (error "Invalid clause in for: ~A" clause)))))
-    (values (nreverse bindings) (nreverse modifiers))))
+    (values (mapcar (lambda (binding)
+                      (cons (car binding)
+                            (nreverse (cdr binding))))
+                    (nreverse result)))))
 
-(defun eval-for-nested (bindings collections body-expr modifiers env)
-  "Evaluate nested for comprehension, producing list of results."
+(defun apply-local-modifiers (env modifiers)
+  "Apply local modifiers (:when, :while, :let) to an environment.
+   Returns NIL if :when fails or :while fails (filter out this iteration).
+   Returns updated env if :let is present or all modifiers pass."
+  (dolist (modifier modifiers env)
+    (let ((key (car modifier))
+          (value-expr (cdr modifier)))
+      (cond
+        ((eq key :when)
+         (let ((test-val (clojure-eval value-expr env)))
+           (when (falsey? test-val)
+             (return-from apply-local-modifiers nil))))
+        ((eq key :while)
+         (let ((test-val (clojure-eval value-expr env)))
+           (when (falsey? test-val)
+             (return-from apply-local-modifiers nil))))
+        ((eq key :let)
+         ;; :let creates new bindings - value-expr should be a vector of bindings
+         ;; For now, we only handle simple :let [binding expr] forms
+         (when (vectorp value-expr)
+           (let ((bindings-list (coerce value-expr 'list)))
+             (loop for (name val-expr) on bindings-list by #'cddr
+                   while name
+                   do (let ((val (clojure-eval val-expr env)))
+                        (setf env (env-extend-lexical env name val)))))))))))
+
+(defun eval-for-nested (bindings body-expr env)
+  "Evaluate nested for comprehension, producing list of results.
+   bindings is (((symbol . unevaluated-expr) . local-modifiers)...) - exprs are
+   evaluated with current env, and modifiers apply to each iteration of that binding."
   (if (null bindings)
-      ;; Base case: evaluate body with modifiers
+      ;; Base case: evaluate body
       ;; Vectors need to be evaluated element-wise
       (let ((result (if (vectorp body-expr)
                        (coerce (mapcar (lambda (x) (clojure-eval x env))
                                       (coerce body-expr 'list))
                                'vector)
                        (clojure-eval body-expr env))))
-        ;; Apply modifiers
-        (dolist (modifier (reverse modifiers))
-          (let ((key (car modifier))
-                (value-expr (cdr modifier)))
-            (cond
-              ((eq key :when)
-               (let ((test-val (clojure-eval value-expr env)))
-                 (when (falsey? test-val)
-                   (return-from eval-for-nested nil))))
-              ((eq key :while)
-               (let ((test-val (clojure-eval value-expr env)))
-                 (when (falsey? test-val)
-                   (return-from eval-for-nested nil)))))))
         (list result))
       ;; Recursive case: iterate over first collection
-      (let* ((first-coll (car collections))
-             (first-binding (caar bindings))
-             (rest-bindings (cdr bindings))
-             (rest-collections (cdr collections)))
-        (let ((results nil))
+      (let* ((first-binding-spec (car bindings))
+             (first-binding (caar first-binding-spec))
+             (first-expr (cdar first-binding-spec))
+             (local-modifiers (cdr first-binding-spec))
+             (rest-bindings (cdr bindings)))
+        ;; Evaluate the collection expression with current env
+        (let* ((first-coll (clojure-eval first-expr env))
+               (results nil))
           ;; Handle lazy ranges specially to avoid heap exhaustion
           (cond
             ((lazy-range-p first-coll)
@@ -376,22 +397,22 @@
                            for iter-count from 0
                            while (< iter-count iter-limit)
                            do (let* ((new-env (env-extend-lexical env first-binding i))
-                                     (nested-results (eval-for-nested rest-bindings
-                                                                       rest-collections
-                                                                       body-expr
-                                                                       modifiers
-                                                                       new-env)))
-                                (setf results (append results nested-results)))))
+                                     (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                                (when filtered-env
+                                  (let ((nested-results (eval-for-nested rest-bindings
+                                                                        body-expr
+                                                                        filtered-env)))
+                                    (setf results (append results nested-results)))))))
                    ;; Infinite range - limit iterations
                    (loop for i from start by step
                          repeat 1000
                          do (let* ((new-env (env-extend-lexical env first-binding i))
-                                   (nested-results (eval-for-nested rest-bindings
-                                                                     rest-collections
-                                                                     body-expr
-                                                                     modifiers
-                                                                     new-env)))
-                              (setf results (append results nested-results)))))))
+                                   (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                              (when filtered-env
+                                (let ((nested-results (eval-for-nested rest-bindings
+                                                                          body-expr
+                                                                          filtered-env)))
+                                  (setf results (append results nested-results)))))))))
             ;; Regular collection - convert to list
             (t
              (let ((first-coll-list (if (listp first-coll)
@@ -399,12 +420,12 @@
                                         (coerce first-coll 'list))))
                (dolist (elem first-coll-list)
                  (let* ((new-env (env-extend-lexical env first-binding elem))
-                        (nested-results (eval-for-nested rest-bindings
-                                                          rest-collections
-                                                          body-expr
-                                                          modifiers
-                                                          new-env)))
-                   (setf results (append results nested-results)))))))
+                        (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                   (when filtered-env
+                     (let ((nested-results (eval-for-nested rest-bindings
+                                                               body-expr
+                                                               filtered-env)))
+                       (setf results (append results nested-results)))))))))
           results))))
 (defun eval-loop (form env)
   "Evaluate a loop form: (loop [bindings] body+) - with recur support."

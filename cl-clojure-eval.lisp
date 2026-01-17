@@ -94,8 +94,11 @@
       (let ((binding (search-bindings (env-bindings env))))
         (if binding
             (cdr binding)
-            (when (env-parent env)
-              (env-get-lexical (env-parent env) name)))))))
+            (progn
+              ;; DEBUG: Print when not found in current env
+              ;; (format t "~&DEBUG: env-get-lexical: ~A not found in env, checking parent~%" name)
+              (when (env-parent env)
+                (env-get-lexical (env-parent env) name))))))))
 
 (defun env-push-bindings (env bindings)
   "Create a new env frame with additional lexical bindings."
@@ -363,6 +366,8 @@
                                       (coerce name 'list)
                                       name)))
                  ;; Use extend-binding to handle destructuring (including nested vectors)
+                 ;; DEBUG: print binding
+                 ;; (format t "~&DEBUG eval-let: binding ~A to ~A~%" binding-form value)
                  (setf new-env (extend-binding new-env binding-form value)))))
     ;; Evaluate body in new environment
     (if (null body)
@@ -1198,6 +1203,8 @@
   (register-core-function env '> #'clojure>)
   (register-core-function env '<= #'clojure<=)
   (register-core-function env '>= #'clojure>=)
+  (register-core-function env 'min #'clojure-min)
+  (register-core-function env 'max #'clojure-max)
 
   ;; Collection functions
   (register-core-function env 'cons #'clojure-cons)
@@ -1424,6 +1431,18 @@
   (or (null args)
       (and (>= x (car args))
            (apply #'>= args))))
+
+(defun clojure-min (x &rest args)
+  "Return the minimum of the arguments."
+  (if (null args)
+      x
+      (reduce #'min (cons x args))))
+
+(defun clojure-max (x &rest args)
+  "Return the maximum of the arguments."
+  (if (null args)
+      x
+      (reduce #'max (cons x args))))
 
 ;;; Collection functions
 (defun clojure-cons (x seq)

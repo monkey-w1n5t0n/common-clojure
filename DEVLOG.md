@@ -500,3 +500,56 @@ None yet - still investigating the root cause.
 3. Investigate environment parent chain management
 4. Consider adding environment isolation between test forms
 5. Implement simpler stubs to unblock other tests
+
+---
+
+### Iteration 9 - 2025-01-17
+
+**Focus:** Fix "Undefined symbol: a" error - Character literal support identified as root cause
+
+**Investigation Results:**
+
+After extensive debugging, I discovered the root cause of "Undefined symbol: a":
+- The numbers test uses character literals like `\a` in patterns like `(are [xmin xmax a] ...)`
+- In Clojure, `\a` is a character literal syntax
+- In Common Lisp, character literals use `#\a` syntax
+- When the Clojure reader encounters `\a`, it interprets it as a symbol `a` (because `\` is an escape char)
+- The symbol `a` is not defined in the environment, causing "Undefined symbol: a"
+
+**Changes Made:**
+
+1. **Added `min` and `max` functions** - cl-clojure-eval.lisp:1435-1445
+   - `clojure-min` - returns the minimum of arguments
+   - `clojure-max` - returns the maximum of arguments
+   - Both handle variadic arguments correctly
+   - Registered in `setup-core-functions`
+
+**Test Results:**
+- Parse: 68 ok, 0 errors ✅
+- Eval: 5 ok, 63 errors
+- The "numbers" test still fails with "Undefined symbol: a"
+
+**Known Issues:**
+- Clojure character literals (`\a`, `\newline`, etc.) are not supported
+- The Common Lisp reader doesn't understand `\a` syntax
+- Need to either:
+  a) Add a reader macro for backslash to convert `\a` to `#\a`
+  b) Add preprocessing to convert character literals
+  c) Handle character evaluation specially
+
+**Attempted Solutions (Not Completed):**
+- Tried adding backslash as a macro character in the readtable
+- This caused issues with string literals and other backslash uses
+- Preprocessing approach needs careful implementation to handle:
+  - Character literals outside strings: `\a` → `#\a`
+  - Preserving backslashes inside strings
+  - Handling escaped backslashes `\\`
+  - Named characters: `\newline`, `\tab`, etc.
+
+**Next Steps:**
+1. Implement proper Clojure character literal support
+2. Character literals need to be converted: `\a` → `#\a`, `\newline` → `#\Newline`
+3. Must preserve backslashes inside strings
+4. Must handle escaped backslashes `\\` correctly
+5. Consider using a separate preprocessing pass after `preprocess-clojure-dots`
+6. Alternative: Handle character evaluation at eval time

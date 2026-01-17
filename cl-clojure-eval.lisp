@@ -660,6 +660,16 @@
   (current 0))
 
 ;;; ============================================================
+;;; Delay (lazy evaluation) representation
+;;; ============================================================
+
+(defstruct delay
+  "A delay - holds a thunk for delayed evaluation and a cached value."
+  thunk
+  (value nil)
+  (forced-p nil))
+
+;;; ============================================================
 ;;; Closure (function) representation
 ;;; ============================================================
 
@@ -718,6 +728,9 @@
   (register-core-function env 'concat #'clojure-concat)
   (register-core-function env 'range #'clojure-range)
   (register-core-function env 'into-array #'clojure-into-array)
+
+  ;; Delay/Force functions (force is a function, delay is a special form)
+  (register-core-function env 'force #'clojure-force)
 
   ;; Predicate functions
   (register-core-function env 'nil? #'clojure-nil?)
@@ -1202,6 +1215,27 @@
   (terpri)
   nil)
 
+;;; Delay/Force implementations
+(defun clojure-delay (body-fn)
+  "Create a delay that will evaluate body-fn on first force."
+  ;; In Clojure, delay takes a body to evaluate, not a function.
+  ;; We need to capture the environment to create a proper thunk.
+  ;; For now, we'll create a delay that holds the thunk.
+  (make-delay :thunk body-fn))
+
+(defun clojure-force (delay-obj)
+  "Force a delay, evaluating its thunk if not already done."
+  (if (delay-p delay-obj)
+      (if (delay-forced-p delay-obj)
+          (delay-value delay-obj)
+          ;; Evaluate and cache
+          (let ((value (funcall (delay-thunk delay-obj))))
+            (setf (delay-value delay-obj) value)
+            (setf (delay-forced-p delay-obj) t)
+            value))
+      ;; If not a delay object, just return as-is (Clojure behavior)
+      delay-obj))
+
 ;;; ============================================================
 ;;; Test Helper Special Forms (from clojure.test)
 ;;; ============================================================
@@ -1335,6 +1369,13 @@
            ((and head-name (string= head-name "import")) (eval-import form env))
            ((and head-name (string= head-name "set!")) (eval-set-bang form env))
            ((and head-name (string= head-name "declare")) (eval-declare form env))
+           ((and head-name (string= head-name "delay"))
+            ;; delay creates a lazy computation: (delay body)
+            ;; Returns a delay object that will evaluate body when forced
+            (let ((body (cadr form)))
+              ;; Create a closure that captures the environment
+              (make-delay :thunk (lambda () (clojure-eval body env))
+                          :forced-p nil)))
            ((and head-name (string= head-name "with-meta"))
             ;; with-meta attaches metadata to a value
             ;; (with-meta value metadata) -> value with metadata

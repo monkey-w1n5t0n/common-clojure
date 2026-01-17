@@ -706,3 +706,61 @@ After extensive debugging, I discovered the root cause of "Undefined symbol: a":
 3. May need to investigate if there's an unexpected `read` call somewhere
 4. Implement `mapcat` function
 5. Implement `re-find` and regex support
+
+---
+
+### Iteration 13 - 2025-01-17
+
+**Focus:** Fix bigint/BigDecimal suffix case sensitivity, vector element evaluation, and NaN handling
+
+**Changes Made:**
+
+1. **Fixed bigint/BigDecimal suffix detection to be case-sensitive** - cl-clojure-eval.lisp:2713-2741
+   - Changed `char-equal` to `char=` for `N` and `M` suffix checks
+   - Now only uppercase `N` (123N) and `M` (1.2M) trigger bigint/BigDecimal parsing
+   - Reordered cond clauses to check Java interop (`/`) before suffix checks
+   - This fixes "junk in string" errors for symbols like `set/union`, `m/sin`, `Float/NaN`
+
+2. **Fixed vector element evaluation** - cl-clojure-eval.lisp:2871-2876
+   - Vectors now evaluate their elements before returning
+   - Previously, vectors were returned as-is with unevaluated symbols
+   - This allows symbols like `nan` and `zero` in vectors `[ nan zero zero ]` to be correctly resolved to their bound values
+
+3. **Implemented NaN-aware `min` and `max` functions** - cl-clojure-eval.lisp:1527-1553
+   - `clojure-min` and `clojure-max` now check for NaN values before comparison
+   - If any argument is NaN, return NaN (Clojure's "NaN contagion" behavior)
+   - This prevents FLOATING-POINT-INVALID-OPERATION errors when comparing NaN with numbers
+
+**Root Cause Analysis:**
+
+The "junk in string Float/NaN" error had multiple causes:
+1. **Case-insensitive suffix check**: `set/union` ends with `n` (lowercase), and `char-equal` matched `#\N`. This caused the code to try parsing `set/unio` as an integer.
+2. **Wrong cond order**: `Float/NaN` ends with `N` and was being treated as a bigint literal before Java interop check.
+3. **Vector elements not evaluated**: Symbols in vectors remained as symbols instead of being resolved to their bound values.
+
+**Errors Fixed:**
+- "junk in string set/union" - FIXED ✅ (suffix detection now case-sensitive)
+- "junk in string m/sin" - FIXED ✅ (suffix detection now case-sensitive)
+- "junk in string Float/NaN" - FIXED ✅ (cond order fixed, Java interop checked first)
+- "The value |nan| is not of type REAL" - FIXED ✅ (vector elements now evaluated)
+- "arithmetic error FLOATING-POINT-INVALID-OPERATION" - FIXED ✅ (NaN-aware min/max)
+
+**Known Issues:**
+- Control stack overflow when evaluating numbers test - circular reference in letfn closures
+- The `eval-letfn` function creates closures with environments that reference the same closures
+- When SBCL tries to print these circular structures (e.g., in error messages), it goes into infinite recursion
+
+**Test Results:**
+- Parse: 68 ok, 0 errors ✅ (character literal reader didn't break anything)
+- Eval: Still running (control stack overflow during test)
+- The "numbers" test now progresses much further but fails due to letfn circular reference
+
+**Next Steps:**
+1. Fix the letfn circular reference issue to prevent stack overflow
+2. The issue is that we update closure-env to point to new-env, which contains bindings to the same closures
+3. Possible solutions:
+   a) Don't store the full environment in closures after they're created
+   b) Use a different environment structure that avoids circular references
+   c) Implement letfn without updating closure environments after creation
+4. Continue implementing more core functions as tests require them
+

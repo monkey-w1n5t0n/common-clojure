@@ -1525,16 +1525,32 @@
            (apply #'>= args))))
 
 (defun clojure-min (x &rest args)
-  "Return the minimum of the arguments."
-  (if (null args)
-      x
-      (reduce #'min (cons x args))))
+  "Return the minimum of the arguments.
+   If any argument is NaN, return NaN (Clojure behavior)."
+  (let ((all (cons x args)))
+    ;; If any value is NaN, return NaN
+    (if (some (lambda (v) (and (floatp v) (sb-ext:float-nan-p v))) all)
+        ;; Return the first NaN we find (preserving type if possible)
+        (or (find-if (lambda (v) (and (floatp v) (sb-ext:float-nan-p v))) all)
+            (sb-kernel:make-single-float #x7FC00000))
+        ;; Otherwise, use CL's min (which works for non-NaN floats)
+        (if (null args)
+            x
+            (reduce #'min all)))))
 
 (defun clojure-max (x &rest args)
-  "Return the maximum of the arguments."
-  (if (null args)
-      x
-      (reduce #'max (cons x args))))
+  "Return the maximum of the arguments.
+   If any argument is NaN, return NaN (Clojure behavior)."
+  (let ((all (cons x args)))
+    ;; If any value is NaN, return NaN
+    (if (some (lambda (v) (and (floatp v) (sb-ext:float-nan-p v))) all)
+        ;; Return the first NaN we find (preserving type if possible)
+        (or (find-if (lambda (v) (and (floatp v) (sb-ext:float-nan-p v))) all)
+            (sb-kernel:make-single-float #x7FC00000))
+        ;; Otherwise, use CL's max (which works for non-NaN floats)
+        (if (null args)
+            x
+            (reduce #'max all)))))
 
 (defun clojure-abs (x)
   "Return the absolute value of x."
@@ -2710,18 +2726,8 @@
                            (char-equal (char name 1) #\x))
                       ;; Parse as hexadecimal
                       (parse-integer name :start 2 :radix 16))
-                     ;; BigInt literal symbols (e.g., 123N) - ending with N
-                     ((and (> (length name) 1)
-                           (char-equal (char name (1- (length name))) #\N))
-                      ;; Parse as integer (just return the number, ignoring bigint semantics)
-                      (parse-integer name :end (1- (length name))))
-                     ;; BigDecimal literal symbols (e.g., 123.45M) - ending with M
-                     ((and (> (length name) 1)
-                           (char-equal (char name (1- (length name))) #\M))
-                      ;; Parse as float (just return the number, ignoring decimal semantics)
-                      (read-from-string (subseq name 0 (1- (length name)))))
-                     ;; Java interop symbols (e.g., Math/round)
-                     ;; Return a lambda that when called with args, evaluates the Java interop
+                     ;; Java interop symbols (e.g., Math/round) - check BEFORE N/M suffix checks
+                     ;; because Java interop can have / in names like Float/NaN
                      ((find #\/ name)
                       (let ((result (java-interop-stub-lookup form)))
                         (cond
@@ -2738,6 +2744,17 @@
                           ;; Unknown
                           (t
                            (error "Undefined symbol: ~A" form)))))
+                     ;; BigInt literal symbols (e.g., 123N) - ending with N (case-sensitive)
+                     ;; Must NOT contain / (handled above as Java interop)
+                     ((and (> (length name) 1)
+                           (char= (char name (1- (length name))) #\N))
+                      ;; Parse as integer (just return the number, ignoring bigint semantics)
+                      (parse-integer name :end (1- (length name))))
+                     ;; BigDecimal literal symbols (e.g., 123.45M) - ending with M (case-sensitive)
+                     ((and (> (length name) 1)
+                           (char= (char name (1- (length name))) #\M))
+                      ;; Parse as float (just return the number, ignoring decimal semantics)
+                      (read-from-string (subseq name 0 (1- (length name)))))
                      ;; Java constructor calls (e.g., Byte., Integer.)
                      ;; These are symbols ending with a dot
                      ((and (> (length name) 1)
@@ -2867,8 +2884,12 @@
                                       rest-form)))
                     (apply-function fn-value args))))))))
 
-      ;; Vector - evaluate elements (for some contexts)
-      (vector form)
+      ;; Vector - evaluate each element
+      (vector
+        ;; Create a new vector with evaluated elements
+        (coerce (mapcar (lambda (x) (clojure-eval x env))
+                       (coerce form 'list))
+                'vector))
 
       ;; Hash table - evaluate as map literal
       (hash-table form)

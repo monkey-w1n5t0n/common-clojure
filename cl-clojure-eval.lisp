@@ -1070,22 +1070,33 @@
              (class-name (subseq name 0 slash-pos))
              (member-name (subseq name (1+ slash-pos))))
         ;; Special case: clojure.math constants (m/E, m/PI)
-        ;; Check this FIRST and return immediately if found
-        (when (and (or (string-equal class-name "m") (string-equal class-name "clojure.math"))
-                   (member member-name '("E" "PI") :test #'string-equal))
-          (cond
-            ((string-equal member-name "E") (return-from java-interop-stub-lookup (coerce (exp 1.0d0) 'double-float)))
-            ((string-equal member-name "PI") (return-from java-interop-stub-lookup (coerce pi 'double-float)))))
-        ;; Check if this is a static field access (no args needed)
-        ;; These are: MAX_VALUE, MIN_VALUE, TYPE, NaN, POSITIVE_INFINITY, NEGATIVE_INFINITY
-        ;; Note: isNaN is a METHOD, not a static field, so it's NOT in this list
-        (let ((static-fields '("MAX_VALUE" "MIN_VALUE" "TYPE" "NaN" "POSITIVE_INFINITY" "NEGATIVE_INFINITY")))
-          (if (and (member member-name static-fields :test #'string-equal)
-                   (member class-name '("Byte" "Short" "Integer" "Long" "Float" "Double" "Character" "Boolean") :test #'string-equal))
-              ;; For static fields, evaluate and return the value directly
-              (eval-java-interop (intern class-name) (intern member-name))
-              ;; For methods, return the class/member list for creating a lambda
-              (list class-name member-name)))))))
+        ;; These must return numeric values directly, not lambda stubs
+        ;; Use a simple cond with return-from for each case
+        (cond
+          ;; m/E - Euler's number
+          ((and (string-equal class-name "m") (string-equal member-name "E"))
+           (coerce (exp 1.0d0) 'double-float))
+          ;; m/PI - Pi constant
+          ((and (string-equal class-name "m") (string-equal member-name "PI"))
+           (coerce pi 'double-float))
+          ;; clojure.math/E
+          ((and (string-equal class-name "clojure.math") (string-equal member-name "E"))
+           (coerce (exp 1.0d0) 'double-float))
+          ;; clojure.math/PI
+          ((and (string-equal class-name "clojure.math") (string-equal member-name "PI"))
+           (coerce pi 'double-float))
+          ;; All other cases fall through to below
+          (t
+           ;; Check if this is a static field access (no args needed)
+           ;; These are: MAX_VALUE, MIN_VALUE, TYPE, NaN, POSITIVE_INFINITY, NEGATIVE_INFINITY
+           ;; Note: isNaN is a METHOD, not a static field, so it's NOT in this list
+           (let ((static-fields '("MAX_VALUE" "MIN_VALUE" "TYPE" "NaN" "POSITIVE_INFINITY" "NEGATIVE_INFINITY")))
+             (if (and (member member-name static-fields :test #'string-equal)
+                      (member class-name '("Byte" "Short" "Integer" "Long" "Float" "Double" "Character" "Boolean") :test #'string-equal))
+                 ;; For static fields, evaluate and return the value directly
+                 (eval-java-interop (intern class-name) (intern member-name))
+                 ;; For methods, return the class/member list for creating a lambda
+                 (list class-name member-name)))))))))
 
 (defun eval-java-interop (class-name member-name &rest args)
   "Evaluate a Java interop call. This is a stub implementation."
@@ -3840,21 +3851,40 @@
                      ;; Java interop symbols (e.g., Math/round) - check BEFORE N/M suffix checks
                      ;; because Java interop can have / in names like Float/NaN
                      ((find #\/ name)
-                      (let ((result (java-interop-stub-lookup form)))
+                      ;; Special case for clojure.math constants - these must return values directly
+                      (let* ((slash-pos (position #\/ name))
+                             (class-part (subseq name 0 slash-pos))
+                             (member-part (subseq name (1+ slash-pos))))
                         (cond
-                          ;; Static field access - result is the value directly
-                          ((and result (not (consp result)))
-                           result)
-                          ;; Method access - result is (class-name member-name)
-                          (result
-                           (lambda (&rest args)
-                             (apply #'eval-java-interop
-                                    (intern (car result))
-                                    (intern (cadr result))
-                                    args)))
-                          ;; Unknown
+                          ;; m/E and m/PI constants - return numeric values directly
+                          ((and (string-equal class-part "m")
+                                (or (string-equal member-part "E") (string-equal member-part "PI")))
+                           (if (string-equal member-part "E")
+                               (coerce (exp 1.0d0) 'double-float)
+                               (coerce pi 'double-float)))
+                          ;; clojure.math/E and clojure.math/PI constants
+                          ((and (string-equal class-part "clojure.math")
+                                (or (string-equal member-part "E") (string-equal member-part "PI")))
+                           (if (string-equal member-part "E")
+                               (coerce (exp 1.0d0) 'double-float)
+                               (coerce pi 'double-float)))
+                          ;; General Java interop - use stub lookup
                           (t
-                           (error "Undefined symbol: ~A" form)))))
+                           (let ((result (java-interop-stub-lookup form)))
+                             (cond
+                               ;; Static field access - result is the value directly
+                               ((and result (not (consp result)))
+                                result)
+                               ;; Method access - result is (class-name member-name)
+                               (result
+                                (lambda (&rest args)
+                                  (apply #'eval-java-interop
+                                         (intern (car result))
+                                         (intern (cadr result))
+                                         args)))
+                               ;; Unknown
+                               (t
+                                (error "Undefined symbol: ~A" form))))))))
                      ;; BigInt literal symbols (e.g., 123N) - ending with N (case-sensitive)
                      ;; Must NOT contain / (handled above as Java interop)
                      ((and (> (length name) 1)

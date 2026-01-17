@@ -251,6 +251,40 @@ This indicates that `m/E` is returning a lambda instead of the numeric value `e`
 2. Consider adding debug output to trace the evaluation path
 3. Alternative: handle m/E and m/PI at a different level (e.g., in the reader)
 
+**Update:**
+Multiple attempts to fix this issue have failed:
+1. Added return-from in java-interop-stub-lookup - didn't work
+2. Added constants to eval-java-interop - didn't work
+3. Added special case handling in symbol evaluation - didn't work
+
+The lambda is still being returned, suggesting the conditions are not matching.
+Possibly the symbol name or format is different than expected.
+
+---
+
+### Iteration 25 - 2025-01-17
+
+**Focus:** Add m/E and m/PI special case in symbol evaluation
+
+**Attempted Fix:**
+Added special case handling for `m/E` and `m/PI` directly in the symbol
+evaluation code, before calling `java-interop-stub-lookup`. This extracts
+the class and member parts from the symbol name and checks for the constants.
+
+**Result:**
+Still returning a lambda instead of the numeric value. The conditions
+should match but don't appear to be working.
+
+**Test Results:**
+- Parse: 77 ok, 8 errors
+- Eval: 25 ok, 60 errors
+- Math test still fails with lambda being returned for m/E
+
+**Next Steps:**
+1. Add actual debug output to see what the symbol name actually is
+2. Consider whether the issue is at the reader level
+3. Look for other ways to reference E and PI in the test
+
 ---
 
 ### Iteration 5 - 2025-01-17

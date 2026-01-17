@@ -407,3 +407,42 @@ The error `|double| is not of type REAL` was caused by multiple bugs:
 2. Implement `mapcat` function
 3. Implement `re-find` and regex support
 4. Add more core functions as tests require them
+
+---
+
+### Iteration 7 - 2025-01-17
+
+**Focus:** Fix array function signatures and clojure= arity issue
+
+**Changes Made:**
+
+1. **Fixed array function signatures** - cl-clojure-eval.lisp:1734-1781
+   - All array creation functions now accept optional `init-val` parameter
+   - `byte-array`, `short-array`, `char-array`, `int-array`, `long-array`, `float-array`, `double-array`, `boolean-array`
+   - Changed from `(&optional size-or-seq)` to `(&optional size-or-seq init-val)`
+   - Supports `(array-name size)` and `(array-name size init-value)` forms
+   - This fixes tests like `(boolean-array 1 true)` where the initial value is specified
+
+2. **Fixed `clojure=` to handle variadic comparison** - cl-clojure-eval.lisp:1391-1402
+   - The function was using `(apply #'equal processed-args)` which fails with 3+ arguments
+   - Common Lisp's `equal` is a binary predicate (only accepts 2 arguments)
+   - Changed to use `every` with pairwise comparison: all elements must equal the first
+   - Now correctly handles `(= a b c d ...)` for any number of arguments
+
+**Root Cause Analysis:**
+The error "invalid number of arguments: 2" was initially caused by array functions being called with 2 arguments `(boolean-array 1 true)` but only accepting 1 optional argument. After fixing that, the error changed to "invalid number of arguments: 3" which was caused by `clojure=` calling CL's `equal` with 3 arguments.
+
+**Errors Fixed:**
+- "invalid number of arguments: 2" - FIXED ✅ (array function signatures)
+- "invalid number of arguments: 3" - FIXED ✅ (clojure= variadic comparison)
+
+**Test Results:**
+- Parse: 68 ok, 0 errors ✅
+- Eval: 5 ok, 63 errors
+- The "numbers" test now progresses past the array type tests but fails on "Undefined symbol: a"
+
+**Next Steps:**
+1. Debug the "Undefined symbol: a" error in the numbers test
+2. Implement `mapcat` function
+3. Implement `re-find` and regex support
+4. Add more core functions as tests require them

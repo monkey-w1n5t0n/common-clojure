@@ -1397,7 +1397,9 @@
                                            (lazy-range-to-list x)
                                            x))
                                      args)))
-        (apply #'equal processed-args))))
+        ;; equal is binary, so we need to check pairwise
+        (every (lambda (x) (equal (car processed-args) x))
+               (cdr processed-args)))))
 
 (defun clojure< (x &rest args)
   "True if arguments are in strictly increasing order."
@@ -1731,51 +1733,53 @@
   (clojure-double-array seq))
 
 ;; Array creation functions - stubs that create vectors
-(defun clojure-byte-array (&optional size-or-seq)
-  "Create a byte array. Returns a vector for SBCL."
+(defun clojure-byte-array (&optional size-or-seq init-val)
+  "Create a byte array. Returns a vector for SBCL.
+   Supports (byte-array size), (byte-array size init-val), or (byte-array seq)."
   (if (integerp size-or-seq)
-      (make-array size-or-seq :initial-element 0)
+      (make-array size-or-seq :initial-element (or init-val 0))
       (coerce (or size-or-seq '()) 'vector)))
 
-(defun clojure-short-array (&optional size-or-seq)
+(defun clojure-short-array (&optional size-or-seq init-val)
   "Create a short array. Returns a vector for SBCL."
   (if (integerp size-or-seq)
-      (make-array size-or-seq :initial-element 0)
+      (make-array size-or-seq :initial-element (or init-val 0))
       (coerce (or size-or-seq '()) 'vector)))
 
-(defun clojure-char-array (&optional size-or-seq)
+(defun clojure-char-array (&optional size-or-seq init-val)
   "Create a char array. Returns a vector for SBCL."
   (if (integerp size-or-seq)
-      (make-array size-or-seq :initial-element #\Nul)
+      (make-array size-or-seq :initial-element (or init-val #\Nul))
       (coerce (or size-or-seq '()) 'vector)))
 
-(defun clojure-int-array (&optional size-or-seq)
+(defun clojure-int-array (&optional size-or-seq init-val)
   "Create an int array. Returns a vector for SBCL."
   (if (integerp size-or-seq)
-      (make-array size-or-seq :initial-element 0)
+      (make-array size-or-seq :initial-element (or init-val 0))
       (coerce (or size-or-seq '()) 'vector)))
 
-(defun clojure-long-array (&optional size-or-seq)
+(defun clojure-long-array (&optional size-or-seq init-val)
   "Create a long array. Returns a vector for SBCL."
   (if (integerp size-or-seq)
-      (make-array size-or-seq :initial-element 0)
+      (make-array size-or-seq :initial-element (or init-val 0))
       (coerce (or size-or-seq '()) 'vector)))
 
-(defun clojure-float-array (&optional size-or-seq)
+(defun clojure-float-array (&optional size-or-seq init-val)
   "Create a float array. Returns a vector for SBCL."
   (if (integerp size-or-seq)
-      (make-array size-or-seq :initial-element 0.0)
+      (make-array size-or-seq :initial-element (or init-val 0.0))
       (coerce (or size-or-seq '()) 'vector)))
 
-(defun clojure-double-array (&optional size-or-seq)
+(defun clojure-double-array (&optional size-or-seq init-val)
   "Create a double array. Returns a vector for SBCL."
   (if (integerp size-or-seq)
-      (make-array size-or-seq :initial-element 0.0d0)
+      (make-array size-or-seq :initial-element (or init-val 0.0d0))
       (coerce (or size-or-seq '()) 'vector)))
-(defun clojure-boolean-array (&optional size-or-seq)
+
+(defun clojure-boolean-array (&optional size-or-seq init-val)
   "Create a boolean array. Returns a vector for SBCL."
   (if (integerp size-or-seq)
-      (make-array size-or-seq :initial-element nil)
+      (make-array size-or-seq :initial-element init-val)
       (coerce (or size-or-seq '()) 'vector)))
 
 ;; Array operations

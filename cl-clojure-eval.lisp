@@ -693,6 +693,21 @@
                                                                           body-expr
                                                                           filtered-env)))
                                   (setf results (append results nested-results)))))))))
+            ;; Hash table (map) - convert to list of [key value] vectors
+            ((hash-table-p first-coll)
+             (let ((entries '()))
+               (maphash (lambda (k v)
+                         (push (coerce (list k v) 'vector) entries))
+                       first-coll)
+               (let ((first-coll-list (nreverse entries)))
+                 (dolist (elem first-coll-list)
+                   (let* ((new-env (extend-binding env first-binding elem))
+                          (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                     (when filtered-env
+                       (let ((nested-results (eval-for-nested rest-bindings
+                                                                 body-expr
+                                                                 filtered-env)))
+                         (setf results (append results nested-results)))))))))
             ;; Regular collection - convert to list
             (t
              (let ((first-coll-list (if (listp first-coll)
@@ -758,6 +773,18 @@
                                    (filtered-env (apply-local-modifiers new-env local-modifiers)))
                               (when filtered-env
                                 (eval-doseq-nested rest-bindings body-exprs filtered-env)))))))
+            ;; Hash table (map) - convert to list of [key value] vectors
+            ((hash-table-p first-coll)
+             (let ((entries '()))
+               (maphash (lambda (k v)
+                         (push (coerce (list k v) 'vector) entries))
+                       first-coll)
+               (let ((first-coll-list (nreverse entries)))
+                 (dolist (elem first-coll-list)
+                   (let* ((new-env (env-extend-lexical env first-binding elem))
+                          (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                     (when filtered-env
+                       (eval-doseq-nested rest-bindings body-exprs filtered-env)))))))
             ;; Regular collection
             (t
              (let ((first-coll-list (if (listp first-coll)
@@ -2402,7 +2429,9 @@
       (null (cdr args))
       (let* ((processed-args (mapcar (lambda (x)
                                        (if (lazy-range-p x)
-                                           (lazy-range-to-list x)
+                                           (lazy-range-to-list x (if (lazy-range-end x)
+                                                                     most-positive-fixnum
+                                                                     10000))
                                            x))
                                      args)))
         ;; equal is binary, so we need to check pairwise
@@ -2668,7 +2697,10 @@
           (let ((coll-lists (mapcar (lambda (c)
                                       (cond
                                         ((null c) '())
-                                        ((lazy-range-p c) (lazy-range-to-list c))
+                                        ((lazy-range-p c)
+                                         (lazy-range-to-list c (if (lazy-range-end c)
+                                                                   most-positive-fixnum
+                                                                   10000)))
                                         ((listp c) c)
                                         (t (coerce c 'list))))
                                   all-colls)))
@@ -2685,7 +2717,9 @@
     ;; Convert last-arg to list if it's a lazy range or vector
     (let ((last-as-list (cond
                          ((lazy-range-p last-arg)
-                          (lazy-range-to-list last-arg))
+                          (lazy-range-to-list last-arg (if (lazy-range-end last-arg)
+                                                            most-positive-fixnum
+                                                            10000)))
                          ((vectorp last-arg)
                           (coerce last-arg 'list))
                          (t last-arg))))
@@ -2705,7 +2739,10 @@
    (into () coll) returns a list with coll's elements
    (into x y) uses conj to add y's elements to x"
   (let ((from-seq (cond
-                    ((lazy-range-p from) (lazy-range-to-list from))
+                    ((lazy-range-p from)
+                     (lazy-range-to-list from (if (lazy-range-end from)
+                                                   most-positive-fixnum
+                                                   10000)))
                     ((listp from) from)
                     (t (coerce from 'list)))))
     (cond
@@ -2728,7 +2765,10 @@
     (dolist (coll (reverse colls))
       (when coll
         (let ((coll-list (cond
-                           ((lazy-range-p coll) (lazy-range-to-list coll))
+                           ((lazy-range-p coll)
+                            (lazy-range-to-list coll (if (lazy-range-end coll)
+                                                         most-positive-fixnum
+                                                         10000)))
                            ((listp coll) coll)
                            (t (coerce coll 'list)))))
           (setf result (append coll-list result)))))
@@ -2745,7 +2785,10 @@
           (dolist (item (reverse mapped))
             (when item
               (let ((item-list (cond
-                                 ((lazy-range-p item) (lazy-range-to-list item))
+                                 ((lazy-range-p item)
+                                  (lazy-range-to-list item (if (lazy-range-end item)
+                                                                most-positive-fixnum
+                                                                10000)))
                                  ((listp item) item)
                                  (t (coerce item 'list)))))
                 (setf result (append item-list result)))))
@@ -2756,7 +2799,10 @@
           (dolist (item (reverse mapped))
             (when item
               (let ((item-list (cond
-                                 ((lazy-range-p item) (lazy-range-to-list item))
+                                 ((lazy-range-p item)
+                                  (lazy-range-to-list item (if (lazy-range-end item)
+                                                                most-positive-fixnum
+                                                                10000)))
                                  ((listp item) item)
                                  (t (coerce item 'list)))))
                 (setf result (append item-list result)))))
@@ -2818,7 +2864,10 @@
                        type  ;; (into-array :int-type coll) - use type arg as seq
                        aseq)))  ;; Normal case: aseq is the sequence
     (let ((seq-to-convert (cond
-                            ((lazy-range-p actual-seq) (lazy-range-to-list actual-seq))
+                            ((lazy-range-p actual-seq)
+                             (lazy-range-to-list actual-seq (if (lazy-range-end actual-seq)
+                                                                most-positive-fixnum
+                                                                10000)))
                             ((listp actual-seq) actual-seq)
                             (t (coerce actual-seq 'list)))))
       (coerce seq-to-convert 'vector))))
@@ -3364,14 +3413,18 @@
         (if (null coll)
             init
             (let ((coll-list (if (lazy-range-p coll)
-                                 (lazy-range-to-list coll)
+                                 (lazy-range-to-list coll (if (lazy-range-end coll)
+                                                               most-positive-fixnum
+                                                               10000))
                                  coll)))
               (reduce callable-f (cdr coll-list) :initial-value (funcall callable-f init (car coll-list)))))
         ;; 2-argument form: (reduce f coll)
         (if (null init)
             (error "Cannot reduce empty collection")
             (let ((coll-list (if (lazy-range-p init)
-                                 (lazy-range-to-list init)
+                                 (lazy-range-to-list init (if (lazy-range-end init)
+                                                               most-positive-fixnum
+                                                               10000))
                                  init)))
               (reduce callable-f (cdr coll-list) :initial-value (car coll-list)))))))
 

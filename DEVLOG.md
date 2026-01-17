@@ -1999,3 +1999,66 @@ The root cause of the "(UNSIGNED-BYTE 58)" error remains unclear. The function i
 - Implemented `clojure-remove` function (opposite of `filter`)
 - Registered `remove` as a core function
 - The clearing test now progresses past the `remove` call but fails on Java interop (expected)
+
+---
+
+### Iteration 34 - 2025-01-17
+
+**Focus:** Fix hash table iteration in doseq/for and heap exhaustion from infinite lazy ranges
+
+**Changes Made:**
+
+1. **Fixed `doseq` to handle hash tables (maps)** - cl-clojure-eval.lisp:761-772
+   - When iterating over a hash table with `doseq`, convert to list of [key value] vectors
+   - Use `maphash` to iterate over hash table entries
+   - Each entry becomes a vector `[key value]` for binding
+   - This matches Clojure's behavior where `(doseq [[k v] map] ...)` works
+
+2. **Fixed `for` comprehension to handle hash tables** - cl-clojure-eval.lisp:696-708
+   - Same fix as doseq - convert hash tables to lists of entry vectors
+   - Enables iteration over maps in for comprehensions
+
+3. **Fixed heap exhaustion from infinite lazy ranges** - multiple locations
+   - Added limit parameter (10000) to all `lazy-range-to-list` calls for infinite ranges
+   - Functions fixed:
+     - `clojure-into` (line 2735)
+     - `clojure-concat` (line 2761)
+     - `clojure-mapcat` (lines 2788, 2799)
+     - `clojure-into-array` (line 2867)
+     - `clojure-apply` (line 2719)
+     - `clojure-map` (line 2699)
+     - `clojure=` (line 2431)
+     - `clojure-reduce` (lines 3415, 3422)
+   - Pattern: `(lazy-range-to-list lr (if (lazy-range-end lr) most-positive-fixnum 10000))`
+
+**Root Cause Analysis:**
+
+The predicates test was failing with "The value #<HASH-TABLE> is not of type SEQUENCE" because:
+1. The test defined `sample-data` as a hash table (map)
+2. `doseq` was called to iterate over this map
+3. Our `doseq` implementation tried to `(coerce hash-table 'list)` which fails
+4. Clojure maps need to be converted to sequences of [key value] pairs first
+
+The heap exhaustion was caused by:
+1. Many functions called `lazy-range-to-list` without a limit parameter
+2. For infinite lazy ranges (no end), this would try to materialize all elements
+3. Since the range is infinite, this would exhaust memory
+4. The fix adds a 10000 element limit for infinite ranges
+
+**Errors Fixed:**
+- "The value #<HASH-TABLE ...> is not of type SEQUENCE" - FIXED ✅ (hash table iteration)
+- Heap exhaustion during test execution - FIXED ✅ (lazy range limits)
+- predicates test now progresses past doseq over map
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅
+- Eval: 30 ok, 55 errors (same count, but no more heap exhaustion!)
+- Tests now run to completion instead of crashing
+- predicates test now fails on "Undefined symbol: new" instead of hash table error
+
+**Next Steps:**
+1. Implement `new` special form (Java constructor invocation)
+2. Implement `list?` predicate
+3. Implement `diff` function
+4. Implement `next` function
+5. Continue with other test failures

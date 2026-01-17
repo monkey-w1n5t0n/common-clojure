@@ -440,6 +440,68 @@
                                                                filtered-env)))
                        (setf results (append results nested-results)))))))))
           results))))
+
+(defun eval-doseq (form env)
+  "Evaluate a doseq form: (doseq [seq-exprs] body+) - execute body for side effects.
+   Like for but returns nil. seq-exprs are (binding expr) optionally followed
+   by :let, :when, :while modifiers."
+  (let* ((bindings-body (cdr form))
+         (bindings (car bindings-body))
+         (body-exprs (cadr bindings-body)))
+    ;; Convert vector bindings to list
+    (let ((binding-list (if (vectorp bindings)
+                            (coerce bindings 'list)
+                            bindings)))
+      ;; Execute the doseq comprehension (returns nil)
+      (eval-doseq-nested (parse-for-clauses binding-list) body-exprs env)
+      nil)))
+
+(defun eval-doseq-nested (bindings body-exprs env)
+  "Evaluate nested doseq comprehension, executing body-exprs for each iteration.
+   Returns nil (doseq is for side effects only)."
+  (if (null bindings)
+      ;; Base case: evaluate body expressions
+      (dolist (expr (if (listp body-exprs) body-exprs (list body-exprs)))
+        (clojure-eval expr env))
+      ;; Recursive case: iterate over first collection
+      (let* ((first-binding-spec (car bindings))
+             (first-binding (caar first-binding-spec))
+             (first-expr (cdar first-binding-spec))
+             (local-modifiers (cdr first-binding-spec))
+             (rest-bindings (cdr bindings)))
+        ;; Evaluate the collection expression with current env
+        (let* ((first-coll (clojure-eval first-expr env)))
+          ;; Handle lazy ranges specially
+          (cond
+            ((lazy-range-p first-coll)
+             (let ((start (lazy-range-start first-coll))
+                   (end (lazy-range-end first-coll))
+                   (step (lazy-range-step first-coll)))
+               (if end
+                   ;; Bounded range
+                   (loop for i from start below end by step
+                         do (let* ((new-env (env-extend-lexical env first-binding i))
+                                   (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                              (when filtered-env
+                                (eval-doseq-nested rest-bindings body-exprs filtered-env))))
+                   ;; Infinite range - limit iterations
+                   (loop for i from start by step
+                         repeat 1000
+                         do (let* ((new-env (env-extend-lexical env first-binding i))
+                                   (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                              (when filtered-env
+                                (eval-doseq-nested rest-bindings body-exprs filtered-env)))))))
+            ;; Regular collection
+            (t
+             (let ((first-coll-list (if (listp first-coll)
+                                        first-coll
+                                        (coerce first-coll 'list))))
+               (dolist (elem first-coll-list)
+                 (let* ((new-env (env-extend-lexical env first-binding elem))
+                        (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                   (when filtered-env
+                     (eval-doseq-nested rest-bindings body-exprs filtered-env)))))))))))
+
 (defun eval-loop (form env)
   "Evaluate a loop form: (loop [bindings] body+) - with recur support."
   ;; For now, loop is like let but recur needs special handling
@@ -1103,6 +1165,7 @@
            ((string= head-name "let") (eval-let form env))
            ((string= head-name "loop") (eval-loop form env))
            ((string= head-name "for") (eval-for form env))
+           ((string= head-name "doseq") (eval-doseq form env))
           ((string= head-name "ns") (eval-ns form env))
            ((string= head-name "import") (eval-import form env))
            ((string= head-name "set!") (eval-set-bang form env))

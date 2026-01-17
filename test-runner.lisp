@@ -4,11 +4,11 @@
 ;;;; This attempts to load and run Clojure test files, reporting what works and what doesn't
 
 (require 'asdf)
-(load "cl-clojure-syntax.asd")
-(asdf:load-system :cl-clojure-syntax)
+(load "cl-clojure.asd")
+(asdf:load-system :cl-clojure)
 
 (defpackage #:clojure-test-runner
-  (:use #:cl #:cl-clojure-syntax))
+  (:use #:cl #:cl-clojure-syntax #:cl-clojure-eval))
 
 (in-package #:clojure-test-runner)
 
@@ -65,11 +65,20 @@
 ;;; Try to evaluate/run a Clojure file
 (defun try-run-clojure-file (path)
   "Try to run a Clojure test file. Returns (values eval-status tests-passed tests-failed).
-   Currently returns :not-implemented since eval isn't built yet."
-  (declare (ignore path))
-  ;; TODO: Implement Clojure evaluation
-  ;; For now, mark all as not-implemented with 0 passed, 1 failed (the file itself)
-  (values :not-implemented 0 1))
+   Evaluates each form in the file and returns results."
+  (handler-case
+      (progn
+        ;; Initialize the eval system if needed
+        (unless *current-env*
+          (init-eval-system))
+        ;; Evaluate the file
+        (eval-file (namestring path))
+        ;; For now, count as passed if we got through without errors
+        ;; TODO: Actually count test assertions (deftest, is, etc.)
+        (values :ok 1 0))
+    (error (c)
+      (format t "~&Error evaluating ~A: ~A~%" (pathname-name path) c)
+      (values :error 0 1))))
 
 ;;; Run all tests and collect results
 (defun run-all-tests ()

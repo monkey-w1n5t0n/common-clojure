@@ -1206,6 +1206,7 @@
   (register-core-function env '>= #'clojure>=)
   (register-core-function env 'min #'clojure-min)
   (register-core-function env 'max #'clojure-max)
+  (register-core-function env 'abs #'clojure-abs)
 
   ;; Collection functions
   (register-core-function env 'cons #'clojure-cons)
@@ -1270,8 +1271,11 @@
   (register-core-function env 'quot #'clojure-quot)
   (register-core-function env 'rem #'clojure-rem)
   (register-core-function env 'mod #'clojure-mod)
+  (register-core-function env 'numerator #'clojure-numerator)
+  (register-core-function env 'denominator #'clojure-denominator)
   (register-core-function env 'even? #'clojure-even?)
   (register-core-function env 'odd? #'clojure-odd?)
+  (register-core-function env 'NaN? #'clojure-NaN?)
   (register-core-function env 'neg? #'clojure-neg?)
   (register-core-function env 'pos? #'clojure-pos?)
   (register-core-function env 'zero? #'clojure-zero?)
@@ -1444,6 +1448,10 @@
   (if (null args)
       x
       (reduce #'max (cons x args))))
+
+(defun clojure-abs (x)
+  "Return the absolute value of x."
+  (abs x))
 
 ;;; Collection functions
 (defun clojure-cons (x seq)
@@ -1836,16 +1844,20 @@
 
 ;; Class/type introspection stubs
 (defun clojure-class (x)
-  "Return the class of x. Stub for SBCL - returns a keyword representing the type."
+  "Return the class of x. Stub for SBCL - returns a keyword or symbol representing the type."
   (cond
-    ((integerp x) :integer)
-    ((floatp x) :float)
-    ((stringp x) :string)
-    ((characterp x) :char)
-    ((vectorp x) :vector)
-    ((listp x) :list)
-    ((hash-table-p x) :map)
-    (t :object)))
+    ;; For very large integers that would be BigInt in Clojure
+    ((and (integerp x) (or (> x most-positive-fixnum) (< x most-negative-fixnum)))
+     'clojure.lang.BigInt)
+    ;; For regular integers
+    ((integerp x) 'java.lang.Long)
+    ((floatp x) 'java.lang.Double)
+    ((stringp x) 'java.lang.String)
+    ((characterp x) 'java.lang.Character)
+    ((vectorp x) 'clojure.lang.PersistentVector)
+    ((listp x) 'clojure.lang.PersistentList)
+    ((hash-table-p x) 'clojure.lang.PersistentHashMap)
+    (t 'java.lang.Object)))
 (defun clojure-type (x)
   "Return the type of x. Same as class for our stub."
   (clojure-class x))
@@ -1860,12 +1872,28 @@
 (defun clojure-mod (num div)
   "Return the modulo of num and div (same sign as div)."
   (mod num div))
+(defun clojure-numerator (x)
+  "Return the numerator of a rational number."
+  (if (rationalp x)
+      (numerator x)
+      ;; For integers, the numerator is the number itself
+      x))
+(defun clojure-denominator (x)
+  "Return the denominator of a rational number."
+  (if (rationalp x)
+      (denominator x)
+      ;; For integers, the denominator is 1
+      1))
 (defun clojure-even? (x)
   "Return true if x is even."
   (if (and (integerp x) (evenp x)) 'true nil))
 (defun clojure-odd? (x)
   "Return true if x is odd."
   (if (and (integerp x) (oddp x)) 'true nil))
+(defun clojure-NaN? (x)
+  "Return true if x is NaN (Not a Number)."
+  ;; In SBCL, we can check for NaN using the NaN predicate
+  (if (and (floatp x) (sb-ext:float-nan-p x)) 'true nil))
 (defun clojure-neg? (x)
   "Return true if x is negative."
   (if (and (numberp x) (< x 0)) 'true nil))
@@ -2631,6 +2659,12 @@
                       (let ((class-name (subseq name 0 (1- (length name)))))
                         (lambda (&rest args)
                           (eval-java-constructor (intern class-name) args))))
+                     ;; Java class references (e.g., clojure.lang.BigInt, java.lang.String)
+                     ;; These are dotted symbols that refer to classes, not constructors
+                     ((find #\. name)
+                      ;; Return the symbol itself as a class reference
+                      ;; This matches what clojure-class returns for type checking
+                      form)
                      ;; Undefined symbol
                      (t
                       (error "Undefined symbol: ~A" form))))))))

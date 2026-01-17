@@ -597,3 +597,60 @@ After extensive debugging, I discovered the root cause of "Undefined symbol: a":
 1. Implement `denominator` function
 2. Implement `numerator` function (likely needed too)
 3. Continue adding more core functions as tests require them
+
+---
+
+### Iteration 11 - 2025-01-17
+
+**Focus:** Implement denominator, numerator, abs, NaN?, and Java class references
+
+**Changes Made:**
+
+1. **Implemented `numerator` function** - cl-clojure-eval.lisp:1865-1870
+   - Returns the numerator of a rational number
+   - For integers, returns the number itself
+   - Delegates to CL's `numerator` for rational types
+
+2. **Implemented `denominator` function** - cl-clojure-eval.lisp:1871-1876
+   - Returns the denominator of a rational number
+   - For integers, returns 1
+   - Delegates to CL's `denominator` for rational types
+
+3. **Implemented `abs` function** - cl-clojure-eval.lisp:1451-1453
+   - Returns the absolute value of a number
+   - Delegates to CL's `abs` function
+
+4. **Implemented `NaN?` predicate** - cl-clojure-eval.lisp:1893-1896
+   - Returns true if x is NaN (Not a Number)
+   - Uses SBCL's `sb-ext:float-nan-p` for detection
+
+5. **Implemented Java class reference support** - cl-clojure-eval.lisp:2657-2662
+   - Dotted symbols like `clojure.lang.BigInt` now evaluate to themselves
+   - These are treated as class references, not undefined symbols
+   - Allows tests to compare class symbols using `=`
+
+6. **Updated `clojure-class` function** - cl-clojure-eval.lisp:1845-1859
+   - Now returns Clojure-style class symbols instead of CL keywords
+   - Returns `clojure.lang.BigInt` for very large integers
+   - Returns `java.lang.Long` for regular integers
+   - Returns `java.lang.Double`, `java.lang.String`, etc. for appropriate types
+
+**Errors Fixed:**
+- "Undefined symbol: denominator" - FIXED ✅
+- "Undefined symbol: numerator" - FIXED ✅
+- "Undefined symbol: abs" - FIXED ✅
+- "Undefined symbol: NaN?" - FIXED ✅
+- "Undefined symbol: clojure.lang.BigInt" - FIXED ✅
+- Class comparison with `=` now works correctly
+
+**Test Results:**
+- Parse: 60 ok, 8 errors ✅
+- Eval: 5 ok, 63 errors
+- The "numbers" test now progresses past denominator, numerator, abs, NaN?, and class references
+- Next error in numbers test: "junk in string letfn" - needs `letfn` special form
+
+**Next Steps:**
+1. Implement `letfn` special form (recursive local function binding)
+2. Implement `mapcat` function
+3. Implement `re-find` and regex support
+4. Add more core functions as tests require them

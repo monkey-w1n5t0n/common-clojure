@@ -952,6 +952,129 @@
           ;; Finally, evaluate the built nested form
           (clojure-eval result env)))))
 
+(defun eval-some-thread-first (form env)
+  "Evaluate a some-> (some-thread-first) form: (some-> x form1 form2 ...)
+   Threads the expression as the first argument through the forms.
+   Returns nil if any intermediate result is nil.
+   (some-> x f g) becomes (if x (g (f x)) nil)"
+  (let* ((forms (cdr form)))
+    (if (null forms)
+        nil
+        ;; Start with the first expression (evaluated)
+        (let ((result (clojure-eval (car forms) env)))
+          ;; Thread through remaining forms, short-circuiting on nil
+          (dolist (form-expr (cdr forms))
+            (when (not (null result))
+              (typecase form-expr
+                ;; If it's a list, insert result as first arg
+                (cons
+                 (let ((fn-sym (car form-expr))
+                       (args (cdr form-expr)))
+                   (setq result (clojure-eval (cons fn-sym (cons result args)) env))))
+                ;; If it's a symbol, just call it with result
+                (symbol
+                 (setq result (clojure-eval (list form-expr result) env))))))
+          result))))
+
+(defun eval-some-thread-last (form env)
+  "Evaluate a some->> (some-thread-last) form: (some->> x form1 form2 ...)
+   Threads the expression as the last argument through the forms.
+   Returns nil if any intermediate result is nil.
+   (some->> x f g) becomes (if x (g (f x)) nil)"
+  (let* ((forms (cdr form)))
+    (if (null forms)
+        nil
+        ;; Start with the first expression (evaluated)
+        (let ((result (clojure-eval (car forms) env)))
+          ;; Thread through remaining forms, short-circuiting on nil
+          (dolist (form-expr (cdr forms))
+            (when (not (null result))
+              (typecase form-expr
+                ;; If it's a list, insert result as last arg
+                (cons
+                 (let ((fn-sym (car form-expr))
+                       (args (cdr form-expr)))
+                   (setq result (clojure-eval (append (list fn-sym) args (list result)) env))))
+                ;; If it's a symbol, just call it with result
+                (symbol
+                 (setq result (clojure-eval (list form-expr result) env))))))
+          result))))
+
+(defun eval-cond-thread-first (form env)
+  "Evaluate a cond-> (cond-thread-first) form: (cond-> x expr1 form1 expr2 form2 ...)
+   Threads the expression as the first argument through forms when corresponding expressions are truthy.
+   (cond-> 0 true inc true (- 2)) becomes (- (inc 0) 2)"
+  (let* ((forms (cdr form)))
+    (if (null forms)
+        (error "cond-thread-first requires at least one expression")
+        ;; Start with the first expression (evaluated)
+        (let ((result (clojure-eval (car forms) env)))
+          ;; Thread through condition/form pairs
+          (do ((rest-forms (cdr forms) (cddr rest-forms)))
+              ((or (null rest-forms) (null (cdr rest-forms))) result)
+            (let ((condition (clojure-eval (car rest-forms) env))
+                  (action-form (cadr rest-forms)))
+              (when condition
+                (typecase action-form
+                  ;; If it's a list, insert result as first arg
+                  (cons
+                   (let ((fn-sym (car action-form))
+                         (args (cdr action-form)))
+                     (setq result (clojure-eval (cons fn-sym (cons result args)) env))))
+                  ;; If it's a symbol, just call it with result
+                  (symbol
+                   (setq result (clojure-eval (list action-form result) env)))
+                  ;; Otherwise just use the form as-is
+                  (t
+                   (setq result (clojure-eval action-form env)))))))))))
+
+(defun eval-cond-thread-last (form env)
+  "Evaluate a cond->> (cond-thread-last) form: (cond->> x expr1 form1 expr2 form2 ...)
+   Threads the expression as the last argument through forms when corresponding expressions are truthy.
+   (cond->> 0 true inc true (- 2)) becomes (- 2 (inc 0))"
+  (let* ((forms (cdr form)))
+    (if (null forms)
+        (error "cond-thread-last requires at least one expression")
+        ;; Start with the first expression (evaluated)
+        (let ((result (clojure-eval (car forms) env)))
+          ;; Thread through condition/form pairs
+          (do ((rest-forms (cdr forms) (cddr rest-forms)))
+              ((or (null rest-forms) (null (cdr rest-forms))) result)
+            (let ((condition (clojure-eval (car rest-forms) env))
+                  (action-form (cadr rest-forms)))
+              (when condition
+                (typecase action-form
+                  ;; If it's a list, insert result as last arg
+                  (cons
+                   (let ((fn-sym (car action-form))
+                         (args (cdr action-form)))
+                     (setq result (clojure-eval (append (list fn-sym) args (list result)) env))))
+                  ;; If it's a symbol, just call it with result
+                  (symbol
+                   (setq result (clojure-eval (list action-form result) env)))
+                  ;; Otherwise just use the form as-is
+                  (t
+                   (setq result (clojure-eval action-form env)))))))))))
+
+(defun eval-as-thread (form env)
+  "Evaluate an as-> form: (as-> expr name form+)
+   Threads the expression through forms with an explicit name binding.
+   (as-> 0 x (inc x)) becomes (let [x 0] (inc x))"
+  (let* ((forms (cdr form)))
+    (when (or (null forms) (null (cdr forms)))
+      (error "as-> requires an initial expression, a name, and at least one form"))
+    (let* ((initial-expr (car forms))
+           (name (cadr forms))
+           (body-forms (cddr forms))
+           (initial-value (clojure-eval initial-expr env))
+           (new-env (env-extend-lexical env name initial-value)))
+      ;; Evaluate each body form, rebinding name to result
+      (dolist (body-form body-forms)
+        (let ((result (clojure-eval body-form new-env)))
+          (setf new-env (env-extend-lexical new-env name result))))
+      ;; Return the final value
+      (env-get-lexical new-env name))))
+
 (defun eval-try (form env)
   "Evaluate a try form: (try body catch* finally?)
    Simplified implementation for basic exception handling."
@@ -2075,6 +2198,7 @@
   (register-core-function env 'seq #'clojure-seq)
   (register-core-function env 'identity #'clojure-identity)
   (register-core-function env 'last #'clojure-last)
+  (register-core-function env 'reverse #'clojure-reverse)
   (register-core-function env 'reduce #'clojure-reduce)
   ;; Macro expansion functions
   (register-core-function env 'macroexpand-1 #'clojure-macroexpand-1)
@@ -2958,15 +3082,245 @@
        (aref coll (1- (length coll)))))
     (t (car (last (coerce coll 'list))))))
 
+(defun clojure-reverse (coll)
+  "Return a new sequence with elements in reverse order."
+  (cond
+    ((null coll) nil)
+    ((listp coll) (reverse coll))
+    ((vectorp coll) (coerce (reverse (coerce coll 'list)) 'vector))
+    (t (reverse (coerce coll 'list)))))
+
+(defun expand-thread-first-macro (form)
+  "Expand a -> (thread-first) macro call WITHOUT evaluating.
+   (-> a (b c d) e) expands to (e (b a c d))
+   Preserves metadata on symbols and lists."
+  (labels ((is-meta-wrapper-p (x)
+             "Check if x is a metadata-wrapped value (cons cell starting with meta-wrapper)."
+             (and (consp x) (eq (car x) 'meta-wrapper)))
+           (unwrap-if-needed (x)
+             "Unwrap x if it's wrapped with metadata, otherwise return x."
+             (if (is-meta-wrapper-p x)
+                 (unwrap-value x)
+                 x))
+           (get-meta-if-any (x)
+             "Get metadata from x if it's wrapped, otherwise nil."
+             (if (is-meta-wrapper-p x)
+                 (get-wrapped-metadata x)
+                 nil))
+           (wrapped-symbol-p (x)
+             "Check if x is a metadata-wrapped symbol (not a wrapped list)."
+             (and (is-meta-wrapper-p x)
+                  (let ((value (unwrap-value x)))
+                    (symbolp value))))
+           (wrapped-list-p (x)
+             "Check if x is a metadata-wrapped list (not a wrapped symbol)."
+             (and (is-meta-wrapper-p x)
+                  (let ((value (unwrap-value x)))
+                    (consp value))))
+           (maybe-wrap-with-meta (value meta)
+             "Wrap value with metadata if meta is non-nil."
+             (if meta
+                 (wrap-with-meta value meta)
+                 value)))
+    (let* ((forms (cdr form)))
+      (if (null forms)
+          form  ; Just return form unchanged if no forms
+          ;; Start with the first form, unwrapping and preserving its metadata
+          (let* ((first-form (car forms))
+                 (first-meta (get-meta-if-any first-form))
+                 (result (unwrap-if-needed first-form)))
+            ;; Preserve metadata on initial value
+            (when first-meta
+              (setq result (maybe-wrap-with-meta result first-meta)))
+            ;; Thread through remaining forms, building the nested call
+            (dolist (form-expr (cdr forms))
+              (cond
+                ;; If it's a metadata-wrapped LIST, unwrap and treat as list
+                ((wrapped-list-p form-expr)
+                 (let* ((form-meta (get-meta-if-any form-expr))
+                        (unwrapped-list (unwrap-if-needed form-expr))
+                        (fn-sym (car unwrapped-list))
+                        (fn-meta (get-meta-if-any fn-sym))
+                        (args (cdr unwrapped-list))
+                        ;; Unwrap and build new args with result inserted first
+                        (unwrapped-fn (unwrap-if-needed fn-sym))
+                        (unwrapped-args (mapcar #'unwrap-if-needed args))
+                        (new-args (cons result unwrapped-args))
+                        ;; Build the function position - wrap with fn metadata if present
+                        (fn-position (if fn-meta
+                                        (maybe-wrap-with-meta unwrapped-fn fn-meta)
+                                        unwrapped-fn))
+                        ;; Build the new call
+                        (new-call (cons fn-position new-args)))
+                   ;; Preserve metadata on the list form itself
+                   (when form-meta
+                     (setq new-call (maybe-wrap-with-meta new-call form-meta)))
+                   (setq result new-call)))
+                ;; If it's a metadata-wrapped SYMBOL, treat it as a symbol call
+                ((wrapped-symbol-p form-expr)
+                 (let* ((form-meta (get-meta-if-any form-expr))
+                        (unwrapped-sym (unwrap-if-needed form-expr))
+                        ;; Wrap function with metadata if present
+                        (fn-position (if form-meta
+                                        (maybe-wrap-with-meta unwrapped-sym form-meta)
+                                        unwrapped-sym))
+                        (new-call (list fn-position result)))
+                   (setq result new-call)))
+                ;; If it's a list (function call), insert result as first arg
+                ((consp form-expr)
+                 (let* ((form-meta (get-meta-if-any form-expr))
+                        (fn-sym (car form-expr))
+                        (fn-meta (get-meta-if-any fn-sym))
+                        (args (cdr form-expr))
+                        ;; Unwrap and build new args with result inserted first
+                        (unwrapped-fn (unwrap-if-needed fn-sym))
+                        (unwrapped-args (mapcar #'unwrap-if-needed args))
+                        (new-args (cons result unwrapped-args))
+                        ;; Build the function position - wrap with fn metadata if present
+                        (fn-position (if fn-meta
+                                        (maybe-wrap-with-meta unwrapped-fn fn-meta)
+                                        unwrapped-fn))
+                        ;; Build the new call
+                        (new-call (cons fn-position new-args)))
+                   ;; Preserve metadata on the list form itself (e.g., '(b c d))
+                   (when form-meta
+                     (setq new-call (maybe-wrap-with-meta new-call form-meta)))
+                   (setq result new-call)))
+                ;; If it's a symbol, just call it with result
+                ((symbolp form-expr)
+                 (let* ((new-call (list form-expr result)))
+                   (setq result new-call)))
+                ;; If it's a vector or other non-list, just use it as-is
+                (t
+                 (setq result form-expr))))
+            result)))))
+
+(defun expand-thread-last-macro (form)
+  "Expand a ->> (thread-last) macro call WITHOUT evaluating.
+   (->> a (b c d) e) expands to (e (b c d a))
+   Preserves metadata on symbols and lists."
+  (labels ((is-meta-wrapper-p (x)
+             "Check if x is a metadata-wrapped value (cons cell starting with meta-wrapper)."
+             (and (consp x) (eq (car x) 'meta-wrapper)))
+           (unwrap-if-needed (x)
+             "Unwrap x if it's wrapped with metadata, otherwise return x."
+             (if (is-meta-wrapper-p x)
+                 (unwrap-value x)
+                 x))
+           (get-meta-if-any (x)
+             "Get metadata from x if it's wrapped, otherwise nil."
+             (if (is-meta-wrapper-p x)
+                 (get-wrapped-metadata x)
+                 nil))
+           (wrapped-symbol-p (x)
+             "Check if x is a metadata-wrapped symbol (not a wrapped list)."
+             (and (is-meta-wrapper-p x)
+                  (let ((value (unwrap-value x)))
+                    (symbolp value))))
+           (wrapped-list-p (x)
+             "Check if x is a metadata-wrapped list (not a wrapped symbol)."
+             (and (is-meta-wrapper-p x)
+                  (let ((value (unwrap-value x)))
+                    (consp value))))
+           (maybe-wrap-with-meta (value meta)
+             "Wrap value with metadata if meta is non-nil."
+             (if meta
+                 (wrap-with-meta value meta)
+                 value)))
+    (let* ((forms (cdr form)))
+      (if (null forms)
+          form  ; Just return form unchanged if no forms
+          ;; Start with the first form, unwrapping and preserving its metadata
+          (let* ((first-form (car forms))
+                 (first-meta (get-meta-if-any first-form))
+                 (result (unwrap-if-needed first-form)))
+            ;; Preserve metadata on initial value
+            (when first-meta
+              (setq result (maybe-wrap-with-meta result first-meta)))
+            ;; Thread through remaining forms, building the nested call
+            (dolist (form-expr (cdr forms))
+              (cond
+                ;; If it's a metadata-wrapped LIST, unwrap and treat as list
+                ((wrapped-list-p form-expr)
+                 (let* ((form-meta (get-meta-if-any form-expr))
+                        (unwrapped-list (unwrap-if-needed form-expr))
+                        (fn-sym (car unwrapped-list))
+                        (fn-meta (get-meta-if-any fn-sym))
+                        (args (cdr unwrapped-list))
+                        ;; Unwrap args
+                        (unwrapped-fn (unwrap-if-needed fn-sym))
+                        (unwrapped-args (mapcar #'unwrap-if-needed args))
+                        ;; Build the function position - wrap with fn metadata if present
+                        (fn-position (if fn-meta
+                                        (maybe-wrap-with-meta unwrapped-fn fn-meta)
+                                        unwrapped-fn))
+                        ;; Build the new call with result as last arg
+                        (new-call (append (list fn-position) unwrapped-args (list result))))
+                   ;; Preserve metadata on the list form itself
+                   (when form-meta
+                     (setq new-call (maybe-wrap-with-meta new-call form-meta)))
+                   (setq result new-call)))
+                ;; If it's a metadata-wrapped SYMBOL, treat it as a symbol call
+                ((wrapped-symbol-p form-expr)
+                 (let* ((form-meta (get-meta-if-any form-expr))
+                        (unwrapped-sym (unwrap-if-needed form-expr))
+                        ;; Wrap function with metadata if present
+                        (fn-position (if form-meta
+                                        (maybe-wrap-with-meta unwrapped-sym form-meta)
+                                        unwrapped-sym))
+                        (new-call (list fn-position result)))
+                   (setq result new-call)))
+                ;; If it's a list (function call), insert result as last arg
+                ((consp form-expr)
+                 (let* ((form-meta (get-meta-if-any form-expr))
+                        (fn-sym (car form-expr))
+                        (fn-meta (get-meta-if-any fn-sym))
+                        (args (cdr form-expr))
+                        ;; Unwrap args
+                        (unwrapped-fn (unwrap-if-needed fn-sym))
+                        (unwrapped-args (mapcar #'unwrap-if-needed args))
+                        ;; Build the function position - wrap with fn metadata if present
+                        (fn-position (if fn-meta
+                                        (maybe-wrap-with-meta unwrapped-fn fn-meta)
+                                        unwrapped-fn))
+                        ;; Build the new call with result as last arg
+                        (new-call (append (list fn-position) unwrapped-args (list result))))
+                   ;; Preserve metadata on the list form itself (e.g., '(b c d))
+                   (when form-meta
+                     (setq new-call (maybe-wrap-with-meta new-call form-meta)))
+                   (setq result new-call)))
+                ;; If it's a symbol, just call it with result
+                ((symbolp form-expr)
+                 (let* ((new-call (list form-expr result)))
+                   (setq result new-call)))
+                ;; If it's a vector or other non-list, just use it as-is
+                (t
+                 (setq result form-expr))))
+            result)))))
+
 (defun clojure-macroexpand-1 (form &optional env)
   "If form represents a macro call, return the expanded form.
-   Otherwise return form unchanged."
+   Otherwise return form unchanged.
+   Currently handles -> and ->> threading macros."
   (declare (ignore env))
-  ;; For now, just return the form unchanged since macros are handled
-  ;; at evaluation time in our current implementation.
-  ;; A proper implementation would check if the car of form is a macro
-  ;; and expand it by calling the macro function.
-  form)
+  ;; Check if this is a list (potential macro call)
+  (if (consp form)
+      (let ((head (car form)))
+        (if (symbolp head)
+            (let ((head-name (symbol-name head)))
+              (cond
+                ;; Thread-first macro ->
+                ((string= head-name "->")
+                 (expand-thread-first-macro form))
+                ;; Thread-last macro ->>
+                ((string= head-name "->>")
+                 (expand-thread-last-macro form))
+                ;; For other macros, return form unchanged for now
+                (t form)))
+            ;; Not a symbol at head, return form unchanged
+            form))
+      ;; Not a list, return form unchanged
+      form))
 
 (defun clojure-macroexpand (form &optional env)
   "Repeatedly call macroexpand-1 until form is no longer a macro call.
@@ -4039,12 +4393,17 @@
 
       ;; Symbol - look up in environment
       (symbol
-       ;; Check lexical bindings first
-       (or (env-get-lexical env form)
-           ;; Then check vars
-           (let ((var (env-get-var env form)))
-             (if var
-                 (var-value var)
+       ;; Handle Clojure's nil, true, false as self-evaluating
+       (cond
+         ((string= (symbol-name form) "nil") nil)
+         ((string= (symbol-name form) "true") t)
+         ((string= (symbol-name form) "false") nil)
+         ;; Check lexical bindings first
+         (t (or (env-get-lexical env form)
+                 ;; Then check vars
+                 (let ((var (env-get-var env form)))
+                   (if var
+                       (var-value var)
                  ;; Check for special symbol forms
                  (let ((name (symbol-name form)))
                    (cond
@@ -4118,7 +4477,7 @@
                       form)
                      ;; Undefined symbol
                      (t
-                      (error "Undefined symbol: ~A" form))))))))
+                      (error "Undefined symbol: ~A" form))))))))))
 
       ;; List - evaluate as function call or special form
       (cons
@@ -4186,6 +4545,11 @@
            ((and head-name (string= head-name "defspec")) (eval-defspec form env))
            ((and head-name (string= head-name "->")) (eval-thread-first form env))
            ((and head-name (string= head-name "->>")) (eval-thread-last form env))
+           ((and head-name (string= head-name "some->")) (eval-some-thread-first form env))
+           ((and head-name (string= head-name "some->>")) (eval-some-thread-last form env))
+           ((and head-name (string= head-name "cond->")) (eval-cond-thread-first form env))
+           ((and head-name (string= head-name "cond->>")) (eval-cond-thread-last form env))
+           ((and head-name (string= head-name "as->")) (eval-as-thread form env))
            ((and head-name (string= head-name "is")) (eval-is form env))
            ((and head-name (string= head-name "testing")) (eval-testing form env))
            ((and head-name (string= head-name "are")) (eval-are form env))
@@ -4195,6 +4559,7 @@
            ((and head-name (string= head-name "let")) (eval-let form env))
            ((and head-name (string= head-name "letfn")) (eval-letfn form env))
            ((and head-name (string= head-name "loop")) (eval-loop form env))
+           ((and head-name (string= head-name "recur")) nil)  ; stub: recur just returns nil, exiting the loop
            ((and head-name (string= head-name "for")) (eval-for form env))
            ((and head-name (string= head-name "doseq")) (eval-doseq form env))
            ((and head-name (string= head-name "ns")) (eval-ns form env))

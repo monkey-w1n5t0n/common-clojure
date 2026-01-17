@@ -289,12 +289,17 @@
       ((or (symbolp token) (stringp token))
        (let ((name (if (symbolp token) (symbol-name token) token)))
          (cond
-           ((string= name "Inf") sb-ext:single-float-positive-infinity)
-           ((string= name "-Inf") sb-ext:single-float-negative-infinity)
+           ((string= name "Inf")
+            ;; Use most-positive-double-float as a proxy for infinity
+            ;; Note: SBCL's float handling may differ from Java's
+            most-positive-double-float)
+           ((string= name "-Inf")
+            ;; Use most-negative-double-float as a proxy for -infinity
+            most-negative-double-float)
            ((string= name "NaN")
-            ;; Create NaN using IEEE 754 quiet NaN bit pattern for single float
-            ;; Bit pattern: 0x7FC00000 (sign=0, exp=255, mantissa with high bit set)
-            (sb-kernel:make-single-float #x7FC00000))
+            ;; Create NaN using IEEE 754 quiet NaN bit pattern for double float
+            ;; Bit pattern for double: 0x7FF80000 00000000
+            (sb-kernel:make-double-float #x7FF80000 #x00000000))
            (t (error "Unknown special float literal: ##~A" name)))))
       ;; Check for number (in case someone writes ##1.0)
       ((numberp token)

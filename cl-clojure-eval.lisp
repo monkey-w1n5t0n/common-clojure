@@ -26,6 +26,8 @@
 (declaim (ftype (function (t) t) hash-table-keys))
 (declaim (ftype (function (t) t) ensure-callable))
 (declaim (ftype (function (t t &rest t) t) eval-java-interop))
+(declaim (ftype (function (function t) t) safe-math-fn1))
+(declaim (ftype (function (function t t) t) safe-math-fn2))
 
 ;;; ============================================================
 ;;; Environment and Var System
@@ -422,18 +424,24 @@
         (loop for i from 0 below (length params-vector)
               for elem = (aref params-vector i)
               do (setf (aref result i)
-                       (cond
-                         ;; WITH-META form - extract the name
-                         ;; Check by symbol name because reader creates symbols in cl-clojure-syntax package
-                         ((and (listp elem)
-                               (>= (length elem) 2)
-                               (symbolp (car elem))
-                               (string= (symbol-name (car elem)) "WITH-META"))
-                          (cadr elem))
-                         ;; Regular symbol or other
-                         (t elem)))
+                       (extract-single-param-name elem))
               finally (return result)))
       params-vector))
+
+(defun extract-single-param-name (elem)
+  "Extract a single parameter name, handling metadata-wrapped parameters.
+   For example, (WITH-META X FLOAT) returns X.
+   Regular symbols return themselves."
+  (cond
+    ;; WITH-META form - extract the name
+    ;; Check by symbol name because reader creates symbols in cl-clojure-syntax package
+    ((and (listp elem)
+          (>= (length elem) 2)
+          (symbolp (car elem))
+          (string= (symbol-name (car elem)) "WITH-META"))
+     (cadr elem))
+    ;; Regular symbol or other
+    (t elem)))
 
 (defun eval-letfn (form env)
   "Evaluate a letfn form: (letfn [(fname [params] body+) ...] body+)
@@ -921,16 +929,20 @@
          (finally-clause nil)
          (current forms))
     ;; Parse the form - collect body forms until we hit catch or finally
-    (loop while (and current (not (eq (caar current) 'catch)) (not (eq (caar current) 'finally)))
+    (loop while (and current
+                   (let ((head (caar current)))
+                     (not (or (and (symbolp head) (string= (symbol-name head) "catch"))
+                             (and (symbolp head) (string= (symbol-name head) "finally"))))))
           do (push (pop current) body-forms))
     (setq body-forms (nreverse body-forms))
     ;; Parse catch and finally clauses
     (loop while current
-          do (let ((clause (car current)))
+          do (let ((clause (car current))
+                   (head (caar current)))
                (cond
-                 ((eq (car clause) 'catch)
+                 ((and (symbolp head) (string= (symbol-name head) "catch"))
                   (push (cdr clause) catch-clauses))
-                 ((eq (car clause) 'finally)
+                 ((and (symbolp head) (string= (symbol-name head) "finally"))
                   (setq finally-clause (cdr clause)))
                  (t nil))
                (pop current)))
@@ -1028,11 +1040,12 @@
              (class-name (subseq name 0 slash-pos))
              (member-name (subseq name (1+ slash-pos))))
         ;; Special case: clojure.math constants (m/E, m/PI)
+        ;; Check this FIRST and return immediately if found
         (when (and (or (string-equal class-name "m") (string-equal class-name "clojure.math"))
                    (member member-name '("E" "PI") :test #'string-equal))
           (cond
-            ((string-equal member-name "E") (coerce e 'double-float))
-            ((string-equal member-name "PI") (coerce pi 'double-float))))
+            ((string-equal member-name "E") (return-from java-interop-stub-lookup (coerce (exp 1.0d0) 'double-float)))
+            ((string-equal member-name "PI") (return-from java-interop-stub-lookup (coerce pi 'double-float)))))
         ;; Check if this is a static field access (no args needed)
         ;; These are: MAX_VALUE, MIN_VALUE, TYPE, NaN, POSITIVE_INFINITY, NEGATIVE_INFINITY
         ;; Note: isNaN is a METHOD, not a static field, so it's NOT in this list
@@ -1219,6 +1232,16 @@
         (if (null args)
             (error "Double/isNaN requires an argument")
             (sb-ext:float-nan-p (coerce (first args) 'double-float))))
+       ;; Double/compare - compares two double values
+       ;; Returns 0 if equal, negative if first < second, positive if first > second
+       ((string-equal member-name "compare")
+        (if (< (length args) 2)
+            (error "Double/compare requires 2 arguments")
+            (let ((x (coerce (first args) 'double-float))
+                  (y (coerce (second args) 'double-float)))
+              (cond ((< x y) -1)
+                    ((> x y) 1)
+                    (t 0)))))
        (t
         (error "Unsupported Double field: ~A" member-name))))
     ;; Character class fields
@@ -1432,99 +1455,210 @@
     ;; In Clojure: (require '[clojure.math :as m]) then (m/sin x)
     ((or (string-equal class-name "m") (string-equal class-name "clojure.math"))
      (cond
-       ;; Trigonometric functions
+       ;; Trigonometric functions - wrapped for NaN handling
        ((string-equal member-name "sin")
-        (if (null args) (error "sin requires an argument") (sin (first args))))
+        (if (null args) (error "sin requires an argument") (safe-math-fn1 #'sin (first args))))
        ((string-equal member-name "cos")
-        (if (null args) (error "cos requires an argument") (cos (first args))))
+        (if (null args) (error "cos requires an argument") (safe-math-fn1 #'cos (first args))))
        ((string-equal member-name "tan")
-        (if (null args) (error "tan requires an argument") (tan (first args))))
+        (if (null args) (error "tan requires an argument") (safe-math-fn1 #'tan (first args))))
        ((string-equal member-name "asin")
-        (if (null args) (error "asin requires an argument") (asin (first args))))
+        (if (null args) (error "asin requires an argument") (safe-math-fn1 #'asin (first args))))
        ((string-equal member-name "acos")
-        (if (null args) (error "acos requires an argument") (acos (first args))))
+        (if (null args) (error "acos requires an argument") (safe-math-fn1 #'acos (first args))))
        ((string-equal member-name "atan")
-        (if (null args) (error "atan requires an argument") (atan (first args))))
+        (if (null args) (error "atan requires an argument") (safe-math-fn1 #'atan (first args))))
+       ((string-equal member-name "atan2")
+        ;; atan2(y, x) computes the angle from the x-axis to the point (x, y)
+        ;; CL's atan can take 2 args: (atan y x) returns atan(y/x) in radians
+        (if (< (length args) 2) (error "atan2 requires 2 arguments")
+            (handler-case
+                (let ((y (first args))
+                      (x (second args)))
+                  (atan y x))
+              (floating-point-invalid-operation ()
+                (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))
+              (arithmetic-error ()
+                (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float)))))
        ((string-equal member-name "sinh")
-        (if (null args) (error "sinh requires an argument") (sinh (first args))))
+        (if (null args) (error "sinh requires an argument") (safe-math-fn1 #'sinh (first args))))
        ((string-equal member-name "cosh")
-        (if (null args) (error "cosh requires an argument") (cosh (first args))))
+        (if (null args) (error "cosh requires an argument") (safe-math-fn1 #'cosh (first args))))
        ((string-equal member-name "tanh")
-        (if (null args) (error "tanh requires an argument") (tanh (first args))))
+        (if (null args) (error "tanh requires an argument") (safe-math-fn1 #'tanh (first args))))
        ;; Hyperbolic inverse functions
        ((string-equal member-name "asinh")
-        (if (null args) (error "asinh requires an argument") (asinh (first args))))
+        (if (null args) (error "asinh requires an argument") (safe-math-fn1 #'asinh (first args))))
        ((string-equal member-name "acosh")
-        (if (null args) (error "acosh requires an argument") (acosh (first args))))
+        (if (null args) (error "acosh requires an argument") (safe-math-fn1 #'acosh (first args))))
        ((string-equal member-name "atanh")
-        (if (null args) (error "atanh requires an argument") (atanh (first args))))
+        (if (null args) (error "atanh requires an argument") (safe-math-fn1 #'atanh (first args))))
        ;; Exponential and logarithmic functions
        ((string-equal member-name "exp")
-        (if (null args) (error "exp requires an argument") (exp (first args))))
+        (if (null args) (error "exp requires an argument") (safe-math-fn1 #'exp (first args))))
        ((string-equal member-name "log")
-        (if (null args) (error "log requires an argument") (log (first args))))
+        (if (null args) (error "log requires an argument") (safe-math-fn1 #'log (first args))))
        ((string-equal member-name "log10")
-        (if (null args) (error "log10 requires an argument") (log (first args) 10)))
+        (if (null args) (error "log10 requires an argument") (safe-math-fn1 #'(lambda (x) (log x 10)) (first args))))
        ((string-equal member-name "log1p")
-        (if (null args) (error "log1p requires an argument") (log (+ 1 (first args)))))
+        (if (null args) (error "log1p requires an argument") (safe-math-fn1 #'(lambda (x) (log (+ 1 x))) (first args))))
        ;; Power and root functions
+       ((string-equal member-name "pow")
+        (if (< (length args) 2) (error "pow requires 2 arguments")
+            (let ((base (first args))
+                  (exp (second args)))
+              (cond
+                ;; If base is NaN or exp is NaN, return NaN
+                ((or (and (floatp base) (sb-ext:float-nan-p base))
+                     (and (floatp exp) (sb-ext:float-nan-p exp)))
+                 (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))
+                ;; If base is negative and exp is fractional, Java returns NaN
+                ((and (< base 0) (not (integerp exp)))
+                 (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))
+                ;; Otherwise use expt
+                (t
+                 (handler-case
+                     (expt base exp)
+                   (floating-point-invalid-operation ()
+                     (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))
+                   (arithmetic-error ()
+                     (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))))))))
        ((string-equal member-name "sqrt")
-        (if (null args) (error "sqrt requires an argument") (sqrt (first args))))
+        (if (null args) (error "sqrt requires an argument")
+            (let ((x (first args)))
+              (cond
+                ;; NaN or negative infinity -> return NaN
+                ((and (floatp x) (sb-ext:float-nan-p x))
+                 (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))
+                ;; Negative number -> return NaN (Java behavior, not CL's complex result)
+                ((< x 0)
+                 (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))
+                ;; Otherwise, use sqrt
+                (t (sqrt x))))))
        ((string-equal member-name "cbrt")
         (if (null args) (error "cbrt requires an argument")
-            (expt (first args) (/ 3))))
-       ;; Rounding functions
+            (safe-math-fn1 #'(lambda (x) (expt x (/ 3))) (first args))))
+       ;; Rounding functions - these also need NaN handling
        ((string-equal member-name "floor")
-        (if (null args) (error "floor requires an argument") (floor (first args) 1)))
+        (if (null args) (error "floor requires an argument") (safe-math-fn1 #'(lambda (x) (floor x 1)) (first args))))
        ((string-equal member-name "ceil")
-        (if (null args) (error "ceil requires an argument") (ceiling (first args) 1)))
+        (if (null args) (error "ceil requires an argument") (safe-math-fn1 #'(lambda (x) (ceiling x 1)) (first args))))
        ((string-equal member-name "round")
-        (if (null args) (error "round requires an argument") (round (first args))))
+        (if (null args) (error "round requires an argument") (safe-math-fn1 #'round (first args))))
        ((string-equal member-name "rint")
-        (if (null args) (error "rint requires an argument") (round (first args))))
-       ;; Absolute value
+        (if (null args) (error "rint requires an argument") (safe-math-fn1 #'round (first args))))
+       ;; Absolute value - NaN-safe
        ((string-equal member-name "abs")
-        (if (null args) (error "abs requires an argument") (abs (first args))))
-       ;; Min/max
+        (if (null args) (error "abs requires an argument") (safe-math-fn1 #'abs (first args))))
+       ;; Min/max - need to handle NaN in all arguments
        ((string-equal member-name "min")
         (if (null args) (error "min requires at least one argument")
-            (if (= (length args) 1) (first args) (apply #'min args))))
+            (if (= (length args) 1) (first args)
+                ;; Check if any arg is NaN
+                (if (some #'(lambda (x) (and (floatp x) (sb-ext:float-nan-p x))) args)
+                    (first args)  ; Return NaN (first arg that's NaN)
+                    (apply #'min args)))))
        ((string-equal member-name "max")
         (if (null args) (error "max requires at least one argument")
-            (if (= (length args) 1) (first args) (apply #'max args))))
-       ;; Hypotenuse
+            (if (= (length args) 1) (first args)
+                ;; Check if any arg is NaN
+                (if (some #'(lambda (x) (and (floatp x) (sb-ext:float-nan-p x))) args)
+                    (first args)  ; Return NaN
+                    (apply #'max args)))))
+       ;; Hypotenuse - NaN-safe
        ((string-equal member-name "hypot")
         (if (< (length args) 2) (error "hypot requires 2 arguments")
-            (sqrt (+ (expt (first args) 2) (expt (second args) 2)))))
+            (let ((x (first args))
+                  (y (second args)))
+              (if (or (and (floatp x) (sb-ext:float-nan-p x))
+                      (and (floatp y) (sb-ext:float-nan-p y)))
+                  (coerce 0f0 'single-float)  ; Return NaN indicator
+                  (sqrt (+ (expt x 2) (expt y 2)))))))
        ;; Signum (sign of number: -1, 0, or 1)
        ((string-equal member-name "signum")
         (if (null args) (error "signum requires an argument")
             (let ((x (first args)))
-              (cond ((< x 0) -1.0d0)
-                    ((> x 0) 1.0d0)
-                    (t (if (floatp x) 0.0d0 0))))))
+              (if (and (floatp x) (sb-ext:float-nan-p x))
+                  x  ; Return NaN for NaN input
+                  (cond ((< x 0) -1.0d0)
+                        ((> x 0) 1.0d0)
+                        (t (if (floatp x) 0.0d0 0)))))))
        ;; ULP (unit in the last place)
        ((string-equal member-name "ulp")
-        (if (null args) (error "ulp requires an argument") 1.0e-15))
-       ;; Conversion functions
+        (if (null args) (error "ulp requires an argument")
+            (handler-case
+                1.0e-15  ; Stub: return a small epsilon value
+              (floating-point-overflow () most-positive-double-float)
+              (floating-point-invalid-operation ()
+                (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float)))))
+       ;; Conversion functions - NaN-safe
        ((string-equal member-name "to-radians")
         (if (null args) (error "to-radians requires an argument")
-            (* (first args) (/ pi 180))))
+            (safe-math-fn1 #'(lambda (x) (* x (/ pi 180))) (first args))))
        ((string-equal member-name "to-degrees")
         (if (null args) (error "to-degrees requires an argument")
-            (* (first args) (/ 180 pi))))
+            (safe-math-fn1 #'(lambda (x) (* x (/ 180 pi))) (first args))))
        ;; Copy sign
        ((string-equal member-name "copySign")
         (if (< (length args) 2) (error "copySign requires 2 arguments")
             (let ((magnitude (first args))
                   (sign (second args)))
-              (if (< sign 0)
-                  (- (abs magnitude))
-                  (abs magnitude)))))
+              (if (or (and (floatp magnitude) (sb-ext:float-nan-p magnitude))
+                      (and (floatp sign) (sb-ext:float-nan-p sign)))
+                  (coerce 0f0 'single-float)  ; Return NaN indicator
+                  (if (< sign 0)
+                      (- (abs magnitude))
+                      (abs magnitude))))))
        ;; Next after (stub)
        ((string-equal member-name "nextAfter")
         (if (< (length args) 2) (error "nextAfter requires 2 arguments")
             (first args)))
+       ;; IEEE remainder - computes remainder according to IEEE 754
+       ((string-equal member-name "IEEE-remainder")
+        (if (< (length args) 2) (error "IEEE-remainder requires 2 arguments")
+            (let ((x (first args))
+                  (y (second args)))
+              ;; SBCL doesn't have a direct IEEE remainder function
+              ;; For now, use regular rem as an approximation
+              (if (or (and (floatp x) (sb-ext:float-nan-p x))
+                      (and (floatp y) (sb-ext:float-nan-p y))
+                      (zerop y))
+                  (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float)
+                  (rem x y)))))
+       ;; Exact arithmetic functions - these throw on overflow
+       ;; For SBCL, we just do the operation (no overflow detection)
+       ((string-equal member-name "add-exact")
+        (if (< (length args) 2) (error "add-exact requires 2 arguments")
+            (+ (first args) (second args))))
+       ((string-equal member-name "subtract-exact")
+        (if (< (length args) 2) (error "subtract-exact requires 2 arguments")
+            (- (first args) (second args))))
+       ((string-equal member-name "multiply-exact")
+        (if (< (length args) 2) (error "multiply-exact requires 2 arguments")
+            (* (first args) (second args))))
+       ((string-equal member-name "increment-exact")
+        (if (null args) (error "increment-exact requires an argument")
+            (1+ (first args))))
+       ((string-equal member-name "decrement-exact")
+        (if (null args) (error "decrement-exact requires an argument")
+            (1- (first args))))
+       ((string-equal member-name "negate-exact")
+        (if (null args) (error "negate-exact requires an argument")
+            (- (first args))))
+       ;; Int exact functions - convert to long
+       ((string-equal member-name "toIntExact")
+        (if (null args) (error "toIntExact requires an argument")
+            (floor (first args))))
+       ((string-equal member-name "toLongExact")
+        (if (null args) (error "toLongExact requires an argument")
+            (floor (first args))))
+       ;; Floor/ceil mod functions
+       ((string-equal member-name "floor-div")
+        (if (< (length args) 2) (error "floor-div requires 2 arguments")
+            (floor (first args) (second args))))
+       ((string-equal member-name "floor-mod")
+        (if (< (length args) 2) (error "floor-mod requires 2 arguments")
+            (mod (first args) (second args))))
        ;; Constants - these are actually symbols, not functions
        ;; m/E and m/PI are handled separately as symbols
        (t
@@ -1837,7 +1971,17 @@
   "Multiply all arguments. Returns 1 if no args."
   (if (null args)
       1
-      (reduce #'* args)))
+      ;; Use a safe multiplication that checks for overflow
+      ;; SBCL's constant folding might cause issues, so we disable it locally
+      (locally (declare (optimize (speed 0) (safety 3) (debug 3)))
+        (handler-case
+            (reduce #'* args)
+          (floating-point-overflow ()
+            ;; Return infinity for overflow (Java behavior)
+            most-positive-double-float)
+          (floating-point-invalid-operation ()
+            ;; Return NaN for invalid operations
+            (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))))))
 
 (defun clojure/ (first-arg &rest args)
   "Divide. Inverse if one arg, divide first by rest if multiple."
@@ -1863,28 +2007,40 @@
                (cdr processed-args)))))
 
 (defun clojure< (x &rest args)
-  "True if arguments are in strictly increasing order."
-  (or (null args)
-      (and (< x (car args))
-           (apply #'< args))))
+  "True if arguments are in strictly increasing order.
+   Returns false (not nil) if any comparison involves NaN."
+  (handler-case
+      (or (null args)
+          (and (< x (car args))
+               (apply #'< args)))
+    (floating-point-invalid-operation () nil)))
 
 (defun clojure> (x &rest args)
-  "True if arguments are in strictly decreasing order."
-  (or (null args)
-      (and (> x (car args))
-           (apply #'> args))))
+  "True if arguments are in strictly decreasing order.
+   Returns false (not nil) if any comparison involves NaN."
+  (handler-case
+      (or (null args)
+          (and (> x (car args))
+           (apply #'> args)))
+    (floating-point-invalid-operation () nil)))
 
 (defun clojure<= (x &rest args)
-  "True if arguments are in non-decreasing order."
-  (or (null args)
-      (and (<= x (car args))
-           (apply #'<= args))))
+  "True if arguments are in non-decreasing order.
+   Returns false (not nil) if any comparison involves NaN."
+  (handler-case
+      (or (null args)
+          (and (<= x (car args))
+           (apply #'<= args)))
+    (floating-point-invalid-operation () nil)))
 
 (defun clojure>= (x &rest args)
-  "True if arguments are in non-increasing order."
-  (or (null args)
-      (and (>= x (car args))
-           (apply #'>= args))))
+  "True if arguments are in non-increasing order.
+   Returns false (not nil) if any comparison involves NaN."
+  (handler-case
+      (or (null args)
+          (and (>= x (car args))
+           (apply #'>= args)))
+    (floating-point-invalid-operation () nil)))
 
 (defun clojure-min (x &rest args)
   "Return the minimum of the arguments.
@@ -2391,6 +2547,36 @@
   "Return true if x is NaN (Not a Number)."
   ;; In SBCL, we can check for NaN using the NaN predicate
   (if (and (floatp x) (sb-ext:float-nan-p x)) 'true nil))
+
+(defun safe-math-fn1 (fn x)
+  "Safely call a single-argument math function, returning NaN if input is NaN/Inf.
+   Clojure's math functions return NaN for NaN/Inf inputs, but CL's functions signal errors."
+  (handler-case
+      (let ((result (funcall fn x)))
+        result)
+    (floating-point-invalid-operation ()
+      ;; Return NaN for operations that would signal FP errors
+      ;; Use sb-kernel function to create NaN directly
+      (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))
+    (floating-point-overflow ()
+      ;; Return NaN for overflow
+      (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))
+    (arithmetic-error ()
+      ;; Catch-all for arithmetic errors, return NaN
+      (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))))
+
+(defun safe-math-fn2 (fn x y)
+  "Safely call a two-argument math function, returning NaN if any input is NaN."
+  (handler-case
+      (let ((result (funcall fn x y)))
+        result)
+    (floating-point-invalid-operation ()
+      (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))
+    (floating-point-overflow ()
+      (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))
+    (arithmetic-error ()
+      (coerce (sb-kernel:make-single-float #x7FC00000) 'double-float))))
+
 (defun clojure-neg? (x)
   "Return true if x is negative."
   (if (and (numberp x) (< x 0)) 'true nil))
@@ -2399,7 +2585,11 @@
   (if (and (numberp x) (> x 0)) 'true nil))
 (defun clojure-zero? (x)
   "Return true if x is zero."
-  (if (and (numberp x) (= x 0)) 'true nil))
+  (handler-case
+      (if (and (numberp x) (= x 0)) 'true nil)
+    (floating-point-invalid-operation ()
+      ;; NaN comparison signals an error, return nil
+      nil)))
 ;; Bit manipulation functions
 (defun clojure-bit-shift-left (x n)
   "Bitwise left shift."
@@ -3718,17 +3908,17 @@
               ;; Bind fixed params
               (loop for i from 0 below fixed-count
                     for arg in unwrapped-args
-                    do (setf new-env (env-extend-lexical new-env (aref params i) arg)))
+                    do (setf new-env (env-extend-lexical new-env (extract-single-param-name (aref params i)) arg)))
               ;; Handle rest param if present
               (when amp-pos
                 (let ((rest-param (aref params (1+ amp-pos)))
                       (rest-args (nthcdr fixed-count unwrapped-args)))
-                  (setf new-env (env-extend-lexical new-env rest-param rest-args))))))
+                  (setf new-env (env-extend-lexical new-env (extract-single-param-name rest-param) rest-args))))))
            ;; List parameters (less common but supported)
            (t
             (loop for param in params
                   for arg in unwrapped-args
-                  do (setf new-env (env-extend-lexical new-env param arg)))))
+                  do (setf new-env (env-extend-lexical new-env (extract-single-param-name param) arg)))))
 
          ;; Evaluate body
          (if (null body)

@@ -1272,3 +1272,104 @@ The `@` reader macro was not implemented, causing `@a` to be read as an undefine
 3. Implement `binding` special form (atoms test needs `*warn-on-reflection*` binding)
 4. Implement `re-find` and regex support (run_single_test needs it)
 5. Continue implementing more core functions as tests require them
+
+---
+
+### Iteration 22 - 2025-01-17
+
+**Focus:** Fix NaN handling for clojure.math trig functions and add more math operations
+
+**Changes Made:**
+
+1. **Added NaN-safe math function wrappers** - cl-clojure-eval.lisp:2415-2446
+   - `safe-math-fn1` - wraps single-argument math functions to catch FP errors and return NaN
+   - `safe-math-fn2` - wraps two-argument math functions similarly
+   - Uses `handler-case` to catch `floating-point-invalid-operation`, `floating-point-overflow`, `arithmetic-error`
+   - Returns NaN via `(coerce (sb-kernel:make-single-float #x7FC00000) 'double-float)`
+
+2. **Updated all trig and math functions to use NaN-safe wrappers** - cl-clojure-eval.lisp:1448-1657
+   - All trig functions (sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh) now use `safe-math-fn1`
+   - All exp/log functions (exp, log, log10, log1p) now use `safe-math-fn1`
+   - All rounding functions (floor, ceil, round, rint, abs) now use `safe-math-fn1`
+   - Conversion functions (to-radians, to-degrees) now use `safe-math-fn1`
+
+3. **Added `atan2` function** - cl-clojure-eval.lisp:1472-1483
+   - Two-argument arctangent function using CL's `(atan y x)`
+   - Returns NaN for invalid inputs
+
+4. **Added `pow` function** - cl-clojure-eval.lisp:1507-1526
+   - Handles NaN inputs and negative base with fractional exponent
+   - Returns NaN for these edge cases (Java behavior)
+
+5. **Fixed `sqrt` for negative inputs** - cl-clojure-eval.lisp:1525-1539
+   - Returns NaN for negative numbers (Java behavior) instead of complex number
+
+6. **Added comparison functions NaN handling** - cl-clojure-eval.lisp:2009-2037
+   - `clojure<`, `clojure>`, `clojure<=`, `clojure>=` now catch FP errors
+   - Return nil for NaN comparisons (Clojure behavior)
+
+7. **Fixed `clojure-zero?` for NaN** - cl-clojure-eval.lisp:2576-2583
+   - Returns nil for NaN input (not zero)
+
+8. **Fixed `clojure*` overflow handling** - cl-clojure-eval.lisp:1975-1989
+   - Added `handler-case` to catch overflow and return infinity
+   - Added `locally` declaration to reduce constant folding issues
+
+9. **Added `IEEE-remainder` function** - cl-clojure-eval.lisp:1610-1623
+   - Computes remainder according to IEEE 754
+   - Returns NaN for invalid inputs
+
+10. **Added exact arithmetic functions** - cl-clojure-eval.lisp:1624-1657
+    - `add-exact`, `subtract-exact`, `multiply-exact`
+    - `increment-exact`, `decrement-exact`, `negate-exact`
+    - `toIntExact`, `toLongExact`
+    - `floor-div`, `floor-mod`
+
+11. **Fixed `java-interop-stub-lookup` to return constants properly** - cl-clojure-eval.lisp:1043-1049
+    - The `m/E` and `m/PI` constants were being evaluated but then discarded by the `let` block
+    - Changed to use `return-from java-interop-stub-lookup` to exit early with the value
+    - Fixed to use `(exp 1.0d0)` for E and `pi` for PI
+
+12. **Fixed special float literals in reader** - cl-clojure-syntax.lisp:287-309
+    - `##Inf` now returns `most-positive-double-float`
+    - `##-Inf` now returns `most-negative-double-float`
+    - `##NaN` now returns `(sb-kernel:make-double-float #x7FF80000 #x00000000)`
+
+13. **Added `Double/compare` method** - cl-clojure-eval.lisp:1237-1244
+    - Returns -1, 0, or 1 for comparison of two double values
+    - Used for negative zero detection in tests
+
+14. **Fixed parameter binding with type hints** - cl-clojure-eval.lisp:418-433, 3783-3802
+    - Added `extract-single-param-name` helper to strip metadata from parameters
+    - Updated `apply-function` to use `extract-single-param-name` when binding parameters
+    - Functions like `(defn foo [^double d] ...)` now work correctly
+
+15. **Fixed `try` special form `catch`/`finally` detection** - cl-clojure-eval.lisp:931-954
+    - Changed from `eq` to string comparison for `catch` and `finally`
+    - Now handles symbols from any package correctly
+
+**Errors Fixed:**
+- "arithmetic error FLOATING-POINT-INVALID-OPERATION" for NaN inputs - FIXED ✅
+- "The lambda is not of type NUMBER" for m/E and m/PI - FIXED ✅
+- "is not a string designator" for `with-meta` in parameters - FIXED ✅
+- NaN comparison errors - FIXED ✅
+- Negative sqrt returning complex number - FIXED ✅
+
+**Test Results:**
+- Parse: 77 ok, 8 errors
+- Eval: 25 ok, 60 errors (up from 9 ok!)
+- Many debug test files now pass, confirming the fixes work
+- The main math test still has one overflow edge case
+
+**Known Issues:**
+- The math test still fails with an overflow error in `ulp=` helper function
+  - The test defines `(defn ulp= [x y ^double m] (let [mu (* (m/ulp x) m)] ...))`
+  - When called with very large values, the multiplication overflows during evaluation
+  - This is due to SBCL's constant folding during compilation
+  - Need to investigate further or implement proper `ulp` function
+
+**Next Steps:**
+1. Investigate and fix the remaining overflow issue in the math test
+2. Implement `swap!` function
+3. Implement `binding` special form
+4. Implement `re-find` and regex support

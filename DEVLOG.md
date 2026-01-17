@@ -2643,3 +2643,33 @@ The `extend-binding` function only handled list destructuring, not vector destru
 **Next Steps:**
 1. Fix the binding-list unbound error in vector destructuring
 2. Continue implementing more core functions as tests require them
+
+---
+
+### Iteration 44 - 2026-01-18
+
+**Focus:** Add Java interop support for Class/member syntax
+
+**Changes Made:**
+1. **Implemented Class/member Java interop syntax** - cl-clojure-eval.lisp:559-590
+   - Detect symbols containing '/' (e.g., System/getProperty)
+   - Split into class name and member name
+   - Look up class var and call with member as keyword argument
+   - Return lambda if class not found (for better error messages)
+
+2. **Updated System stub** - cl-clojure-eval.lisp:319-330
+   - Changed System var to accept keyword member names
+   - Handle both uppercase (KEYWORD) and lowercase member names
+
+**Test Results:**
+- Parse: 68 ok, 0 errors ✅
+- Eval: 4 ok, 64 errors (was 3 ok, 65 errors)
+- annotations test now passes (System/getProperty works)
+
+**Errors Fixed:**
+- "Undefined symbol: System/getProperty" - FIXED ✅
+
+**Next Steps:**
+1. Implement swap-vals! function for atoms
+2. Implement core test helpers (is, are) 
+3. Fix ^ (meta/caret) reader macro for metadata

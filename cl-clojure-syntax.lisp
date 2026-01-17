@@ -603,6 +603,8 @@
        (if (= kind 1)
            `(unquote-splicing ,expr)
            `(unquote ,expr))))
+    ;; Handle strings - must come before vector since strings are vectors in CL
+    (string form)
     ;; Handle QUASIQUOTE
     (cons
      (if (eq (car form) 'quasiquote)
@@ -610,7 +612,7 @@
          `(syntax-quote ,(mapcar #'convert-cl-quasiquote (cdr form)))
          ;; Recursively process list elements
          (mapcar #'convert-cl-quasiquote form)))
-    ;; Handle vectors
+    ;; Handle vectors (but not strings, which are handled above)
     (vector
      (coerce (mapcar #'convert-cl-quasiquote (coerce form 'list)) 'vector))
     ;; Everything else is self-evaluating

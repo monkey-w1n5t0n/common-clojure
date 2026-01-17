@@ -681,6 +681,9 @@
   ;; String/Symbol functions
   (register-core-function env 'symbol #'clojure-symbol)
   (register-core-function env 'atom #'clojure-atom)
+  (register-core-function env 'read-string #'clojure-read-string)
+  (register-core-function env 'println #'clojure-println)
+  (register-core-function env 'prn #'clojure-prn)
 
   env)
 
@@ -1061,6 +1064,29 @@
     ;; We need to store it on a symbol, not the list itself
     (setf (get 'atom-marker t) t)
     atom-container))
+
+(defun clojure-read-string (string &optional (eof-error-p t) (eof-value :eof))
+  "Read a single Clojure form from a string.
+   Returns the read object. If no form is found, returns eof-value."
+  (let ((preprocessed (cl-clojure-syntax:preprocess-clojure-dots string)))
+    (with-input-from-string (stream preprocessed)
+      (let ((*readtable* (cl-clojure-syntax:ensure-clojure-readtable)))
+        (cl-clojure-syntax:read-clojure stream eof-error-p eof-value)))))
+
+(defun clojure-println (&rest args)
+  "Print arguments to standard output, followed by a newline.
+   Each argument is converted to a string via str."
+  (dolist (arg args)
+    (princ (clojure-str arg)))
+  (terpri)
+  nil)
+
+(defun clojure-prn (&rest args)
+  "Print arguments to standard output in readable form, followed by a newline."
+  (dolist (arg args)
+    (prin1 arg))
+  (terpri)
+  nil)
 
 ;;; ============================================================
 ;;; Test Helper Special Forms (from clojure.test)

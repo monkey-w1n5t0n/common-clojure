@@ -2592,3 +2592,54 @@ The numbers test was failing with "Undefined symbol: cast". This was actually du
 1. Continue with other test failures
 2. Look at the macros test (still has "Undefined symbol: x" error)
 3. Implement more core functions as tests require them
+
+---
+
+### Iteration 43 - 2026-01-17
+
+**Focus:** Fix eval-are double-evaluation issue and implement control flow special forms
+
+**Problem 1: eval-are double-evaluation**
+The `are` form was using `substitute-symbols` which substituted values into the expression. When the substituted expression was evaluated, the values were evaluated AGAIN, causing issues with quoted symbols like `'sym`.
+
+**Root Cause:**
+```clojure
+(are [x] (= (f x) x) 'sym)
+;; Old: Substitute x with sym (the symbol), then evaluate
+;; (= (f sym) sym) -> sym is looked up as variable -> "Undefined symbol: sym"
+```
+
+**Solution:** Changed `eval-are` to use **environment bindings** instead of substitution. The values are evaluated once, bound to parameter names in the environment, and then the expression is evaluated in that environment.
+
+**Problem 2: loop vector bindings**
+The `loop` form wasn't correctly handling vector bindings like `[a 1]` because `on` only works with lists, not vectors.
+
+**Solution:** Convert bindings vector to list before processing.
+
+**Problem 3: Control flow special forms**
+Tests for `if-not`, `when-not`, `if-let`, `when-let` were failing because these were implemented as **functions** (which evaluate all arguments) rather than **special forms** (which evaluate conditionally).
+
+**Solution:** Implemented `if-not`, `when-not`, `if-let`, `when-let`, and `when-first` as special forms that only evaluate branches conditionally.
+
+**Problem 4: Vector destructuring**
+The `extend-binding` function only handled list destructuring, not vector destructuring like `[[a b] '(1 2)]`.
+
+**Solution:** Added vectorp case to `extend-binding` that handles vector destructuring the same way as list destructuring.
+
+**Errors Fixed:**
+- "Undefined symbol: sym" (in are form) - FIXED ✅ (use environment bindings)
+- "Undefined symbol: a" (in loop) - FIXED ✅ (convert vector to list)
+- "Undefined symbol: if-not" - FIXED ✅ (implemented as special form)
+- "Cannot apply non-function: EXCEPTION" - FIXED ✅ (when-not as special form)
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅
+- Eval: 32 ok, 53 errors (up from 31!)
+- New passing test: **macros** ✅
+
+**Remaining Issue:**
+- Control test has "The variable BINDING-LIST is unbound" error - this appears to be a compilation issue with the `loop` macro in the vector destructuring code. Needs further investigation.
+
+**Next Steps:**
+1. Fix the binding-list unbound error in vector destructuring
+2. Continue implementing more core functions as tests require them

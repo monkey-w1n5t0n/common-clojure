@@ -170,6 +170,124 @@
               (clojure-eval else env)
               nil)))))
 
+(defun eval-if-not (form env)
+  "Evaluate an if-not form: (if-not test then else?)
+   Evaluates then if test is falsey, else evaluates else."
+  (destructuring-bind (if-not-sym test then &optional else) form
+    (declare (ignore if-not-sym))
+    (let ((test-result (clojure-eval test env)))
+      (if (falsey? test-result)
+          (clojure-eval then env)
+          (if else
+              (clojure-eval else env)
+              nil)))))
+
+(defun eval-when-not (form env)
+  "Evaluate a when-not form: (when-not test expr*)
+   Evaluates exprs if test is falsey, else returns nil."
+  (let* ((test (cadr form))
+         (body (cddr form)))
+    (let ((test-result (clojure-eval test env)))
+      (if (falsey? test-result)
+          ;; Evaluate body forms and return last
+          (if (null body)
+              nil
+              (let ((last-expr (car (last body))))
+                (dolist (expr (butlast body))
+                  (clojure-eval expr env))
+                (clojure-eval last-expr env)))
+          nil))))
+
+(defun eval-if-let (form env)
+  "Evaluate an if-let form: (if-let [binding] then else?)
+   Binds binding to value, if truthy evaluates then, else evaluates else.
+   Supports destructuring: (if-let [a b] then else?) binds a to b."
+  (let* ((bindings-vec (cadr form))
+         (then (caddr form))
+         (else (cadddr form))
+         ;; Extract binding name and value expression
+         (bindings (if (vectorp bindings-vec)
+                       (coerce bindings-vec 'list)
+                       bindings-vec)))
+    ;; For now, only handle single binding: [x expr]
+    (when (or (null bindings) (null (cdr bindings)))
+      (error "if-let requires at least one binding"))
+    (let* ((bind-name (car bindings))
+           (value-expr (cadr bindings))
+           (value (clojure-eval value-expr env)))
+      (if (truthy? value)
+          ;; Bind and evaluate then
+          ;; Handle destructuring: if bind-name is a vector, use extend-binding
+          (let ((new-env (if (vectorp bind-name)
+                             (extend-binding env bind-name value)
+                             (env-extend-lexical env bind-name value))))
+            (clojure-eval then new-env))
+          ;; Evaluate else
+          (if else
+              (clojure-eval else env)
+              nil)))))
+
+(defun eval-when-let (form env)
+  "Evaluate a when-let form: (when-let [binding] expr*)
+   Binds binding to value, if truthy evaluates exprs, else returns nil.
+   Supports destructuring: (when-let [a b] body) binds a to b."
+  (let* ((bindings-vec (cadr form))
+         (body (cddr form))
+         ;; Extract binding name and value expression
+         (bindings (if (vectorp bindings-vec)
+                       (coerce bindings-vec 'list)
+                       bindings-vec)))
+    ;; For now, only handle single binding: [x expr]
+    (when (or (null bindings) (null (cdr bindings)))
+      (error "when-let requires at least one binding"))
+    (let* ((bind-name (car bindings))
+           (value-expr (cadr bindings))
+           (value (clojure-eval value-expr env)))
+      (if (truthy? value)
+          ;; Bind and evaluate body
+          ;; Handle destructuring: if bind-name is a vector, use extend-binding
+          (let ((new-env (if (vectorp bind-name)
+                             (extend-binding env bind-name value)
+                             (env-extend-lexical env bind-name value))))
+            (if (null body)
+                nil
+                (let ((last-expr (car (last body))))
+                  (dolist (expr (butlast body))
+                    (clojure-eval expr new-env))
+                  (clojure-eval last-expr new-env))))
+          nil))))
+
+(defun eval-when-first (form env)
+  "Evaluate a when-first form: (when-first [bindings] body+)
+   Like when-let but only binds the first element of a seq."
+  (let* ((bindings-vec (cadr form))
+         (body (cddr form))
+         ;; Extract binding name and seq expression
+         (bindings (if (vectorp bindings-vec)
+                       (coerce bindings-vec 'list)
+                       bindings-vec)))
+    (when (or (null bindings) (null (cdr bindings)))
+      (error "when-first requires at least one binding"))
+    (let* ((bind-name (car bindings))
+           (seq-expr (cadr bindings))
+           (seq-value (clojure-eval seq-expr env)))
+      (let ((first-val (if (and seq-value (or (consp seq-value) (vectorp seq-value)))
+                           (if (vectorp seq-value)
+                               (when (> (length seq-value) 0)
+                                 (aref seq-value 0))
+                               (car seq-value))
+                           nil)))
+        (if first-val
+            ;; Bind first element and evaluate body
+            (let ((new-env (env-extend-lexical env bind-name first-val)))
+              (if (null body)
+                  nil
+                  (let ((last-expr (car (last body))))
+                    (dolist (expr (butlast body))
+                      (clojure-eval expr new-env))
+                    (clojure-eval last-expr new-env))))
+            nil)))))
+
 (defun eval-do (form env)
   "Evaluate a do form: (do expr*) - returns last expression's value."
   (let ((forms (cdr form)))
@@ -603,6 +721,7 @@
   "Extend environment with a binding.
    binding-form can be:
    - A symbol: bind value to that symbol
+   - A vector: destructuring - bind each element of value to corresponding symbol
    - A list: destructuring - bind each element of value list to corresponding symbol
    - Supports & for rest parameters: [a b & rest] binds first two to a,b and rest to remaining
    - Supports nested destructuring: [[a b] & rest] recursively binds nested structures
@@ -610,6 +729,41 @@
   (cond
     ((symbolp binding-form)
      (env-extend-lexical env binding-form value))
+    ((vectorp binding-form)
+     ;; Vector destructuring - same as list destructuring but for vectors
+     (let ((binding-list (coerce binding-form 'list))
+           (amp-pos (position (intern "&") binding-list :test #'eq)))
+       (if amp-pos
+           ;; Has rest parameter
+           (let* ((regular-bindings (subseq binding-list 0 amp-pos))
+                  (rest-binding (when (< (1+ amp-pos) (length binding-list))
+                                (nth (1+ amp-pos) binding-list)))
+                  (value-list (if (consp value) value (coerce value 'list)))
+                  (new-env env)
+                  (regular-count (min (length regular-bindings)
+                                      (length value-list)))
+                  (rest-values (nthcdr regular-count value-list)))
+             ;; Bind regular parameters
+             (loop for i below regular-count
+                   for sym in regular-bindings
+                   for val in value-list
+                   for binding-sym = (if (vectorp sym) (coerce sym 'list) sym)
+                   do (setf new-env (extend-binding new-env binding-sym val)))
+             ;; Bind rest parameter
+             (when rest-binding
+               (let ((rest-binding-sym (if (vectorp rest-binding)
+                                          (coerce rest-binding 'list)
+                                          rest-binding)))
+                 (setf new-env (extend-binding new-env rest-binding-sym rest-values))))
+             new-env)
+           ;; No rest parameter - simple destructuring
+           (let ((value-list (if (consp value) value (coerce value 'list))))
+             (loop for sym in binding-list
+                   for val in value-list
+                   for binding-sym = (if (vectorp sym) (coerce sym 'list) sym)
+                   with new-env = env
+                   do (setf new-env (extend-binding new-env binding-sym val))
+                   finally (return new-env))))))
     ((listp binding-form)
      ;; Destructuring: value should be a sequence
      ;; Check for & rest parameter
@@ -810,8 +964,12 @@
   "Evaluate a loop form: (loop [bindings] body+) - with recur support."
   ;; For now, loop is like let but recur needs special handling
   ;; We'll implement a simplified version first
-  (let* ((bindings (cadr form))
+  (let* ((bindings-vec (cadr form))
          (body (cddr form))
+         ;; Convert bindings vector to list for processing
+         (bindings (if (vectorp bindings-vec)
+                       (coerce bindings-vec 'list)
+                       bindings-vec))
          (new-env env))
     ;; Process bindings pairwise
     (loop for (name value-expr) on bindings by #'cddr
@@ -3317,6 +3475,39 @@
 
 (defun clojure-identity (x) x)
 
+;;; Control functions
+(defun clojure-if-not (test then &optional else)
+  "If test is falsey, return then, else return else.
+   In Clojure, if-not is a macro but we implement as a function for simplicity.
+   Note: This evaluates all arguments, unlike the true macro version."
+  (if (falsey? test)
+      then
+      else))
+
+(defun clojure-if-let (test-expr then &optional else)
+  "If test-expr is truthy, bind it and evaluate then, else evaluate else.
+   This is a simplified version - test-expr must be a single binding.
+   Full version: (if-let [binding] then else?)
+   For our implementation, test-expr should be (binding value) pair."
+  (if (and (consp test-expr) (length= test-expr 2))
+      (let ((binding (car test-expr))
+            (value-expr (cadr test-expr)))
+        (declare (ignore binding))
+        ;; For now, just evaluate value-expr and check truthiness
+        ;; A full implementation would need special form handling
+        (let ((value value-expr))  ; Already evaluated by caller
+          (if (truthy? value)
+              then
+              else)))
+      (if (truthy? test-expr)
+          then
+          else)))
+
+(defun clojure-when-let (test-expr then)
+  "If test-expr is truthy, bind it and evaluate then, else return nil.
+   This is a simplified version."
+  (if (truthy? test-expr) then nil))
+
 (defun clojure-last (coll)
   "Return the last element of a collection."
   (cond
@@ -4595,10 +4786,10 @@
 
 (defun eval-are (form env)
   "Evaluate an are form: (are [args] expr & arg-pairs) - multiple assertions.
-   This performs symbol substitution on the template expression before
-   evaluating, similar to how Clojure's are macro expansion works."
+   This uses environment bindings to bind args to values, then evaluates expr.
+   This is the correct approach to avoid double-evaluation issues."
   ;; Syntax: (are [x y] expr v1 v2 v3 v4 ...)
-  ;; Expands to: (do (is (expr with v1,v2 substituted)) (is (expr with v3,v4 substituted)) ...)
+  ;; Expands to: (do (is (expr with x=v1, y=v2)) (is (expr with x=v3, y=v4)) ...)
   (let* ((args-vec (cadr form))
          (expr-expr (caddr form))
          (arg-pairs (cdddr form))
@@ -4632,11 +4823,14 @@
                        (mapcar (lambda (arg-value-form)
                                  (clojure-eval arg-value-form env))
                                chunk)))
-                 ;; Substitute symbols in expr-expr with evaluated values
-                 ;; This is the key: we replace the SYMBOL itself, not bind it
-                 (let ((substituted-expr (substitute-symbols expr-expr arg-names evaluated-chunk)))
-                   ;; Evaluate the substituted expression
-                   (push (clojure-eval substituted-expr env) results)))))
+                 ;; Create a new environment with bindings for this iteration
+                 ;; Build bindings list and extend environment once
+                 (let* ((bindings (loop for arg-name in arg-names
+                                        for value in evaluated-chunk
+                                        collect (cons arg-name value)))
+                        (iteration-env (env-push-bindings env bindings)))
+                   ;; Evaluate the expression in the new environment
+                   (push (clojure-eval expr-expr iteration-env) results)))))
     ;; Return the last result (like do), or nil if no results
     (if results
         (car (last results))
@@ -4965,6 +5159,7 @@
            ;; Special forms - compare lowercase symbol names to handle package differences
            ;; Only check if head is a symbol (head-name is not nil)
            ((and head-name (string= head-name "if")) (eval-if form env))
+           ((and head-name (string= head-name "if-not")) (eval-if-not form env))
            ((and head-name (string= head-name "do")) (eval-do form env))
            ((and head-name (string= head-name "comment")) (eval-comment form env))
            ((and head-name (string= head-name "and")) (eval-and form env))
@@ -5000,6 +5195,9 @@
            ((and head-name (string= head-name "let")) (eval-let form env))
            ((and head-name (string= head-name "letfn")) (eval-letfn form env))
            ((and head-name (string= head-name "loop")) (eval-loop form env))
+           ((and head-name (string= head-name "if-let")) (eval-if-let form env))
+           ((and head-name (string= head-name "when-let")) (eval-when-let form env))
+           ((and head-name (string= head-name "when-first")) (eval-when-first form env))
            ((and head-name (string= head-name "recur")) nil)  ; stub: recur just returns nil, exiting the loop
            ((and head-name (string= head-name "for")) (eval-for form env))
            ((and head-name (string= head-name "doseq")) (eval-doseq form env))

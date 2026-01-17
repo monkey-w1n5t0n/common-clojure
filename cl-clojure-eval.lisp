@@ -974,6 +974,13 @@
         (apply-function closure args))
       closure))
 
+(defun ensure-callable (fn-arg)
+  "Ensure fn-arg is callable by CL funcall/apply.
+   If it's a closure, wrap it. Otherwise return as-is."
+  (if (closure-p fn-arg)
+      (wrap-closure-for-call fn-arg)
+      fn-arg))
+
 ;;; ============================================================
 ;;; Java Interop Stubs
 ;;; ============================================================
@@ -1722,57 +1729,61 @@
 (defun clojure-map (fn-arg coll &rest colls)
   "Apply fn to each item in collection(s). Returns lazy sequence.
    Supports mapping over multiple collections in parallel."
-  (if (null colls)
-      ;; Single collection mapping
-      (cond
-        ((null coll) '())
-        ((lazy-range-p coll)
-         ;; For lazy ranges, limit to 1000 elements to avoid issues
-         (let ((start (lazy-range-start coll))
-               (end (lazy-range-end coll))
-               (step (lazy-range-step coll)))
-           (if end
-               ;; Bounded range
-               (loop for i from start below end by step
-                     collect (funcall fn-arg i))
-               ;; Infinite range - limit to 1000
-               (loop for i from start by step
-                     repeat 1000
-                     collect (funcall fn-arg i)))))
-        ((listp coll)
-         (mapcar fn-arg coll))
-        (t
-         ;; Convert to list and map
-         (mapcar fn-arg (coerce coll 'list))))
-      ;; Multiple collections - map in parallel
-      (let* ((all-colls (cons coll colls))
-             (min-length (apply #'min (mapcar (lambda (c)
-                                                (cond
-                                                  ((null c) 0)
-                                                  ((lazy-range-p c)
-                                                   (if (lazy-range-end c)
-                                                       (ceiling (/ (- (lazy-range-end c)
-                                                                      (lazy-range-start c))
-                                                                   (lazy-range-step c)))
-                                                       1000))
-                                                  ((listp c) (length c))
-                                                  (t (length (coerce c 'list)))))
-                                              all-colls))))
-        ;; Convert all to lists
-        (let ((coll-lists (mapcar (lambda (c)
-                                    (cond
-                                      ((null c) '())
-                                      ((lazy-range-p c) (lazy-range-to-list c))
-                                      ((listp c) c)
-                                      (t (coerce c 'list))))
+  ;; Ensure fn-arg is callable (wrap closures if needed)
+  (let ((callable-fn (ensure-callable fn-arg)))
+    (if (null colls)
+        ;; Single collection mapping
+        (cond
+          ((null coll) '())
+          ((lazy-range-p coll)
+           ;; For lazy ranges, limit to 1000 elements to avoid issues
+           (let ((start (lazy-range-start coll))
+                 (end (lazy-range-end coll))
+                 (step (lazy-range-step coll)))
+             (if end
+                 ;; Bounded range
+                 (loop for i from start below end by step
+                       collect (funcall callable-fn i))
+                 ;; Infinite range - limit to 1000
+                 (loop for i from start by step
+                       repeat 1000
+                       collect (funcall callable-fn i)))))
+          ((listp coll)
+           (mapcar callable-fn coll))
+          (t
+           ;; Convert to list and map
+           (mapcar callable-fn (coerce coll 'list))))
+        ;; Multiple collections - map in parallel
+        (let* ((all-colls (cons coll colls))
+               (min-length (apply #'min (mapcar (lambda (c)
+                                                  (cond
+                                                    ((null c) 0)
+                                                    ((lazy-range-p c)
+                                                     (if (lazy-range-end c)
+                                                         (ceiling (/ (- (lazy-range-end c)
+                                                                        (lazy-range-start c))
+                                                                     (lazy-range-step c)))
+                                                         1000))
+                                                    ((listp c) (length c))
+                                                    (t (length (coerce c 'list)))))
+                                                all-colls))))
+          ;; Convert all to lists
+          (let ((coll-lists (mapcar (lambda (c)
+                                      (cond
+                                        ((null c) '())
+                                        ((lazy-range-p c) (lazy-range-to-list c))
+                                        ((listp c) c)
+                                        (t (coerce c 'list))))
                                   all-colls)))
-          ;; Map function across elements at each position
-          (loop for i from 0 below min-length
-                collect (apply fn-arg (mapcar (lambda (c) (nth i c)) coll-lists)))))))
+            ;; Map function across elements at each position
+            (loop for i from 0 below min-length
+                  collect (apply callable-fn (mapcar (lambda (c) (nth i c)) coll-lists))))))))
 
 (defun clojure-apply (fn-arg &rest args)
   "Apply fn to args with last arg being a list of args."
-  (let ((all-but-last (butlast args))
+  ;; Ensure fn-arg is callable (wrap closures if needed)
+  (let ((callable-fn (ensure-callable fn-arg))
+        (all-but-last (butlast args))
         (last-arg (car (last args))))
     ;; Convert last-arg to list if it's a lazy range or vector
     (let ((last-as-list (cond
@@ -1781,7 +1792,7 @@
                          ((vectorp last-arg)
                           (coerce last-arg 'list))
                          (t last-arg))))
-      (apply fn-arg (append all-but-last last-as-list)))))
+      (apply callable-fn (append all-but-last last-as-list)))))
 
 (defun clojure-seq (coll)
   "Return a sequence from collection."
@@ -2131,21 +2142,23 @@
 
 (defun clojure-reduce (f init &optional coll)
   "Reduce a collection with a function."
-  (if coll
-      ;; 3-argument form: (reduce f init coll)
-      (if (null coll)
-          init
-          (let ((coll-list (if (lazy-range-p coll)
-                               (lazy-range-to-list coll)
-                               coll)))
-            (reduce f (cdr coll-list) :initial-value (funcall f init (car coll-list)))))
-      ;; 2-argument form: (reduce f coll)
-      (if (null init)
-          (error "Cannot reduce empty collection")
-          (let ((coll-list (if (lazy-range-p init)
-                               (lazy-range-to-list init)
-                               init)))
-            (reduce f (cdr coll-list) :initial-value (car coll-list))))))
+  ;; Ensure f is callable (wrap closures if needed)
+  (let ((callable-f (ensure-callable f)))
+    (if coll
+        ;; 3-argument form: (reduce f init coll)
+        (if (null coll)
+            init
+            (let ((coll-list (if (lazy-range-p coll)
+                                 (lazy-range-to-list coll)
+                                 coll)))
+              (reduce callable-f (cdr coll-list) :initial-value (funcall callable-f init (car coll-list)))))
+        ;; 2-argument form: (reduce f coll)
+        (if (null init)
+            (error "Cannot reduce empty collection")
+            (let ((coll-list (if (lazy-range-p init)
+                                 (lazy-range-to-list init)
+                                 init)))
+              (reduce callable-f (cdr coll-list) :initial-value (car coll-list)))))))
 
 (defun clojure-eval-fn (form)
   "Evaluate a Clojure form at runtime. This is the eval function available to Clojure code."
@@ -2183,43 +2196,47 @@
 
 (defun clojure-every? (pred coll)
   "Return true if pred is true for every element in coll."
-  (cond
-    ((null coll) 'true)
-    ((lazy-range-p coll)
-     (let ((start (lazy-range-start coll))
-           (end (lazy-range-end coll))
-           (step (lazy-range-step coll)))
-       (if end
-           (loop for i from start below end by step
-                 always (funcall pred i))
-           ;; For infinite ranges, limit to 1000 elements
-           (loop for i from start by step
-                 repeat 1000
-                 always (funcall pred i)))))
-    ((listp coll)
-     (every pred coll))
-    (t
-     (every pred (coerce coll 'list)))))
+  ;; Ensure pred is callable (wrap closures if needed)
+  (let ((callable-pred (ensure-callable pred)))
+    (cond
+      ((null coll) 'true)
+      ((lazy-range-p coll)
+       (let ((start (lazy-range-start coll))
+             (end (lazy-range-end coll))
+             (step (lazy-range-step coll)))
+         (if end
+             (loop for i from start below end by step
+                   always (funcall callable-pred i))
+             ;; For infinite ranges, limit to 1000 elements
+             (loop for i from start by step
+                   repeat 1000
+                   always (funcall callable-pred i)))))
+      ((listp coll)
+       (every callable-pred coll))
+      (t
+       (every callable-pred (coerce coll 'list))))))
 
 (defun clojure-some (pred coll)
   "Return the first truthy value of (pred x) for any x in coll, or nil if none."
-  (cond
-    ((null coll) nil)
-    ((lazy-range-p coll)
-     (let ((start (lazy-range-start coll))
-           (end (lazy-range-end coll))
-           (step (lazy-range-step coll)))
-       (if end
-           (loop for i from start below end by step
-                 thereis (funcall pred i))
-           ;; For infinite ranges, limit to 1000 elements
-           (loop for i from start by step
-                 repeat 1000
-                 thereis (funcall pred i)))))
-    ((listp coll)
-     (some pred coll))
-    (t
-     (some pred (coerce coll 'list)))))
+  ;; Ensure pred is callable (wrap closures if needed)
+  (let ((callable-pred (ensure-callable pred)))
+    (cond
+      ((null coll) nil)
+      ((lazy-range-p coll)
+       (let ((start (lazy-range-start coll))
+             (end (lazy-range-end coll))
+             (step (lazy-range-step coll)))
+         (if end
+             (loop for i from start below end by step
+                   thereis (funcall callable-pred i))
+             ;; For infinite ranges, limit to 1000 elements
+             (loop for i from start by step
+                   repeat 1000
+                   thereis (funcall callable-pred i)))))
+      ((listp coll)
+       (some callable-pred coll))
+      (t
+       (some callable-pred (coerce coll 'list))))))
 
 (defun clojure-not-every? (pred coll)
   "Return true if pred is not true for every element in coll (i.e., false for some element)."
@@ -2239,65 +2256,73 @@
 
 (defun clojure-complement (f)
   "Return a function that returns the logical negation of f."
-  (lambda (&rest args)
-    (let ((result (apply f args)))
-      (if (or (null result) (eq result 'false))
-          'true
-          nil))))
+  ;; Ensure f is callable (wrap closures if needed)
+  (let ((callable-f (ensure-callable f)))
+    (lambda (&rest args)
+      (let ((result (apply callable-f args)))
+        (if (or (null result) (eq result 'false))
+            'true
+          nil)))))
 
 (defun clojure-fnil (f &rest fill-values)
   "Return a function that calls f with fill-values for nil arguments.
    (fnil f x y) returns a function that when called as (g a b c)
    calls (f (or a x) (or b y) c)"
-  (lambda (&rest args)
-    (let* ((fill-count (min (length fill-values) (length args)))
-           (filled-args
-             (loop for i from 0 below fill-count
-                   for arg in args
-                   for fill in fill-values
-                   collect (if (null arg) fill arg)))
-           (remaining-args (nthcdr fill-count args))
-           (all-args (append filled-args remaining-args)))
-      (apply f all-args))))
+  ;; Ensure f is callable (wrap closures if needed)
+  (let ((callable-f (ensure-callable f)))
+    (lambda (&rest args)
+      (let* ((fill-count (min (length fill-values) (length args)))
+             (filled-args
+               (loop for i from 0 below fill-count
+                     for arg in args
+                     for fill in fill-values
+                     collect (if (null arg) fill arg)))
+             (remaining-args (nthcdr fill-count args))
+             (all-args (append filled-args remaining-args)))
+        (apply callable-f all-args)))))
 
 (defun clojure-repeatedly (f &optional n)
   "Return a lazy sequence of calling f repeatedly.
    If n is provided, return only n elements."
-  (let ((results nil))
+  ;; Ensure f is callable (wrap closures if needed)
+  (let ((callable-f (ensure-callable f))
+        (results nil))
     (if n
         (loop repeat n
-              do (push (funcall f) results)
+              do (push (funcall callable-f) results)
               finally (return (nreverse results)))
         ;; Infinite sequence - limit to 1000 for practicality
         (loop repeat 1000
-              do (push (funcall f) results)
+              do (push (funcall callable-f) results)
               finally (return (nreverse results))))))
 
 (defun clojure-filter (pred coll)
   "Return a lazy sequence of items in coll for which pred returns true."
-  (cond
-    ((null coll) '())
-    ((lazy-range-p coll)
-     (let ((start (lazy-range-start coll))
-           (end (lazy-range-end coll))
-           (step (lazy-range-step coll)))
-       (if end
-           (loop for i from start below end by step
-                 when (funcall pred i)
-                 collect i)
-           (loop for i from start by step
-                 repeat 1000
-                 when (funcall pred i)
-                 collect i))))
-    ((listp coll)
-     (loop for item in coll
-           when (funcall pred item)
-           collect item))
-    (t
-     (let ((coll-list (coerce coll 'list)))
-       (loop for item in coll-list
-             when (funcall pred item)
-             collect item)))))
+  ;; Ensure pred is callable (wrap closures if needed)
+  (let ((callable-pred (ensure-callable pred)))
+    (cond
+      ((null coll) '())
+      ((lazy-range-p coll)
+       (let ((start (lazy-range-start coll))
+             (end (lazy-range-end coll))
+             (step (lazy-range-step coll)))
+         (if end
+             (loop for i from start below end by step
+                   when (funcall callable-pred i)
+                   collect i)
+             (loop for i from start by step
+                   repeat 1000
+                   when (funcall callable-pred i)
+                   collect i))))
+      ((listp coll)
+       (loop for item in coll
+             when (funcall callable-pred item)
+             collect item))
+      (t
+       (let ((coll-list (coerce coll 'list)))
+         (loop for item in coll-list
+               when (funcall callable-pred item)
+               collect item))))))
 
 (defun clojure-comp (&rest fns)
   "Return a function that is the composition of the given functions.
@@ -2305,7 +2330,7 @@
    (comp) returns identity."
   (if (null fns)
       #'clojure-identity
-      (let ((fn-list (reverse fns)))
+      (let ((fn-list (reverse (mapcar #'ensure-callable fns))))
         (lambda (&rest args)
           (reduce (lambda (result fn)
                     (if (listp result)
@@ -2317,8 +2342,9 @@
 (defun clojure-juxt (&rest fns)
   "Return a function that applies each function to arguments.
    Returns a vector of results."
-  (lambda (&rest args)
-    (coerce (mapcar (lambda (f) (apply f args)) fns) 'vector)))
+  (let ((callable-fns (mapcar #'ensure-callable fns)))
+    (lambda (&rest args)
+      (coerce (mapcar (lambda (f) (apply f args)) callable-fns) 'vector))))
 
 ;;; Predicate implementations
 (defun clojure-nil? (x) (null x))

@@ -876,3 +876,85 @@ The "is not a string designator" error was caused by `eq` comparison failing bet
 4. Add more core functions as tests require them
 
 ---
+
+### Iteration 16 - 2025-01-17
+
+**Focus:** Fix closure wrapping in higher-order functions
+
+**Changes Made:**
+
+1. **Added `ensure-callable` helper function** - cl-clojure-eval.lisp:977-981
+   - Checks if a value is a closure and wraps it for CL funcall/apply
+   - Returns non-closures unchanged (CL functions are already callable)
+   - Centralizes the logic for making closures callable
+
+2. **Updated `clojure-map` to use `ensure-callable`** - cl-clojure-eval.lisp:1724-1780
+   - All functions passed to `map` are now wrapped if they're closures
+   - Handles both single collection and multiple collections
+   - Uses `ensure-callable` on the fn-arg before using it
+
+3. **Updated `clojure-mapcat` to use `ensure-callable`** - cl-clojure-eval.lisp:1854-1864
+   - Delegates to `clojure-map` which now handles wrapping
+
+4. **Updated `clojure-apply` to use `ensure-callable`** - cl-clojure-eval.lisp:1783-1793
+   - Functions passed to `apply` are wrapped if needed
+
+5. **Updated `clojure-reduce` to use `ensure-callable`** - cl-clojure-eval.lisp:2143-2159
+   - Reduction functions are wrapped before use
+
+6. **Updated `clojure-every?` to use `ensure-callable`** - cl-clojure-eval.lisp:2195-2213
+   - Predicate functions are wrapped before use
+
+7. **Updated `clojure-some` to use `ensure-callable`** - cl-clojure-eval.lisp:2215-2233
+   - Predicate functions are wrapped before use
+
+8. **Updated `clojure-filter` to use `ensure-callable`** - cl-clojure-eval.lisp:2293-2317
+   - Predicate functions are wrapped before use
+
+9. **Updated `clojure-comp` to use `ensure-callable`** - cl-clojure-eval.lisp:2319-2332
+   - All composed functions are wrapped before being composed
+
+10. **Updated `clojure-juxt` to use `ensure-callable`** - cl-clojure-eval.lisp:2334-2338
+    - All functions passed to juxt are wrapped
+
+11. **Updated `clojure-fnil` to use `ensure-callable`** - cl-clojure-eval.lisp:2265-2278
+    - The function being filled is wrapped
+
+12. **Updated `clojure-repeatedly` to use `ensure-callable`** - cl-clojure-eval.lisp:2280-2291
+    - The function being called repeatedly is wrapped
+
+13. **Updated `clojure-complement` to use `ensure-callable`** - cl-clojure-eval.lisp:2251-2257
+    - The function being complemented is wrapped
+
+**Root Cause Analysis:**
+
+The issue was that closures returned by functions like `vals` were not directly callable by CL's `funcall`, `mapcar`, `every`, etc. When these closures were passed to higher-order functions, they caused "is not of type (OR FUNCTION SYMBOL)" errors.
+
+The solution is to always wrap closures in a lambda before passing them to CL functions that expect callable objects. The `wrap-closure-for-call` function creates this wrapper, and `ensure-callable` centralizes the logic.
+
+**Errors Fixed:**
+- Closures in higher-order functions causing type errors - FIXED ✅
+- `mapcat` with closures from `vals` - FIXED ✅ (via `clojure-map` fix)
+- `map` with closures - FIXED ✅
+- `filter`, `some`, `every` with closures - FIXED ✅
+- `reduce` with closures - FIXED ✅
+- `apply` with closures - FIXED ✅
+
+**Test Results:**
+- Parse: 60 ok, 8 errors
+- Eval: 5 ok, 63 errors
+- The "metadata" test now fails on "Undefined symbol: ns-publics" instead of closure errors
+- No regressions introduced
+
+**Known Issues:**
+- The "macros" test fails with a different error about `clojure-identity` not being a sequence
+  - This appears to be a separate issue related to macro expansion or destructuring
+  - Not directly related to closure wrapping
+
+**Next Steps:**
+1. Debug the macros test error (seems to be macro expansion related)
+2. Implement `ns-publics` for metadata test
+3. Continue adding more core functions as tests require them
+4. Fix remaining parse errors (8 files have parse issues)
+
+---

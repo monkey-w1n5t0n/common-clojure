@@ -45,11 +45,20 @@
     (concatenate 'string (string-upcase (string ns-name)) "/" (string-upcase (string name)))))
 
 (defun env-get-var (env name &optional (ns '*current-ns*))
-  "Get a var from the environment. Returns NIL if not found."
-  (let ((key (var-key name ns)))
-    (or (gethash key (env-vars env))
+  "Get a var from the environment. Returns NIL if not found.
+   Falls back to 'user' namespace if not found in current namespace."
+  (let* ((ns-name (if (eq ns '*current-ns*) *current-ns* ns))
+         (key (var-key name ns-name))
+         (result (or (gethash key (env-vars env))
+                     (when (env-parent env)
+                       (env-get-var (env-parent env) name ns-name)))))
+    ;; If not found in current namespace, try the 'user' namespace (core)
+    (or result
+        (when (and (not (eq ns-name 'user))
+                   (not (env-parent env)))  ; Only check at root level
+          (gethash (var-key name 'user) (env-vars env)))
         (when (env-parent env)
-          (env-get-var (env-parent env) name ns)))))
+          (env-get-var (env-parent env) name 'user)))))
 
 (defun env-intern-var (env name &optional (ns '*current-ns*))
   "Intern a new var in the environment or return existing one."
@@ -356,6 +365,7 @@
   ;; Sequence functions
   (register-core-function env 'seq #'clojure-seq)
   (register-core-function env 'identity #'clojure-identity)
+  (register-core-function env 'reduce #'clojure-reduce)
 
   env)
 
@@ -501,6 +511,18 @@
         (coerce coll 'list))))
 
 (defun clojure-identity (x) x)
+
+(defun clojure-reduce (f init &optional coll)
+  "Reduce a collection with a function."
+  (if coll
+      ;; 3-argument form: (reduce f init coll)
+      (if (null coll)
+          init
+          (reduce f (cdr coll) :initial-value (funcall f init (car coll))))
+      ;; 2-argument form: (reduce f coll)
+      (if (null init)
+          (error "Cannot reduce empty collection")
+          (reduce f (cdr init) :initial-value (car init)))))
 
 ;;; Predicate implementations
 (defun clojure-nil? (x) (null x))

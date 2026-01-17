@@ -832,3 +832,47 @@ The "is not a string designator" error was caused by `eq` comparison failing bet
 
 ---
 
+
+### Iteration 15 - 2025-01-17
+
+**Focus:** Implement mapcat function
+
+**Changes Made:**
+
+1. **Implemented `mapcat` function** - cl-clojure-eval.lisp:1828-1854
+   - Applies fn to each item in collection(s), then concatenates results
+   - Equivalent to `(apply concat (map f colls))`
+   - Handles both single collection and multiple collections (parallel mapping)
+   - Uses `clojure-map` for mapping, then concatenates results
+   - Registered in `setup-core-functions`
+
+**Implementation Details:**
+- For single collection: `(mapcat f coll)` → maps, then concatenates each result
+- For multiple collections: `(mapcat f c1 c2 ...)` → maps in parallel, then concatenates each result
+- Handles lazy ranges, lists, and other collection types
+- Delegates to existing `clojure-map` function for the mapping step
+- Concatenation handles lazy ranges by converting to lists
+
+**Known Issues:**
+- Closures returned by functions like `vals` are not directly callable by CL's `mapcar`, `every`, etc.
+- The `wrap-closure-for-call` wrapper is applied when retrieving from environment
+- But when closures are in collections (e.g., `(mapcat vals maps)`), they're not wrapped
+- This causes errors like "is not of type (OR FUNCTION SYMBOL)" when mapcat tries to use them
+- Future work: Need to wrap closures before they're put into collections or before they're used
+
+**Test Results:**
+- Parse: 60 ok, 8 errors
+- Eval: 5 ok, 63 errors
+- The "metadata" test no longer fails on "Undefined symbol: mapcat"
+- Now fails with a different error about closures not being callable
+
+**Next Steps:**
+1. Fix closure wrapping issue - functions like `map`, `reduce`, `filter`, etc. need to wrap closure arguments
+2. Need to either:
+   a) Wrap closures when they're returned by functions like `vals`
+   b) Wrap closures in higher-order functions before calling them
+   c) Create a different mechanism for making closures callable
+3. Implement `re-find` and regex support
+4. Add more core functions as tests require them
+
+---

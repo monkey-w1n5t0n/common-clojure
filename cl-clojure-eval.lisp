@@ -1351,6 +1351,7 @@
   (register-core-function env 'str #'clojure-str)
   (register-core-function env 'into #'clojure-into)
   (register-core-function env 'concat #'clojure-concat)
+  (register-core-function env 'mapcat #'clojure-mapcat)
   (register-core-function env 'range #'clojure-range)
   (register-core-function env 'into-array #'clojure-into-array)
   (register-core-function env 'bytes #'clojure-bytes)
@@ -1824,6 +1825,34 @@
                            (t (coerce coll 'list)))))
           (setf result (append coll-list result)))))
     result))
+
+(defun clojure-mapcat (fn-arg coll &rest colls)
+  "Apply fn to each item in collection(s), then concatenate results.
+   Equivalent to (apply concat (map f colls))."
+  (if (null colls)
+      ;; Single collection
+      (let ((mapped (clojure-map fn-arg coll)))
+        ;; Concatenate the results
+        (let ((result '()))
+          (dolist (item (reverse mapped))
+            (when item
+              (let ((item-list (cond
+                                 ((lazy-range-p item) (lazy-range-to-list item))
+                                 ((listp item) item)
+                                 (t (coerce item 'list)))))
+                (setf result (append item-list result)))))
+          result))
+      ;; Multiple collections - map in parallel then concat each result
+      (let ((mapped (clojure-map fn-arg coll colls)))
+        (let ((result '()))
+          (dolist (item (reverse mapped))
+            (when item
+              (let ((item-list (cond
+                                 ((lazy-range-p item) (lazy-range-to-list item))
+                                 ((listp item) item)
+                                 (t (coerce item 'list)))))
+                (setf result (append item-list result)))))
+          result))))
 
 (defun clojure-range (&optional (start 0) end step)
   "Return a lazy sequence of numbers from start (inclusive) to end (exclusive).

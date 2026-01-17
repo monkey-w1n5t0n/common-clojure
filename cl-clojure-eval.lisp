@@ -261,16 +261,17 @@
   (typecase form
     ;; Handle unquote - evaluate and return the value
     (cons
-     (if (eq (car form) 'unquote)
-         ;; Evaluate the unquoted form in the current environment
-         (clojure-eval (cadr form) env)
-         ;; Handle unquote-splicing
-         (if (eq (car form) 'unquote-splicing)
-             ;; Evaluate and return the value (should be a list for splicing)
-             (clojure-eval (cadr form) env)
-             ;; Regular list - recursively process elements and build list
-             (let ((processed (mapcar (lambda (x) (process-syntax-quote x env)) form)))
-               processed))))
+     (let ((head (car form)))
+       (if (and (symbolp head) (string= (symbol-name head) "UNQUOTE"))
+           ;; Evaluate the unquoted form in the current environment
+           (clojure-eval (cadr form) env)
+           ;; Handle unquote-splicing
+           (if (and (symbolp head) (string= (symbol-name head) "UNQUOTE-SPLICING"))
+               ;; Evaluate and return the value (should be a list for splicing)
+               (clojure-eval (cadr form) env)
+               ;; Regular list - recursively process elements and build list
+               (let ((processed (mapcar (lambda (x) (process-syntax-quote x env)) form)))
+                 processed)))))
     ;; For vectors, process each element and return as vector
     (vector
      (let ((processed (mapcar (lambda (x) (process-syntax-quote x env)) (coerce form 'list))))
@@ -4842,7 +4843,6 @@
            ((and head-name (string= head-name "new"))
             ;; Java constructor call: (new Classname args...)
             ;; For SBCL, this is a stub that returns nil
-            (declare (ignore (cdr form)))
             nil)
            ((and head-name (string= head-name "delay"))
             ;; delay creates a lazy computation: (delay body)

@@ -69,85 +69,6 @@
       ;; Single character
       (t first-char))))
 
-(defun ensure-clojure-readtable ()
-  "Create the Clojure readtable if it doesn't exist."
-  (unless *clojure-readtable*
-    (setf *clojure-readtable* (copy-readtable nil))
-    ;; Set readtable case to :preserve for Clojure compatibility
-    (setf (readtable-case *clojure-readtable*) :preserve)
-
-    ;; [ ]
-    (set-macro-character #\[ #'read-vector nil *clojure-readtable*)
-    (set-macro-character #\] #'right-delimiter-reader nil *clojure-readtable*)
-
-    ;; { }
-    (set-macro-character #\{ #'read-map nil *clojure-readtable*)
-    (set-macro-character #\} #'right-delimiter-reader nil *clojure-readtable*)
-
-    ;; , - comma for unquote (not whitespace in Clojure's quasiquote context)
-    ;; Note: In regular code comma is whitespace, but in backquote context it's unquote
-    ;; We set it to our unquote handler to support syntax-quote
-    (set-macro-character #\, #'read-clojure-unquote nil *clojure-readtable*)
-
-    ;; \char - character literal (Clojure syntax)
-    ;; In Clojure, \a is a character literal. In CL, character literals are #\a
-    (set-macro-character #\\ #'read-character-literal nil *clojure-readtable*)
-
-    ;; ::foo - auto-resolved keyword
-    (set-macro-character #\: #'read-colon-dispatch nil *clojure-readtable*)
-
-    ;; #"regex" - regex literal
-    (set-dispatch-macro-character #\# #\" #'read-regex *clojure-readtable*)
-
-    ;; #{...} - set literal
-    (set-dispatch-macro-character #\# #\{ #'read-set *clojure-readtable*)
-
-    ;; #_form - comment (skip next form)
-    (set-dispatch-macro-character #\# #\_ #'read-comment *clojure-readtable*)
-
-    ;; #^metadata form - metadata (deprecated, same as ^metadata)
-    (set-dispatch-macro-character #\# #\^ (lambda (s c n)
-                                              (declare (ignore c n))
-                                              (funcall (symbol-function 'read-metadata) s #\^))
-                            *clojure-readtable*)
-
-    ;; ^metadata form - metadata syntax
-    (set-macro-character #\^ (lambda (s c)
-                               (declare (ignore c))
-                               (funcall (symbol-function 'read-metadata) s #\^))
-                        nil *clojure-readtable*)
-
-    ;; ##Inf, ##-Inf, ##NaN - special float literals
-    (set-dispatch-macro-character #\# #\# #'read-special-float *clojure-readtable*)
-
-    ;; 'form - quote (non-terminating so ss' is read as one symbol in Clojure)
-    (set-macro-character #\' #'read-quote t *clojure-readtable*)
-
-    ;; #'form - var quote
-    (set-dispatch-macro-character #\# #\' #'read-var-quote *clojure-readtable*)
-
-    ;; `form - syntax-quote
-    ;; We need to set this to non-terminating T to override CL's quasiquote
-    (set-macro-character #\` #'read-syntax-quote t *clojure-readtable*)
-
-    ;; ~form - unquote (and ~@form for unquote-splicing)
-    (set-macro-character #\~ #'read-tilde-dispatch *clojure-readtable*)
-
-    ;; @form - deref reader macro (non-terminating so @@ is read as one token)
-    (set-macro-character #\@ #'read-deref t *clojure-readtable*)
-
-    ;; #(body) - anonymous function literal
-    (set-dispatch-macro-character #\# #\( #'read-anon-fn *clojure-readtable*)
-
-    ;; Tagged literals: #tag value (like #uuid "...", #inst "...", #RecordType[...])
-    ;; Override CL's default dispatch chars for letters to handle Clojure tagged literals
-    (dolist (char '(#\a #\b #\c #\d #\e #\f #\g #\h #\i #\j #\k #\l #\m
-                    #\n #\o #\p #\q #\r #\s #\t #\u #\v #\w #\x #\y #\z
-                    #\A #\B #\C #\D #\E #\F #\G #\H #\I #\J #\K #\L #\M
-                    #\N #\O #\P #\Q #\R #\S #\T #\U #\V #\W #\X #\Y #\Z))
-      (set-dispatch-macro-character #\# char #'read-tagged-literal *clojure-readtable*)))
-  *clojure-readtable*)
-
 (defun read-vector (stream char)
   (declare (ignore char))
   (apply #'vector (read-delimited-list #\] stream t)))
@@ -560,6 +481,90 @@
              'vector))
     ;; Return other types as-is
     (t form)))
+
+(defun ensure-clojure-readtable ()
+  "Create the Clojure readtable if it doesn't exist."
+  (unless *clojure-readtable*
+    (setf *clojure-readtable* (copy-readtable nil))
+    ;; Set readtable case to :preserve for Clojure compatibility
+    (setf (readtable-case *clojure-readtable*) :preserve)
+
+    ;; Bind *readtable* to *clojure-readtable* while setting macro characters
+    ;; This is necessary because SBCL's set-macro-character modifies *readtable*
+    ;; even when a readtable is passed as an argument.
+    (let ((*readtable* *clojure-readtable*))
+      ;; [ ]
+      (set-macro-character #\[ #'read-vector nil)
+      (set-macro-character #\] #'right-delimiter-reader nil)
+
+      ;; { }
+      (set-macro-character #\{ #'read-map nil)
+      (set-macro-character #\} #'right-delimiter-reader nil)
+
+      ;; , - comma for unquote (not whitespace in Clojure's quasiquote context)
+      ;; Note: In regular code comma is whitespace, but in backquote context it's unquote
+      ;; We set it to our unquote handler to support syntax-quote
+      (set-macro-character #\, #'read-clojure-unquote nil)
+
+      ;; \char - character literal (Clojure syntax)
+      ;; In Clojure, \a is a character literal. In CL, character literals are #\a
+      (set-macro-character #\\ #'read-character-literal nil)
+
+      ;; ::foo - auto-resolved keyword
+      (set-macro-character #\: #'read-colon-dispatch nil)
+
+      ;; 'form - quote (non-terminating so ss' is read as one symbol in Clojure)
+      (set-macro-character #\' #'read-quote t)
+
+      ;; `form - syntax-quote
+      ;; We need to set this to non-terminating T to override CL's quasiquote
+      (set-macro-character #\` #'read-syntax-quote t)
+
+      ;; ~form - unquote (and ~@form for unquote-splicing)
+      (set-macro-character #\~ #'read-tilde-dispatch nil)
+
+      ;; @form - deref reader macro (non-terminating so @@ is read as one token)
+      (set-macro-character #\@ #'read-deref t)
+
+      ;; ^metadata form - metadata syntax
+      (set-macro-character #\^ (lambda (s c)
+                                 (declare (ignore c))
+                                 (funcall (symbol-function 'read-metadata) s #\^))
+                          nil))
+
+    ;; For dispatch macro characters, we can pass the readtable directly
+    ;; #"regex" - regex literal
+    (set-dispatch-macro-character #\# #\" #'read-regex *clojure-readtable*)
+
+    ;; #{...} - set literal
+    (set-dispatch-macro-character #\# #\{ #'read-set *clojure-readtable*)
+
+    ;; #_form - comment (skip next form)
+    (set-dispatch-macro-character #\# #\_ #'read-comment *clojure-readtable*)
+
+    ;; #^metadata form - metadata (deprecated, same as ^metadata)
+    (set-dispatch-macro-character #\# #\^ (lambda (s c n)
+                                              (declare (ignore c n))
+                                              (funcall (symbol-function 'read-metadata) s #\^))
+                            *clojure-readtable*)
+
+    ;; ##Inf, ##-Inf, ##NaN - special float literals
+    (set-dispatch-macro-character #\# #\# #'read-special-float *clojure-readtable*)
+
+    ;; #'form - var quote
+    (set-dispatch-macro-character #\# #\' #'read-var-quote *clojure-readtable*)
+
+    ;; #(body) - anonymous function literal
+    (set-dispatch-macro-character #\# #\( #'read-anon-fn *clojure-readtable*)
+
+    ;; Tagged literals: #tag value (like #uuid "...", #inst "...", #RecordType[...])
+    ;; Override CL's default dispatch chars for letters to handle Clojure tagged literals
+    (dolist (char '(#\a #\b #\c #\d #\e #\f #\g #\h #\i #\j #\k #\l #\m
+                    #\n #\o #\p #\q #\r #\s #\t #\u #\v #\w #\x #\y #\z
+                    #\A #\B #\C #\D #\E #\F #\G #\H #\I #\J #\K #\L #\M
+                    #\N #\O #\P #\Q #\R #\S #\T #\U #\V #\W #\X #\Y #\Z))
+      (set-dispatch-macro-character #\# char #'read-tagged-literal *clojure-readtable*)))
+  *clojure-readtable*)
 
 (defun enable-clojure-syntax ()
   "Enable Clojure syntax for subsequent read operations."

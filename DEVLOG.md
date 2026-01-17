@@ -2212,3 +2212,55 @@ Both use the same `env`, so the environment should be preserved. The issue may b
 3. Implement `volatile!` for volatiles test
 4. Implement more Java interop stubs as needed
 
+---
+
+### Iteration 37 - 2026-01-17
+
+**Focus:** Fix syntax-quote unquote handling and tilde (~) macro character
+
+**Changes Made:**
+
+1. **Fixed `process-syntax-quote` to use symbol name comparison** - cl-clojure-eval.lisp:259-282
+   - Changed from `(eq (car form) 'unquote)` to comparing symbol names
+   - The reader creates `unquote` symbols in `cl-clojure-syntax` package
+   - `process-syntax-quote` is in `cl-clojure-eval` package
+   - Using `string=` on symbol names avoids package mismatch issues
+
+2. **Fixed `set-macro-character` in `ensure-clojure-readtable`** - cl-clojure-syntax.lisp:485-563
+   - Moved `ensure-clojure-readtable` function to AFTER all reader functions are defined
+   - This allows `#'read-tilde-dispatch`, `#'read-deref`, `#'read-syntax-quote` to resolve correctly
+   - Added dynamic binding of `*readtable*` for macro character calls
+   - SBCL's `set-macro-character` modifies the current dynamic `*readtable*` even when a readtable is passed as argument
+   - By binding `*readtable*` to `*clojure-readtable*` before calling `set-macro-character`, the macros are correctly set
+
+3. **Removed DECLARE compilation error in 'new' special form** - cl-clojure-eval.lisp:4842-4846
+   - The `(declare (ignore (cdr form)))` was inside a cond clause where DECLARE is not valid
+   - Removed the declare statement as the stub doesn't need to ignore anything
+
+**Root Cause Analysis:**
+
+There were two separate issues:
+
+1. **Symbol package mismatch**: The `unquote` symbol created by the reader is in the `cl-clojure-syntax` package, but the comparison used `eq` which checks for identical symbols. The fix uses `string=` to compare symbol names instead.
+
+2. **Tilde macro character not being set**: When `ensure-clojure-readtable` was defined BEFORE the reader functions like `read-tilde-dispatch`, the `#'read-tilde-dispatch` reference was compiled as NIL because the function didn't exist yet. Moving `ensure-clojure-readtable` after all reader functions ensures the functions are defined when the readtable is created.
+
+Additionally, SBCL's `set-macro-character` modifies the current dynamic `*readtable*` instead of the readtable passed as the fourth argument. This is why we need to bind `*readtable*` before calling `set-macro-character`.
+
+**Errors Fixed:**
+- "Undefined symbol: ~warn?" - FIXED ✅ (tilde macro character now works)
+- "Undefined symbol: ~@" - FIXED ✅
+- "Undefined symbol: ~fns" - FIXED ✅
+- "There is no function named DECLARE" compilation error - FIXED ✅
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅
+- Eval: 30 ok, 55 errors (same count, but different errors)
+- numbers test now fails on "Undefined symbol: boolean" instead of "Undefined symbol: ~warn?"
+- transducers test has a different error (no more ~@ error)
+- Macros with syntax-quote now work correctly for unquote
+
+**Next Steps:**
+1. Work on next test failure - the numbers test now gets past the macro unquote issues
+2. Continue implementing more core functions as tests require them
+3. Fix remaining compilation warnings if needed

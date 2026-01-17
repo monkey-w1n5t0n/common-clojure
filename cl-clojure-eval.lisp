@@ -1144,6 +1144,21 @@
   (or (null value) (eq value 'false)))
 
 ;;; ============================================================
+;;; Form Normalization
+;;; ============================================================
+
+(defun unwrap-with-meta (form)
+  "Unwrap with-meta from form, returning (values normalized-form metadata).
+   For example: (with-meta foo {:bar true}) -> (values foo {:bar true})"
+  (if (and (consp form)
+           (symbolp (car form))
+           (string= (string-downcase (symbol-name (car form))) "with-meta"))
+      (destructuring-bind (with-meta-sym value metadata) form
+        (declare (ignore with-meta-sym))
+        (values value metadata))
+      (values form nil)))
+
+;;; ============================================================
 ;;; Main Evaluation Function
 ;;; ============================================================
 
@@ -1172,39 +1187,46 @@
 
       ;; List - evaluate as function call or special form
       (cons
-       (let ((head (car form))
-             (rest-form (cdr form))
-             (head-name (string-downcase (string (car form)))))
+       ;; First, unwrap with-meta from head if present (e.g., ^:once fn*)
+       (let* ((raw-head (car form))
+              (rest-form (cdr form))
+              (head (multiple-value-bind (unwrapped metadata)
+                        (unwrap-with-meta raw-head)
+                      (declare (ignore metadata))  ; TODO: store metadata
+                      unwrapped))
+              (head-name (when (symbolp head)
+                          (string-downcase (symbol-name head)))))
          (cond
            ;; Special forms - compare lowercase symbol names to handle package differences
-           ((string= head-name "if") (eval-if form env))
-           ((string= head-name "do") (eval-do form env))
-           ((string= head-name "and") (eval-and form env))
-           ((string= head-name "or") (eval-or form env))
-           ((string= head-name "quote") (eval-quote form env))
-           ((string= head-name "syntax-quote") (eval-syntax-quote form env))
-           ((string= head-name "quasiquote") (eval-syntax-quote form env))  ; CL's QUASIQUOTE
-           ((string= head-name "unquote") (eval-unquote form env))
-           ((string= head-name "unquote-splicing") (eval-unquote-splicing form env))
-           ((string= head-name "var") (eval-var-quote form env))
-           ((string= head-name "def") (eval-def form env))
-           ((string= head-name "defn") (eval-defn form env))
-           ((string= head-name "defmacro") (eval-defmacro form env))
-          ((string= head-name "deftest") (eval-deftest form env))
-          ((string= head-name "is") (eval-is form env))
-          ((string= head-name "testing") (eval-testing form env))
-          ((string= head-name "are") (eval-are form env))
-           ((string= head-name "fn") (eval-fn form env))
-           ((string= head-name "fn*") (eval-fn form env))
-           ((string= head-name "let") (eval-let form env))
-           ((string= head-name "loop") (eval-loop form env))
-           ((string= head-name "for") (eval-for form env))
-           ((string= head-name "doseq") (eval-doseq form env))
-          ((string= head-name "ns") (eval-ns form env))
-           ((string= head-name "import") (eval-import form env))
-           ((string= head-name "set!") (eval-set-bang form env))
-           ((string= head-name "declare") (eval-declare form env))
-           ((string= head-name "with-meta")
+           ;; Only check if head is a symbol (head-name is not nil)
+           ((and head-name (string= head-name "if")) (eval-if form env))
+           ((and head-name (string= head-name "do")) (eval-do form env))
+           ((and head-name (string= head-name "and")) (eval-and form env))
+           ((and head-name (string= head-name "or")) (eval-or form env))
+           ((and head-name (string= head-name "quote")) (eval-quote form env))
+           ((and head-name (string= head-name "syntax-quote")) (eval-syntax-quote form env))
+           ((and head-name (string= head-name "quasiquote")) (eval-syntax-quote form env))  ; CL's QUASIQUOTE
+           ((and head-name (string= head-name "unquote")) (eval-unquote form env))
+           ((and head-name (string= head-name "unquote-splicing")) (eval-unquote-splicing form env))
+           ((and head-name (string= head-name "var")) (eval-var-quote form env))
+           ((and head-name (string= head-name "def")) (eval-def form env))
+           ((and head-name (string= head-name "defn")) (eval-defn form env))
+           ((and head-name (string= head-name "defmacro")) (eval-defmacro form env))
+           ((and head-name (string= head-name "deftest")) (eval-deftest form env))
+           ((and head-name (string= head-name "is")) (eval-is form env))
+           ((and head-name (string= head-name "testing")) (eval-testing form env))
+           ((and head-name (string= head-name "are")) (eval-are form env))
+           ((and head-name (string= head-name "fn")) (eval-fn form env))
+           ((and head-name (string= head-name "fn*")) (eval-fn form env))
+           ((and head-name (string= head-name "let")) (eval-let form env))
+           ((and head-name (string= head-name "loop")) (eval-loop form env))
+           ((and head-name (string= head-name "for")) (eval-for form env))
+           ((and head-name (string= head-name "doseq")) (eval-doseq form env))
+           ((and head-name (string= head-name "ns")) (eval-ns form env))
+           ((and head-name (string= head-name "import")) (eval-import form env))
+           ((and head-name (string= head-name "set!")) (eval-set-bang form env))
+           ((and head-name (string= head-name "declare")) (eval-declare form env))
+           ((and head-name (string= head-name "with-meta"))
             ;; with-meta attaches metadata to a value
             ;; (with-meta value metadata) -> value with metadata
             ;; For now, we just evaluate the value and ignore metadata
@@ -1212,7 +1234,7 @@
             (destructuring-bind (with-meta-sym value metadata) form
               (declare (ignore with-meta-sym metadata))
               (clojure-eval value env)))
-           ((string= head-name "case")
+           ((and head-name (string= head-name "case"))
             ;; Case form: evaluate expr, then compare against each clause
             (let* ((expr-expr (cadr form))
                    (clauses (cddr form))
@@ -1224,7 +1246,7 @@
                       do (return-from clojure-eval (clojure-eval result env))
                     finally (return-from clojure-eval nil))))
 
-           ;; Function application
+           ;; Function application (including when head is not a symbol)
            (t
             (let ((fn-value (clojure-eval head env)))
               ;; Check if it's a macro - macros receive unevaluated arguments

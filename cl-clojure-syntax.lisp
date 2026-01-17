@@ -570,7 +570,8 @@
 (defun preprocess-clojure-dots (input-string)
   "Preprocess a Clojure source string to escape dot-only tokens.
    Converts tokens like '..' to '|..|' so CL's reader accepts them.
-   Also handles standalone '.' which is used for Java interop."
+   Also handles standalone '.' which is used for Java interop.
+   Converts commas to spaces since commas are whitespace in Clojure."
   (with-output-to-string (out)
     (let ((len (length input-string))
           (i 0))
@@ -585,6 +586,11 @@
         (loop while (< i len) do
           (let ((c (char input-string i)))
             (cond
+              ;; Comma is treated as whitespace in Clojure
+              ;; Convert to space to avoid CL's comma-unquote interpretation
+              ((char= c #\,)
+               (write-char #\Space out)
+               (incf i))
               ;; Skip string literals entirely
               ((char= c #\")
                (write-char c out)

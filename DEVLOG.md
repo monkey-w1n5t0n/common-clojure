@@ -1645,3 +1645,68 @@ The math tests (math, math_copy, math_no_header, math_no_ns) were failing with e
 2. This is related to how `macroexpand-1` interacts with syntax-quote
 3. Consider adding `macroexpand-1` and `macroexpand` functions properly
 4. Continue implementing more core functions as tests require them
+
+---
+
+### Iteration 28 - 2026-01-17
+
+**Focus:** Fix threading macros and add macroexpand support
+
+**Changes Made:**
+
+1. **Fixed comma handling in Clojure reader** - cl-clojure-syntax.lisp:588-593
+   - Commas in Clojure are whitespace, not special characters
+   - The CL reader was interpreting `,` as unquote, causing `(UNQUOTE b)` in bindings
+   - Added preprocessing to convert commas to spaces
+   - Fixed the "(UNQUOTE b) binding form" error in macros test
+
+2. **Fixed `->` and `->>` threading macros** - cl-clojure-eval.lisp:903-953
+   - Changed from step-by-step evaluation to building nested form first
+   - Previously: evaluated each step, threading intermediate results
+   - Now: builds the nested unevaluated form, then evaluates once
+   - This allows macros to receive unevaluated forms as expected
+   - Example: `(-> a b c)` now builds `(c (b a))` before evaluating
+   - This is crucial for macros like `c` that check `(first arg)` for symbol equality
+
+3. **Implemented `last` function** - cl-clojure-eval.lisp:2950-2958
+   - Returns the last element of a collection
+   - Handles lists, vectors, and other collection types
+   - Registered in setup-core-functions
+
+4. **Implemented `macroexpand-1` and `macroexpand` functions** - cl-clojure-eval.lisp:2960-2968
+   - `macroexpand-1` expands a macro once (stub: returns form unchanged)
+   - `macroexpand` expands repeatedly until no macro (stub: returns form unchanged)
+   - Both accept optional environment parameter
+   - Registered in setup-core-functions
+
+**Root Cause Analysis:**
+
+The macros test had two issues:
+1. **Comma handling**: In `[a 2, b identity]`, the comma was being read by CL's reader as unquote, converting `b` to `(UNQUOTE b)`. This caused destructuring errors.
+2. **Threading macro evaluation**: The `->` macro was evaluating intermediate results at runtime. When `(-> a b c)` was called where `c` is a macro that checks `(first arg)`, it received the evaluated result (a number) instead of the unevaluated form `(b a)`.
+
+**Errors Fixed:**
+- "(UNQUOTE b) binding form" error - FIXED ✅ (comma → space preprocessing)
+- "The value 2 is not of type LIST" in threading - FIXED ✅ (build nested form first)
+- "Undefined symbol: macroexpand-1" - FIXED ✅ (added stub function)
+- "Undefined symbol: last" - FIXED ✅ (implemented last function)
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅
+- Eval: 30 ok, 55 errors (same count, but different errors)
+- The macros test now fails on "The value |a| is not of type SEQUENCE"
+- This is a metadata-related issue in macroexpand-1
+
+**Known Issues:**
+- `macroexpand-1` is a stub that doesn't actually expand macros
+- The metadata test uses `macroexpand-1` to check that threading macros preserve metadata
+- Need to implement proper macro expansion that:
+  1. Checks if a form is a macro call
+  2. Calls the macro function with the form and environment
+  3. Returns the expanded form
+
+**Next Steps:**
+1. Implement proper `macroexpand-1` that actually expands macros
+2. The macros test needs metadata preservation in macro expansion
+3. Implement other threading macros: `some->`, `some->>`, `cond->`, `cond->>`, `as->`
+4. Continue implementing more core functions as tests require them

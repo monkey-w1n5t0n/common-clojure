@@ -907,23 +907,24 @@
   (let* ((forms (cdr form)))
     (if (null forms)
         (error "thread-first requires at least one expression")
-        ;; Start with the first expression
-        (let ((result (clojure-eval (car forms) env)))
-          ;; Thread through remaining forms
+        ;; Start with the first expression (don't evaluate yet)
+        (let ((result (car forms)))
+          ;; Thread through remaining forms, building the nested call
           (dolist (form-expr (cdr forms))
             (typecase form-expr
               ;; If it's a list, insert result as first arg
               (cons
                (let ((fn-sym (car form-expr))
                      (args (cdr form-expr)))
-                 (setq result (clojure-eval (cons fn-sym (cons result args)) env))))
+                 (setq result (cons fn-sym (cons result args)))))
               ;; If it's a symbol, just call it with result
               (symbol
-               (setq result (clojure-eval (list form-expr result) env))))
+               (setq result (list form-expr result))))
             ;; If it's a vector or other non-list, just use it as-is
             (unless (or (consp form-expr) (symbolp form-expr))
-              (setq result (clojure-eval form-expr env))))
-          result))))
+              (setq result form-expr)))
+          ;; Finally, evaluate the built nested form
+          (clojure-eval result env)))))
 
 (defun eval-thread-last (form env)
   "Evaluate a thread-last (->>) form: (->> x form1 form2 ...)
@@ -932,23 +933,24 @@
   (let* ((forms (cdr form)))
     (if (null forms)
         (error "thread-last requires at least one expression")
-        ;; Start with the first expression
-        (let ((result (clojure-eval (car forms) env)))
-          ;; Thread through remaining forms
+        ;; Start with the first expression (don't evaluate yet)
+        (let ((result (car forms)))
+          ;; Thread through remaining forms, building the nested call
           (dolist (form-expr (cdr forms))
             (typecase form-expr
               ;; If it's a list, insert result as last arg
               (cons
                (let ((fn-sym (car form-expr))
                      (args (cdr form-expr)))
-                 (setq result (clojure-eval (append (list fn-sym) args (list result)) env))))
+                 (setq result (append (list fn-sym) args (list result)))))
               ;; If it's a symbol, just call it with result
               (symbol
-               (setq result (clojure-eval (list form-expr result) env))))
+               (setq result (list form-expr result))))
             ;; If it's a vector or other non-list, just use it as-is
             (unless (or (consp form-expr) (symbolp form-expr))
-              (setq result (clojure-eval form-expr env))))
-          result))))
+              (setq result form-expr)))
+          ;; Finally, evaluate the built nested form
+          (clojure-eval result env)))))
 
 (defun eval-try (form env)
   "Evaluate a try form: (try body catch* finally?)
@@ -2072,7 +2074,11 @@
   ;; Sequence functions
   (register-core-function env 'seq #'clojure-seq)
   (register-core-function env 'identity #'clojure-identity)
+  (register-core-function env 'last #'clojure-last)
   (register-core-function env 'reduce #'clojure-reduce)
+  ;; Macro expansion functions
+  (register-core-function env 'macroexpand-1 #'clojure-macroexpand-1)
+  (register-core-function env 'macroexpand #'clojure-macroexpand)
   (register-core-function env 'eval #'clojure-eval-fn)
   (register-core-function env 'take #'clojure-take)
   (register-core-function env 'every? #'clojure-every?)
@@ -2941,6 +2947,32 @@
 (defun clojure-unchecked-double (x) x)
 
 (defun clojure-identity (x) x)
+
+(defun clojure-last (coll)
+  "Return the last element of a collection."
+  (cond
+    ((null coll) nil)
+    ((listp coll) (car (last coll)))
+    ((vectorp coll)
+     (when (> (length coll) 0)
+       (aref coll (1- (length coll)))))
+    (t (car (last (coerce coll 'list))))))
+
+(defun clojure-macroexpand-1 (form &optional env)
+  "If form represents a macro call, return the expanded form.
+   Otherwise return form unchanged."
+  (declare (ignore env))
+  ;; For now, just return the form unchanged since macros are handled
+  ;; at evaluation time in our current implementation.
+  ;; A proper implementation would check if the car of form is a macro
+  ;; and expand it by calling the macro function.
+  form)
+
+(defun clojure-macroexpand (form &optional env)
+  "Repeatedly call macroexpand-1 until form is no longer a macro call.
+   For now, just return the form unchanged."
+  (declare (ignore env))
+  form)
 
 (defun clojure-reduce (f init &optional coll)
   "Reduce a collection with a function."

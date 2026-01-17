@@ -2142,3 +2142,73 @@ The heap exhaustion was caused by:
 3. Implement `new` special form for predicates test
 4. Fix clearing test error
 5. Continue implementing more core functions as tests require them
+
+---
+
+### Iteration 36 - 2026-01-17
+
+**Focus:** Investigate vectors test "Undefined symbol: b" error, implement core functions
+
+**Changes Made:**
+
+1. **Deep investigation of vectors test error** - "Undefined symbol: b"
+   - Location: cl-clojure-eval.lisp:4464-4501 (eval-are)
+   - Traced through 16 evaluations of `b` in test-vecseq
+   - Found that the 16th evaluation has `b` bound to `nil` via `((b))` binding
+   - Error occurs in `(are #(a b) (false? (.equiv a b)) vs vs-1 ... vs nil)`
+   - The issue appears to be in how Java interop method calls handle their environment
+   - When `(.equiv a b)` is evaluated, the arguments are evaluated with the correct env
+   - However, at some point the symbol lookup fails
+
+2. **Implemented `parse-long` function** - cl-clojure-eval.lisp:3962-3967
+   - Parses strings as long integers
+   - Returns nil if parsing fails
+   - Registered as core function
+
+3. **Implemented `parse-double` function** - cl-clojure-eval.lisp:3969-3974
+   - Parses strings as double floating-point numbers
+   - Returns nil if parsing fails
+   - Registered as core function
+
+4. **Implemented `diff` function** - cl-clojure-eval.lisp:3976-3986
+   - Returns items in x that are not in y
+   - Handles both lists and vectors
+   - Registered as core function
+
+5. **Implemented `pmap` function** - cl-clojure-eval.lisp:3988-3993
+   - Parallel map - stub that uses regular map
+   - Registered as core function
+
+6. **Implemented `new` special form** - cl-clojure-eval.lisp:4842-4846
+   - Java constructor call syntax: `(new Classname args...)`
+   - Stub that returns nil
+   - Added to special form dispatch
+
+**Test Results:**
+- Parse: 77 ok, 8 errors (some Java interop parsing issues remain)
+- Eval: 30 ok, 55 errors, 0 pending
+- Data test: No longer fails on `diff` (different error now)
+- Parse test: No longer fails on `parse-long` (different error now)
+- Parallel test: No longer fails on `pmap` (different error now)
+- Predicates test: Error changed from "Undefined symbol: new" to compilation error
+
+**Root Cause Analysis of "Undefined symbol: b":**
+
+After extensive tracing, the issue appears to be:
+1. The `are` macro correctly binds `b` to `nil` in the last iteration
+2. When `(false? (.equiv a b))` is evaluated, `a` and `b` are both in the environment
+3. But when the Java interop `(.equiv a b)` is evaluated, something goes wrong
+4. The evaluation path appears to lose the environment context
+
+The Java method call code at cl-clojure-eval.lisp:4730-4751 evaluates:
+- `target` = `(clojure-eval target-expr env)` 
+- `evaluated-args` = `(mapcar (lambda (arg) (clojure-eval arg env)) method-args)`
+
+Both use the same `env`, so the environment should be preserved. The issue may be deeper in the evaluation chain.
+
+**Next Steps:**
+1. Continue investigating the `b` symbol issue - may need to trace through the entire evaluation stack
+2. Implement `subvec` for transients test
+3. Implement `volatile!` for volatiles test
+4. Implement more Java interop stubs as needed
+

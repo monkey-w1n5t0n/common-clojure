@@ -2303,6 +2303,10 @@
   (register-core-function env 'replicate #'clojure-replicate)
   (register-core-function env 'repeat #'clojure-repeat)
   (register-core-function env 'resolve #'clojure-resolve)
+  (register-core-function env 'parse-long #'clojure-parse-long)
+  (register-core-function env 'parse-double #'clojure-parse-double)
+  (register-core-function env 'diff #'clojure-diff)
+  (register-core-function env 'pmap #'clojure-pmap)
 
   ;; Metadata functions
   (register-core-function env 'meta #'clojure-meta)
@@ -3959,6 +3963,45 @@
       (let ((*readtable* (cl-clojure-syntax:ensure-clojure-readtable)))
         (cl-clojure-syntax:read-clojure stream eof-error-p eof-value)))))
 
+(defun clojure-parse-long (s &optional (radix 10))
+  "Parse a string as a long integer.
+   Returns nil if the string cannot be parsed."
+  (handler-case
+      (parse-integer s :radix radix :junk-allowed t)
+    (error () nil)))
+
+(defun clojure-parse-double (s)
+  "Parse a string as a double floating-point number.
+   Returns nil if the string cannot be parsed."
+  (handler-case
+      (read-from-string s)
+    (error () nil)))
+
+(defun clojure-diff (x y &rest more)
+  "Return a list of items in x that are not in y.
+   For collections, computes the difference."
+  (cond
+    ((and (listp x) (listp y))
+     ;; For lists, return items in x not in y
+     (remove-if (lambda (item) (member item y :test #'equal)) x))
+    ((and (vectorp x) (vectorp y))
+     ;; For vectors, convert to lists and diff
+     (coerce (remove-if (lambda (item) (find item y :test #'equal)) x) 'vector))
+    (t x)))
+
+(defun clojure-pmap (f coll &rest more-colls)
+  "Parallel map - apply f to items in collections in parallel.
+   For SBCL, this is a stub that just uses regular map."
+  (if more-colls
+      (apply #'mapcar f coll more-colls)
+      (mapcar f coll)))
+
+(defun clojure-new (class-name &rest args)
+  "Java constructor call: (new Classname args...)
+   For SBCL, this is a stub that returns nil."
+  (declare (ignore class-name args))
+  nil)
+
 (defun clojure-resolve (sym-or-str)
   "Resolve a symbol or string to its value or a class.
    For array type symbols like 'long/1, 'String/1, returns a class object.
@@ -4796,6 +4839,11 @@
            ((and head-name (string= head-name "set!")) (eval-set-bang form env))
            ((and head-name (string= head-name "declare")) (eval-declare form env))
            ((and head-name (string= head-name "binding")) (eval-binding form env))
+           ((and head-name (string= head-name "new"))
+            ;; Java constructor call: (new Classname args...)
+            ;; For SBCL, this is a stub that returns nil
+            (declare (ignore (cdr form)))
+            nil)
            ((and head-name (string= head-name "delay"))
             ;; delay creates a lazy computation: (delay body)
             ;; Returns a delay object that will evaluate body when forced

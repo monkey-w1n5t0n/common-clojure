@@ -285,6 +285,96 @@
             (clojure-eval expr new-env))
           (clojure-eval last-expr new-env)))))
 
+(defun eval-for (form env)
+  "Evaluate a for form: (for [seq-exprs body-expr) - list comprehension.
+   seq-exprs are (binding expr) optionally followed by :let, :when, :while modifiers.
+   Returns a lazy sequence of body-expr results."
+  (let* ((bindings-body (cdr form))
+         (bindings (car bindings-body))
+         (body-expr (cadr bindings-body)))
+    ;; Convert vector bindings to list
+    (let ((binding-list (if (vectorp bindings)
+                            (coerce bindings 'list)
+                            bindings)))
+      ;; Evaluate the for comprehension directly
+      (eval-for-comprehension binding-list body-expr env))))
+
+(defun eval-for-comprehension (clauses body-expr env)
+  "Evaluate a for comprehension by processing clauses and generating results."
+  ;; Parse clauses into binding clauses and modifiers
+  (multiple-value-bind (bindings modifiers)
+      (parse-for-clauses clauses)
+    ;; Evaluate each binding's collection and build results
+    (let ((collections (mapcar (lambda (b) (clojure-eval (cdr b) env))
+                               bindings)))
+      (eval-for-nested bindings collections body-expr modifiers env))))
+
+(defun parse-for-clauses (clauses)
+  "Parse for clauses into ((symbol . expr)...) bindings and ((:when/:while/:let . expr)...) modifiers."
+  (let ((bindings nil)
+        (modifiers nil))
+    (loop while clauses
+          do (let ((clause (car clauses))
+                   (rest (cdr clauses)))
+               (cond
+                 ;; Keyword modifiers
+                 ((member clause '(:when :while :let))
+                  (when (null rest)
+                    (error "Missing value for ~A in for" clause))
+                  (push (cons clause (car rest)) modifiers)
+                  (setf clauses (cdr rest)))
+                 ;; Regular binding: symbol expr
+                 ((symbolp clause)
+                  (when (null rest)
+                    (error "Missing expression for binding ~A in for" clause))
+                  (push (cons clause (car rest)) bindings)
+                  (setf clauses (cdr rest)))
+                 (t
+                  (error "Invalid clause in for: ~A" clause)))))
+    (values (nreverse bindings) (nreverse modifiers))))
+
+(defun eval-for-nested (bindings collections body-expr modifiers env)
+  "Evaluate nested for comprehension, producing list of results."
+  (if (null bindings)
+      ;; Base case: evaluate body with modifiers
+      ;; Vectors need to be evaluated element-wise
+      (let ((result (if (vectorp body-expr)
+                       (coerce (mapcar (lambda (x) (clojure-eval x env))
+                                      (coerce body-expr 'list))
+                               'vector)
+                       (clojure-eval body-expr env))))
+        ;; Apply modifiers
+        (dolist (modifier (reverse modifiers))
+          (let ((key (car modifier))
+                (value-expr (cdr modifier)))
+            (cond
+              ((eq key :when)
+               (let ((test-val (clojure-eval value-expr env)))
+                 (when (falsey? test-val)
+                   (return-from eval-for-nested nil))))
+              ((eq key :while)
+               (let ((test-val (clojure-eval value-expr env)))
+                 (when (falsey? test-val)
+                   (return-from eval-for-nested nil)))))))
+        (list result))
+      ;; Recursive case: iterate over first collection
+      (let* ((first-coll (car collections))
+             (first-coll-list (if (listp first-coll)
+                                  first-coll
+                                  (coerce first-coll 'list)))
+             (first-binding (caar bindings))
+             (rest-bindings (cdr bindings))
+             (rest-collections (cdr collections)))
+        (let ((results nil))
+          (dolist (elem first-coll-list)
+            (let* ((new-env (env-extend-lexical env first-binding elem))
+                   (nested-results (eval-for-nested rest-bindings
+                                                     rest-collections
+                                                     body-expr
+                                                     modifiers
+                                                     new-env)))
+              (setf results (append results nested-results))))
+          results))))
 (defun eval-loop (form env)
   "Evaluate a loop form: (loop [bindings] body+) - with recur support."
   ;; For now, loop is like let but recur needs special handling
@@ -448,6 +538,7 @@
   (register-core-function env 'identity #'clojure-identity)
   (register-core-function env 'reduce #'clojure-reduce)
   (register-core-function env 'eval #'clojure-eval-fn)
+  (register-core-function env 'take #'clojure-take)
 
   env)
 
@@ -688,6 +779,16 @@
   "Evaluate a Clojure form at runtime. This is the eval function available to Clojure code."
   (clojure-eval form *current-env*))
 
+(defun clojure-take (n coll)
+  "Return the first n elements of a collection."
+  (if (or (null coll) (<= n 0))
+      '()
+      (let ((coll-list (if (listp coll) coll (coerce coll 'list))))
+        (loop for i from 1 to n
+              for elem in coll-list
+              collect elem
+              while (< i (length coll-list))))))
+
 ;;; Predicate implementations
 (defun clojure-nil? (x) (null x))
 (defun clojure-symbol? (x) (symbolp x))
@@ -807,6 +908,7 @@
            ((string= head-name "fn*") (eval-fn form env))
            ((string= head-name "let") (eval-let form env))
            ((string= head-name "loop") (eval-loop form env))
+           ((string= head-name "for") (eval-for form env))
           ((string= head-name "ns") (eval-ns form env))
            ((string= head-name "import") (eval-import form env))
            ((string= head-name "set!") (eval-set-bang form env))

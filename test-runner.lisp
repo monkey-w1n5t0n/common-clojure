@@ -130,6 +130,11 @@
     (format t "Eval:  ~D ok, ~D errors, ~D pending~%" eval-ok eval-err eval-pending)
     (format t "~%Tests Passed: ~D~%" total-passed)
     (format t "Tests Failed: ~D~%" total-failed)
+    ;; Show which tests passed
+    (terpri)
+    (dolist (r results)
+      (when (eq (test-result-eval-status r) :ok)
+        (format t "ok: ~A~%" (test-result-file r))))
 
     ;; Return whether all tests passed
     (and (= parse-err 0)

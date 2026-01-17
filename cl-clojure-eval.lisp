@@ -483,7 +483,7 @@
    by :let, :when, :while modifiers."
   (let* ((bindings-body (cdr form))
          (bindings (car bindings-body))
-         (body-exprs (cadr bindings-body)))
+         (body-exprs (cddr bindings-body)))  ; cddr, not cadr - get all body expressions
     ;; Convert vector bindings to list
     (let ((binding-list (if (vectorp bindings)
                             (coerce bindings 'list)
@@ -1024,10 +1024,17 @@
     (t 0)))
 
 (defun clojure-vec (coll)
-  "Create a vector from collection."
+  "Create a vector from collection.
+   For lazy ranges, limits to 10000 elements to avoid heap exhaustion."
   (cond
     ((vectorp coll) coll)
-    ((lazy-range-p coll) (coerce (lazy-range-to-list coll) 'vector))
+    ((lazy-range-p coll)
+     (let ((limit (if (lazy-range-end coll)
+                      ;; Bounded range - use actual end
+                      most-positive-fixnum
+                      ;; Infinite range - limit to 10000
+                      10000)))
+       (coerce (lazy-range-to-list coll limit) 'vector)))
     (t (coerce coll 'vector))))
 
 (defun clojure-vector (&rest args)
@@ -1636,16 +1643,33 @@
   (let* ((args-vec (cadr form))
          (expr-expr (caddr form))
          (arg-pairs (cdddr form))
-         (arg-count (length (coerce args-vec 'list)))
+         ;; Safely get arg count, handling lazy ranges
+         (arg-count (if (lazy-range-p args-vec)
+                        (if (lazy-range-end args-vec)
+                            ;; Bounded lazy range - calculate count
+                            (ceiling (/ (- (lazy-range-end args-vec)
+                                          (lazy-range-start args-vec))
+                                       (lazy-range-step args-vec)))
+                            ;; Infinite lazy range - limit to reasonable number
+                            1000)
+                        (length (coerce args-vec 'list))))
+         ;; Convert args vector to list safely
+         (arg-names (if (lazy-range-p args-vec)
+                        ;; For lazy ranges, limit elements
+                        (lazy-range-to-list args-vec arg-count)
+                        (coerce args-vec 'list)))
          (results nil))
+    ;; Process arg-pairs in chunks
+    ;; Limit to 10000 iterations to avoid infinite loops
     (loop for remaining = arg-pairs then (nthcdr arg-count remaining)
-          while remaining
+          for iter-count from 0
+          while (and remaining (< iter-count 10000))
           do (let ((chunk (subseq remaining 0 (min arg-count (length remaining)))))
                (when (< (length chunk) arg-count)
                  (error "are: incomplete argument list"))
                (let ((new-env env))
                  (loop for i from 0 below arg-count
-                       for arg-name in (coerce args-vec 'list)
+                       for arg-name in arg-names
                        for arg-value in chunk
                        do (setf new-env (env-extend-lexical new-env arg-name arg-value)))
                  (push (clojure-eval expr-expr new-env) results))))

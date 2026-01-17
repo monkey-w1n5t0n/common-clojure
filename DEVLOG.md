@@ -6,7 +6,8 @@
 
 **Current Status:**
 - Reader: ✅ Complete - All 68 test files parse successfully
-- Eval: ⚠️ Skeleton exists - 6/68 test files evaluate without errors
+- Eval: ⚠️ Skeleton exists - 4/68 test files evaluate without errors
+- Heap exhaustion issue fixed! Tests now run in ~9 seconds instead of crashing
 - Many core functions and special forms are stubbed or incomplete
 
 ## Recent Work
@@ -69,7 +70,45 @@
 - Compilation warnings resolved
 
 **Next Steps:**
-1. Fix the `are` macro to handle lazy ranges properly (avoid `nthcdr` on potentially infinite sequences)
+1. Implement stubs for Java interop symbols
+2. Implement or stub `clojure.template/do-template` macro
+3. Add more core functions as tests require them
+
+---
+
+### Iteration 2 - 2025-01-17
+
+**Focus:** Fix heap exhaustion and doseq bug
+
+**Changes Made:**
+
+1. **Fixed heap exhaustion in `clojure-vec`** - cl-clojure-eval.lisp:1026-1037
+   - The function was calling `lazy-range-to-list` without a limit parameter
+   - For infinite lazy ranges, this would try to materialize the entire range, causing heap exhaustion
+   - Fixed by adding a limit (10000 elements) for infinite ranges
+
+2. **Fixed `eval-are` to handle lazy ranges** - cl-clojure-eval.lisp:1634-1663
+   - Changed to safely calculate arg-count for lazy ranges (bounded vs infinite)
+   - Added iteration limit (10000) to prevent infinite loops
+   - Convert args-vec to list safely with limit for infinite ranges
+
+3. **Fixed critical bug in `eval-doseq`** - cl-clojure-eval.lisp:480-493
+   - Line 486 was using `(cadr bindings-body)` which only got the FIRST body expression
+   - This meant multi-body `doseq` forms would lose all but the first expression
+   - Changed to `(cddr bindings-body)` to correctly get ALL body expressions
+   - Bug was causing `(are ...)` forms inside `doseq` to not be evaluated
+
+**Errors Fixed:**
+- Heap exhausted during garbage collection - FIXED ✅
+- Tests now complete in ~9 seconds instead of crashing
+
+**Test Results:**
+- Parse: 68 ok, 0 errors ✅
+- Eval: 4 ok, 64 errors (heap exhaustion eliminated, some tests now show different errors)
+- The "numbers" test now correctly evaluates past `are`, but fails on `do-template` (a macro from `clojure.template`)
+
+**Next Steps:**
+1. Implement or stub `clojure.template/do-template` macro
 2. Implement stubs for Java interop symbols
 3. Add more core functions as tests require them
 

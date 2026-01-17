@@ -442,7 +442,61 @@ The error "invalid number of arguments: 2" was initially caused by array functio
 - The "numbers" test now progresses past the array type tests but fails on "Undefined symbol: a"
 
 **Next Steps:**
-1. Debug the "Undefined symbol: a" error in the numbers test
+1. Debug the "Undefined symbol: a" error in the numbers test (INVESTIGATION IN PROGRESS)
+   - The `are` macro works correctly in isolation with `do-template`
+   - The issue may be related to environment management or state accumulation
+   - Need to trace exact execution path when running full test file
 2. Implement `mapcat` function
 3. Implement `re-find` and regex support
 4. Add more core functions as tests require them
+
+---
+
+### Iteration 8 - 2025-01-17
+
+**Focus:** Investigate and fix the "Undefined symbol: a" error in the numbers test
+
+**Investigation Summary:**
+
+1. **Isolated Testing Approach**
+   - Created isolated test cases for `are`, `do-template`, and `let` forms
+   - All isolated tests pass correctly
+   - The `do-template` + `are` + `let` combination works in isolation
+
+2. **Root Cause Analysis**
+   - The error "Undefined symbol: a" occurs when evaluating the full numbers test file
+   - The symbol `a` is defined in a `let` binding inside the `are` macro
+   - The same pattern works correctly in isolated tests
+   - This suggests the issue is related to:
+     a) Environment management across multiple form evaluations
+     b) State being accumulated or corrupted during test file processing
+     c) Interaction between `deftest`, `do-template`, `are`, and `let` special forms
+
+3. **Test Case That Works:**
+   ```clojure
+   (do-template [prim-array cast]
+     (are [n] (let [a (prim-array 1)] (aset a 0 (unchecked-byte n))) 127)
+     byte-array unchecked-byte)
+   ```
+   This evaluates correctly and returns `(127)`.
+
+4. **Potential Issues Identified:**
+   - The `env-push-bindings` function creates a new env frame for each binding
+   - The parent chain might not be correctly maintained in certain cases
+   - The `eval-file` function evaluates all forms with the same `*current-env*`
+   - There might be state corruption when multiple test forms are evaluated
+
+**Changes Made:**
+None yet - still investigating the root cause.
+
+**Test Results:**
+- Parse: 68 ok, 0 errors ✅
+- Eval: 5 ok, 63 errors
+- The "numbers" test still fails with "Undefined symbol: a"
+
+**Next Steps:**
+1. Add debug tracing to identify exact point of failure
+2. Check if the issue is with how `deftest` manages the environment
+3. Investigate environment parent chain management
+4. Consider adding environment isolation between test forms
+5. Implement simpler stubs to unblock other tests

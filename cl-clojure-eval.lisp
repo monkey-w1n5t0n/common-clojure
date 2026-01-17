@@ -212,8 +212,13 @@
     name))
 
 (defun eval-deftest (form env)
-  "Evaluate a deftest form: (deftest name body+) - define a test."
-  (let* ((name (cadr form))
+  "Evaluate a deftest form: (deftest name body+) - define a test.
+   The name may be wrapped in a with-meta form, so evaluate it first."
+  (let* ((name-expr (cadr form))
+         ;; Evaluate the name to handle with-meta
+         (name (if (and (consp name-expr) (symbolp (car name-expr)))
+                   (clojure-eval name-expr env)
+                   name-expr))
          (body (cddr form)))
     ;; Create a closure for the test
     (let ((test-fn (make-closure :params nil
@@ -256,6 +261,53 @@
              (env-set-var env target value))))
       ;; TODO: Handle Java interop forms like (.field obj)
       (t (error "Unsupported set! target: ~A" target)))))
+
+(defun eval-with-meta (form env)
+  "Evaluate a with-meta form: (with-meta obj metadata) - attach metadata to an object.
+   For symbols (like in deftest names), we just return the symbol itself
+   since the metadata is attached to the var, not the value.
+   For other objects, we would need a way to store metadata separately."
+  (declare (ignore env))
+  ;; In Clojure, metadata is attached to objects (especially symbols and vars)
+  ;; For eval purposes in deftest, we can ignore the metadata and just return
+  ;; the underlying form (usually a symbol)
+  (let ((obj (cadr form))
+        (metadata (caddr form)))
+    (declare (ignore metadata))
+    ;; For now, just return the object without metadata
+    ;; A full implementation would store metadata somewhere
+    obj))
+
+(defun eval-case (form env)
+  "Evaluate a case form: (case expr test1 result1 test2 result2 ... default?)
+   Compares expr (using =) against each test and returns the corresponding result.
+   If no match and no default, returns nil."
+  (let* ((expr (cadr form))
+         (expr-value (clojure-eval expr env))
+         (clauses (cddr form)))
+    ;; Process clauses pairwise
+    (loop for (test result) on clauses by #'cddr
+          while test
+          do (cond
+               ;; Last clause with no result pair - this is the default
+               ((null (cdr (member test clauses)))
+                ;; This is the default case
+                (return-from eval-case (clojure-eval test env)))
+               ;; Special case: test can be a list of values (v1 v2 v3)
+               ((and (listp test) (not (null test)))
+                ;; Check if expr-value matches any of the test values
+                (if (find expr-value test :test #'clojure=)
+                    (return-from eval-case (clojure-eval result env))
+                    ;; Continue to next clause
+                    nil))
+               ;; Single value test
+               (t
+                (if (clojure= expr-value test)
+                    (return-from eval-case (clojure-eval result env))
+                    ;; Continue to next clause
+                    nil))))
+    ;; No match found and no default clause
+    nil))
 
 ;;; ============================================================
 ;;; Closure (function) representation
@@ -372,7 +424,40 @@
   (register-core-function env 'reset! #'clojure-reset!)
   (register-core-function env 'deref #'clojure-deref)
 
+  ;; File loading
+  (register-core-function env 'load #'clojure-load)
+
+  ;; Java interop stubs - System/getProperty
+  ;; Note: Use lowercase because env-get-var normalizes to lowercase
+  (setf (gethash (cons "user" "system/getproperty") (env-vars env))
+        (make-var :name 'System/getProperty :value #'clojure-get-property))
+
   env)
+
+;;; Load function
+(defvar *load-path* nil
+  "Search path for loading Clojure files.")
+
+(defun clojure-load (path &optional relative-to)
+  "Load a Clojure file from the given path.
+   The path can be a string (without .clj extension) or a full path.
+   For now, this is a no-op that returns nil.
+   TODO: Implement actual file loading."
+  (declare (ignore path relative-to))
+  ;; For now, just return nil since we're not loading Java-specific code
+  ;; In a full implementation, this would:
+  ;; 1. Find the file on the classpath/load-path
+  ;; 2. Add .clj extension if needed
+  ;; 3. Read and evaluate all forms in the file
+  nil)
+
+;;; Java interop stubs
+(defun clojure-get-property (&rest args)
+  "Stub for Java System/getProperty.
+   Returns nil so case tests fall through to the default.
+   The real call would be (Class/method args...) but for now we just return nil."
+  (declare (ignore args))
+  nil)
 
 ;;; Arithmetic implementations
 (defun clojure+ (&rest args)
@@ -598,6 +683,8 @@
            ((and (symbolp head) (string-equal (symbol-name head) "deftest")) (eval-deftest form env))
            ((and (symbolp head) (string-equal (symbol-name head) "declare")) (eval-declare form env))
            ((and (symbolp head) (string-equal (symbol-name head) "set!")) (eval-set-bang form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "with-meta")) (eval-with-meta form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "case")) (eval-case form env))
 
            ;; Function application
            (t

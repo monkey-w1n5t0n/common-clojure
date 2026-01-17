@@ -832,6 +832,218 @@
   (macro-p nil))  ; true if this is a macro
 
 ;;; ============================================================
+;;; Java Interop Stubs
+;;; ============================================================
+
+(defun java-interop-stub-lookup (symbol)
+  "Look up a Java interop symbol (e.g., Math/round) and return a stub function.
+   Returns NIL if not found."
+  (let ((name (symbol-name symbol)))
+    (when (find #\/ name)
+      (let* ((slash-pos (position #\/ name))
+             (class-name (subseq name 0 slash-pos))
+             (member-name (subseq name (1+ slash-pos))))
+        (list class-name member-name)))))
+
+(defun eval-java-interop (class-name member-name &rest args)
+  "Evaluate a Java interop call. This is a stub implementation."
+  ;; Special cases for common Java interop patterns
+  (cond
+    ;; Math class methods
+    ((string-equal class-name "Math")
+     (cond
+       ((string-equal member-name "round")
+        (if (null args)
+            (error "Math/round requires an argument")
+            (round (first args))))
+       ((string-equal member-name "floor")
+        (if (null args)
+            (error "Math/floor requires an argument")
+            (floor (first args))))
+       ((string-equal member-name "ceil")
+        (if (null args)
+            (error "Math/ceil requires an argument")
+            (ceiling (first args))))
+       ((string-equal member-name "abs")
+        (if (null args)
+            (error "Math/abs requires an argument")
+            (abs (first args))))
+       ((string-equal member-name "min")
+        (apply #'min args))
+       ((string-equal member-name "max")
+        (apply #'max args))
+       ((string-equal member-name "pow")
+        (if (< (length args) 2)
+            (error "Math/pow requires 2 arguments")
+            (expt (first args) (second args))))
+       ((string-equal member-name "sqrt")
+        (if (null args)
+            (error "Math/sqrt requires an argument")
+            (sqrt (first args))))
+       ((string-equal member-name "sin")
+        (if (null args)
+            (error "Math/sin requires an argument")
+            (sin (first args))))
+       ((string-equal member-name "cos")
+        (if (null args)
+            (error "Math/cos requires an argument")
+            (cos (first args))))
+       ((string-equal member-name "tan")
+        (if (null args)
+            (error "Math/tan requires an argument")
+            (tan (first args))))
+       ((string-equal member-name "log")
+        (if (null args)
+            (error "Math/log requires an argument")
+            (log (first args))))
+       ((string-equal member-name "log10")
+        (if (null args)
+            (error "Math/log10 requires an argument")
+            (log (first args) 10)))
+       (t
+        (error "Unsupported Math method: ~A" member-name))))
+    ;; System class methods/fields
+    ((string-equal class-name "System")
+     (cond
+       ((string-equal member-name "getProperty")
+        (if (null args)
+            nil
+            ;; Return stub values for common properties
+            (let ((prop (first args)))
+              (cond
+                ((stringp prop)
+                 (cond
+                   ((search "line.separator" prop) #\Newline)
+                   ((search "path.separator" prop) ":")
+                   ((search "file.separator" prop) "/")
+                   ((search "os.name" prop) "Linux")
+                   ((search "java.version" prop) "11.0")
+                   (t nil)))
+                (t nil)))))
+       ((string-equal member-name "getenv")
+        (if (null args)
+            nil
+            ;; Return stub values for common env vars
+            (let ((var (first args)))
+              (cond
+                ((stringp var)
+                 (cond
+                   ((search "PATH" var) "/usr/bin:/bin")
+                   ((search "HOME" var) "/home/user")
+                   (t nil)))
+                (t nil)))))
+       (t
+        (error "Unsupported System method: ~A" member-name))))
+    ;; Class class methods/fields
+    ((string-equal class-name "Class")
+     (cond
+       ((string-equal member-name "forName")
+        ;; Return a stub Class object
+        (if (null args)
+            (error "Class/forName requires an argument")
+            :class))
+       ((string-equal member-name "TYPE")
+        ;; Return a stub TYPE value for primitive classes
+        :type)
+       (t
+        (error "Unsupported Class method: ~A" member-name))))
+    ;; Boolean class fields
+    ((string-equal class-name "Boolean")
+     (cond
+       ((string-equal member-name "TYPE")
+        :boolean-type)
+       (t
+        (error "Unsupported Boolean field: ~A" member-name))))
+    ;; Integer class fields
+    ((string-equal class-name "Integer")
+     (cond
+       ((string-equal member-name "TYPE")
+        :int-type)
+       ((string-equal member-name "MAX_VALUE")
+        most-positive-fixnum)
+       ((string-equal member-name "MIN_VALUE")
+        most-negative-fixnum)
+       (t
+        (error "Unsupported Integer field: ~A" member-name))))
+    ;; Long class fields
+    ((string-equal class-name "Long")
+     (cond
+       ((string-equal member-name "TYPE")
+        :long-type)
+       ((string-equal member-name "MAX_VALUE")
+        most-positive-fixnum)
+       ((string-equal member-name "MIN_VALUE")
+        most-negative-fixnum)
+       (t
+        (error "Unsupported Long field: ~A" member-name))))
+    ;; Float class fields
+    ((string-equal class-name "Float")
+     (cond
+       ((string-equal member-name "TYPE")
+        :float-type)
+       ((string-equal member-name "MAX_VALUE")
+        most-positive-float)
+       ((string-equal member-name "MIN_VALUE")
+        least-negative-float)
+       (t
+        (error "Unsupported Float field: ~A" member-name))))
+    ;; Double class fields
+    ((string-equal class-name "Double")
+     (cond
+       ((string-equal member-name "TYPE")
+        :double-type)
+       ((string-equal member-name "MAX_VALUE")
+        most-positive-double-float)
+       ((string-equal member-name "MIN_VALUE")
+        least-negative-double-float)
+       (t
+        (error "Unsupported Double field: ~A" member-name))))
+    ;; Character class fields
+    ((string-equal class-name "Character")
+     (cond
+       ((string-equal member-name "TYPE")
+        :char-type)
+       (t
+        (error "Unsupported Character field: ~A" member-name))))
+    ;; Byte class fields
+    ((string-equal class-name "Byte")
+     (cond
+       ((string-equal member-name "TYPE")
+        :byte-type)
+       (t
+        (error "Unsupported Byte field: ~A" member-name))))
+    ;; Short class fields
+    ((string-equal class-name "Short")
+     (cond
+       ((string-equal member-name "TYPE")
+        :short-type)
+       (t
+        (error "Unsupported Short field: ~A" member-name))))
+    ;; Object class methods
+    ((string-equal class-name "Object")
+     :object)
+    ;; String class methods
+    ((string-equal class-name "String")
+     (cond
+       ((string-equal member-name "valueOf")
+        (if (null args)
+            ""
+            (str (first args))))
+       (t
+        (error "Unsupported String method: ~A" member-name))))
+    ;; Default: error for unknown Java interop
+    (t
+     (error "Unsupported Java interop: ~A/~A" class-name member-name))))
+
+(defun setup-java-interop-stubs (env)
+  "Set up stub functions for common Java interop symbols.
+   This pre-registers frequently-used Java class/member combinations."
+  (declare (ignore env))
+  ;; The stubs are handled dynamically in clojure-eval
+  ;; via the java-interop-stub-lookup function
+  nil)
+
+;;; ============================================================
 ;;; Core Functions (built-ins)
 ;;; ============================================================
 
@@ -953,6 +1165,9 @@
   (register-core-function env 'long #'clojure-long)
   (register-core-function env 'float #'clojure-float)
   (register-core-function env 'double #'clojure-double)
+
+  ;; Java interop stubs (Class/member notation)
+  (setup-java-interop-stubs env)
 
   env)
 
@@ -1608,8 +1823,9 @@
   "Marker used to identify wrapped values with metadata.")
 
 (defun wrap-with-meta (value metadata)
-  "Wrap a value with metadata for tracking."
-  (cons *metadata-wrapper-marker* (cons metadata value)))
+  "Wrap a value with metadata for tracking.
+  The wrapped form is (meta-wrapper value metadata) so that cadr gets value."
+  (cons *metadata-wrapper-marker* (cons value metadata)))
 
 (defun wrapped-p (value)
   "Check if a value is wrapped with metadata."
@@ -1618,11 +1834,12 @@
 
 (defun unwrap-value (wrapped)
   "Get the value from a wrapped metadata object."
-  (caddr wrapped))
+  (cadr wrapped))
 
 (defun get-wrapped-metadata (wrapped)
-  "Get the metadata from a wrapped metadata object."
-  (cadr wrapped))
+  "Get the metadata from a wrapped metadata object.
+  The wrapped form is (meta-wrapper value metadata) so cddr gets metadata."
+  (cddr wrapped))
 
 (defun ensure-wrapped (value)
   "Ensure a value is wrapped, adding empty metadata if not."
@@ -1967,15 +2184,29 @@
            (let ((var (env-get-var env form)))
              (if var
                  (var-value var)
-                 ;; Check for hexadecimal literal symbols (e.g., 0xFFFF)
-                 ;; These are read as symbols due to reader limitations
+                 ;; Check for special symbol forms
                  (let ((name (symbol-name form)))
-                   (if (and (> (length name) 2)
-                            (char= (char name 0) #\0)
-                            (char-equal (char name 1) #\x))
-                       ;; Parse as hexadecimal
-                       (parse-integer name :start 2 :radix 16)
-                       (error "Undefined symbol: ~A" form)))))))
+                   (cond
+                     ;; Hexadecimal literal symbols (e.g., 0xFFFF)
+                     ((and (> (length name) 2)
+                           (char= (char name 0) #\0)
+                           (char-equal (char name 1) #\x))
+                      ;; Parse as hexadecimal
+                      (parse-integer name :start 2 :radix 16))
+                     ;; Java interop symbols (e.g., Math/round)
+                     ;; Return a lambda that when called with args, evaluates the Java interop
+                     ((find #\/ name)
+                      (let ((parts (java-interop-stub-lookup form)))
+                        (if parts
+                            (lambda (&rest args)
+                              (apply #'eval-java-interop
+                                     (intern (car parts))
+                                     (intern (cadr parts))
+                                     args))
+                            (error "Undefined symbol: ~A" form))))
+                     ;; Undefined symbol
+                     (t
+                      (error "Undefined symbol: ~A" form))))))))
 
       ;; List - evaluate as function call or special form
       (cons
@@ -2034,10 +2265,14 @@
            ((and head-name (string= head-name "with-meta"))
             ;; with-meta attaches metadata to a value
             ;; (with-meta value metadata) -> value with metadata
+            ;; Note: For type hints (metadata is a symbol), we don't evaluate the metadata
             (destructuring-bind (with-meta-sym value metadata) form
               (declare (ignore with-meta-sym))
               (let ((evaluated-value (clojure-eval value env))
-                    (evaluated-metadata (clojure-eval metadata env)))
+                    ;; Only evaluate metadata if it's not a simple symbol (type hints are symbols)
+                    (evaluated-metadata (if (symbolp metadata)
+                                           metadata  ; Don't evaluate type hints
+                                           (clojure-eval metadata env))))
                 (wrap-with-meta evaluated-value evaluated-metadata))))
            ((and head-name (string= head-name "case"))
             ;; Case form: evaluate expr, then compare against each clause

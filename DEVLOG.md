@@ -6,8 +6,9 @@
 
 **Current Status:**
 - Reader: ✅ Complete - All 68 test files parse successfully
-- Eval: ⚠️ Skeleton exists - 4/68 test files evaluate without errors
+- Eval: ⚠️ Skeleton exists - 5/68 test files evaluate without errors
 - Heap exhaustion issue fixed! Tests now run in ~9 seconds instead of crashing
+- Java interop stubs implemented for common Math/System/Class methods
 - Many core functions and special forms are stubbed or incomplete
 
 ## Recent Work
@@ -219,3 +220,66 @@ The error `#(_ inputs) is not a string designator` was misleading. The actual is
 1. Implement stubs for Java interop symbols (Math/round, Class/TYPE, etc.)
 2. Continue adding more core functions as tests require them
 3. Fix remaining destructuring edge cases
+
+---
+
+### Iteration 5 - 2025-01-17
+
+**Focus:** Implement Java interop symbol stubs and fix metadata handling bugs
+
+**Changes Made:**
+
+1. **Implemented Java interop symbol stubs** - cl-clojure-eval.lisp:842-1018
+   - Added `eval-java-interop` function to handle Java class/member notation
+   - Supports Math class methods (round, floor, ceil, abs, min, max, pow, sqrt, sin, cos, tan, log)
+   - Supports System class methods (getProperty, getenv)
+   - Supports Class class methods (forName, TYPE)
+   - Supports primitive wrapper TYPE fields (Boolean/TYPE, Integer/TYPE, Long/TYPE, Float/TYPE, Double/TYPE, Character/TYPE, Byte/TYPE, Short/TYPE)
+   - Supports primitive wrapper constant fields (Integer/MAX_VALUE, Integer/MIN_VALUE, etc.)
+   - Supports String class methods (valueOf)
+   - When symbols like `Math/round` are encountered, they return a lambda that calls `eval-java-interop`
+
+2. **Fixed critical bug in `unwrap-value`** - cl-clojure-eval.lisp:1834-1835
+   - The function was using `caddr` to get the value, but it should use `cadr`
+   - The wrapped format is `(meta-wrapper value metadata)`, not `(meta-wrapper metadata value)`
+   - This was causing the metadata to be returned instead of the value when unwrapping
+
+3. **Fixed `get-wrapped-metadata`** - cl-clojure-eval.lisp:1838-1840
+   - Updated to use `cddr` to get the metadata (third element)
+   - Previous version was using `cadr` which was getting the value
+
+4. **Fixed `wrap-with-meta` order** - cl-clojure-eval.lisp:1825-1827
+   - Changed from `(cons metadata value)` to `(cons value metadata)`
+   - Now the wrapped form is `(meta-wrapper value metadata)` which matches the unwrap functions
+
+5. **Fixed metadata evaluation for type hints** - cl-clojure-eval.lisp:2263-2274
+   - When `with-meta` is evaluated, if the metadata is a symbol (type hint), don't evaluate it
+   - Type hints like `^double` are symbols that should not be evaluated as function calls
+   - Only non-symbol metadata (like maps) should be evaluated
+
+**Root Cause Analysis:**
+The error `|double| is not of type REAL` was caused by multiple bugs:
+1. `unwrap-value` was returning metadata instead of value due to wrong accessor (`caddr` instead of `cadr`)
+2. `wrap-with-meta` was storing metadata before value, but unwrap expected value first
+3. Type hints like `^double` were being evaluated, causing the `double` function to be called
+
+**Errors Fixed:**
+- "Undefined symbol: Math/round" - FIXED ✅
+- "Undefined symbol: Class/TYPE" - FIXED ✅
+- "Undefined symbol: Boolean/TYPE" - FIXED ✅
+- "Undefined symbol: Integer/TYPE" - FIXED ✅
+- "Undefined symbol: System/getProperty" - FIXED ✅
+- "The value |double| is not of type REAL" - FIXED ✅ (metadata evaluation fix)
+- "The value 1.2 is not of type LIST" - FIXED ✅ (unwrap-value fix)
+
+**Test Results:**
+- Parse: 68 ok, 0 errors ✅
+- Eval: 5 ok, 63 errors
+- The "annotations" test now passes (was failing on System/getProperty)
+- The "numbers" test now gets past Math/round but fails on "Undefined symbol: defonce"
+
+**Next Steps:**
+1. Implement `defonce` special form
+2. Implement `mapcat` function
+3. Implement `re-find` and regex support
+4. Add more Java interop methods as tests require them

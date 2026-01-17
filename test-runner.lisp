@@ -16,7 +16,10 @@
 
 (defstruct test-result
   file
-  status        ; :parse-error :load-error :run-pending :run-pass :run-fail
+  parse-status    ; :ok or :error
+  eval-status     ; :ok :error or :not-implemented
+  tests-passed    ; number of tests passed
+  tests-failed    ; number of tests failed
   message)
 
 (defvar *test-results* nil)
@@ -43,7 +46,7 @@
 
 ;;; Try to read a Clojure file and report results
 (defun try-read-clojure-file (path)
-  "Try to read a Clojure file. Returns :success if readable, :error if not."
+  "Try to read a Clojure file. Returns :ok if readable, :error if not."
   (handler-case
       (progn
         ;; Read file, preprocess for dot tokens, then parse
@@ -54,109 +57,92 @@
               (loop for form = (read-clojure s nil :eof)
                     until (eq form :eof)
                     count t))))
-        :success)
+        :ok)
     (error (c)
-      (format *error-output* "  Parse error: ~A~%" c)
+      (declare (ignore c))
       :error)))
 
-;;; Categorize test files based on what features they need
-(defun categorize-test-file (filename)
-  "Categorize a test file based on its name and content."
-  (let ((name (pathname-name filename)))
-    (cond
-      ;; Reader-level features (what we currently implement)
-      ((member name '("vectors" "data_structures" "keywords" "symbols"
-                     "metadata" "numbers" "strings" "reader")
-            :test #'string=)
-       :reader)
-      ;; Core language features
-      ((member name '("control" "for" "fn" "evaluation" "compilation"
-                     "special" "macros" "def")
-            :test #'string=)
-       :core)
-      ;; Collections
-      ((member name '("sequences" "clojure_set" "clojure_walk" "transducers"
-                     "reducers" "transients")
-            :test #'string=)
-       :collections)
-      ;; Concurrency
-      ((member name '("refs" "atoms" "agents" "volatiles" "delays"
-                     "futures" "promises")
-            :test #'string=)
-       :concurrency)
-      ;; Java interop
-      ((member name '("java_interop" "data_structures_interop" "genclass"
-                     "proxy" "array_symbols")
-            :test #'string=)
-       :java)
-      ;; Namespaces
-      ((member name '("ns_libs" "api" "vars")
-            :test #'string=)
-       :namespaces)
-      ;; Other
-      (t :other))))
+;;; Try to evaluate/run a Clojure file
+(defun try-run-clojure-file (path)
+  "Try to run a Clojure test file. Returns (values eval-status tests-passed tests-failed).
+   Currently returns :not-implemented since eval isn't built yet."
+  (declare (ignore path))
+  ;; TODO: Implement Clojure evaluation
+  ;; For now, mark all as not-implemented with 0 passed, 1 failed (the file itself)
+  (values :not-implemented 0 1))
 
-;;; Scan all test files and report status
-(defun scan-all-tests ()
-  "Scan all test files and categorize them by readiness."
-  (let ((files (directory (merge-pathnames "*.clj" *test-dir*))))
-    (format t "~%=== Clojure Test Suite Scan ===~%")
-    (format t "Found ~D test files~%~%" (length files))
+;;; Run all tests and collect results
+(defun run-all-tests ()
+  "Run all test files and collect results."
+  (let ((files (directory (merge-pathnames "*.clj" *test-dir*)))
+        (results nil))
+    (dolist (file files)
+      (let ((parse-status (try-read-clojure-file file)))
+        (multiple-value-bind (eval-status passed failed)
+            (if (eq parse-status :ok)
+                (try-run-clojure-file file)
+                (values :error 0 1))
+          (push (make-test-result
+                 :file (pathname-name file)
+                 :parse-status parse-status
+                 :eval-status eval-status
+                 :tests-passed passed
+                 :tests-failed failed)
+                results))))
+    (nreverse results)))
 
-    ;; Group by category
-    (let ((by-category (make-hash-table)))
-      ;; Categorize all files
-      (dolist (file files)
-        (let ((cat (categorize-test-file file)))
-          (push file (gethash cat by-category))))
+;;; Print test summary
+(defun print-summary (results)
+  "Print a summary of test results."
+  (let ((total-files (length results))
+        (parse-ok 0)
+        (parse-err 0)
+        (eval-ok 0)
+        (eval-err 0)
+        (eval-pending 0)
+        (total-passed 0)
+        (total-failed 0))
 
-      ;; Print summary by category
-      (dolist (cat '(:reader :core :collections :concurrency :java :namespaces :other))
-        (let ((cat-files (gethash cat by-category)))
-          (when cat-files
-            (format t "~%~A (~D files):~%" (string-capitalize cat) (length cat-files))
-            (dolist (file (sort cat-files #'string< :key #'pathname-name))
-              (format t "  - ~A~%" (pathname-name file)))))))
+    (dolist (r results)
+      (if (eq (test-result-parse-status r) :ok)
+          (incf parse-ok)
+          (incf parse-err))
+      (case (test-result-eval-status r)
+        (:ok (incf eval-ok))
+        (:error (incf eval-err))
+        (:not-implemented (incf eval-pending)))
+      (incf total-passed (test-result-tests-passed r))
+      (incf total-failed (test-result-tests-failed r)))
 
-    ;; Parse status check
-    (format t "~%~%=== Parse Status ===~%")
-    (let ((readable 0)
-          (error-count 0))
-      (dolist (file files)
-        (let ((status (try-read-clojure-file file)))
-          (if (eq status :success)
-              (incf readable)
-              (progn
-                (incf error-count)
-                (format t "ERROR: ~A~%" (pathname-name file))))))
-      (format t "~%Readable: ~D~%Errors:   ~D~%" readable error-count)))
+    (format t "~%=== Test Summary ===~%")
+    (format t "Files: ~D total~%" total-files)
+    (format t "Parse: ~D ok, ~D errors~%" parse-ok parse-err)
+    (format t "Eval:  ~D ok, ~D errors, ~D pending~%" eval-ok eval-err eval-pending)
+    (format t "~%Tests Passed: ~D~%" total-passed)
+    (format t "Tests Failed: ~D~%" total-failed)
 
-  (values))
-
-;;; Attempt to "run" a specific test file
-(defun run-test-file (filename)
-  "Attempt to load/run a single test file."
-  (let ((path (merge-pathnames filename *test-dir*)))
-    (format t "~%=== Running ~A ===~%" filename)
-    (handler-case
-        (progn
-          (format t "Status: IMPLEMENTATION NEEDED~%")
-          (format t "Clojure evaluation not yet implemented.~%")
-          :not-implemented)
-      (error (c)
-        (format t "Error: ~A~%" c)
-        :error))))
+    ;; Return whether all tests passed
+    (and (= parse-err 0)
+         (= eval-err 0)
+         (= eval-pending 0)
+         (= total-failed 0)
+         (> total-passed 0))))
 
 ;;; Main entry point
-(defun main (&optional (test-name nil))
+(defun main ()
   (format t "Clojure on SBCL - Test Runner~%")
   (format t "================================~%")
-  (scan-all-tests)
 
-  (when test-name
-    (run-test-file test-name))
+  (let* ((results (run-all-tests))
+         (all-passed (print-summary results)))
 
-  (format t "~%~%Next: Implement features to make tests pass!~%"))
+    (format t "~%")
+    (if all-passed
+        (format t "SUCCESS: All tests passed!~%")
+        (format t "PENDING: Implement Clojure evaluation to run tests.~%"))
+
+    ;; Exit with appropriate code
+    (sb-ext:exit :code (if all-passed 0 1))))
 
 ;; Run if called as script
 (eval-when (:execute)

@@ -222,7 +222,8 @@
   "Evaluate a def form: (def name expr?) - create/intern a var."
   ;; Handle metadata on the name: (def ^:dynamic name expr)
   (let* ((second (cadr form))
-         (has-metadata (and (consp second) (eq (car second) 'with-meta)))
+         (has-metadata (and (consp second)
+                           (string= (symbol-name (car second)) "WITH-META")))
          (name (if has-metadata (cadr second) second))
          (value-expr (if has-metadata
                         (caddr form)
@@ -234,12 +235,19 @@
     name))
 
 (defun eval-declare (form env)
-  "Evaluate a declare form: (declared name+) - forward declare vars."
+  "Evaluate a declare form: (declare name+) - forward declare vars."
   ;; declare creates vars without values (for forward declarations)
-  (let* ((names (cdr form)))
-    (dolist (name names)
-      (env-intern-var env name))
-    nil))
+  ;; Names can have metadata: (declare ^:dynamic name)
+  (flet ((extract-name (spec)
+           "Extract the name from a spec, which might be (with-meta name metadata) or just a name."
+           (if (and (consp spec) (string= (symbol-name (car spec)) "WITH-META"))
+               (cadr spec)  ; (with-meta name metadata) -> name
+               spec)))       ; just name
+    (let* ((names (cdr form)))
+      (dolist (name-spec names)
+        (let ((name (extract-name name-spec)))
+          (env-intern-var env name)))
+      nil)))
 
 (defun eval-fn (form env)
   "Evaluate a fn form: (fn name? [args] body+) - returns a closure."
@@ -1196,6 +1204,14 @@
            ((string= head-name "import") (eval-import form env))
            ((string= head-name "set!") (eval-set-bang form env))
            ((string= head-name "declare") (eval-declare form env))
+           ((string= head-name "with-meta")
+            ;; with-meta attaches metadata to a value
+            ;; (with-meta value metadata) -> value with metadata
+            ;; For now, we just evaluate the value and ignore metadata
+            ;; TODO: Actually store and propagate metadata
+            (destructuring-bind (with-meta-sym value metadata) form
+              (declare (ignore with-meta-sym metadata))
+              (clojure-eval value env)))
            ((string= head-name "case")
             ;; Case form: evaluate expr, then compare against each clause
             (let* ((expr-expr (cadr form))

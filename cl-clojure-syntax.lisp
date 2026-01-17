@@ -66,10 +66,16 @@
     (set-dispatch-macro-character #\# #\_ #'read-comment *clojure-readtable*)
 
     ;; #^metadata form - metadata (deprecated, same as ^metadata)
-    (set-dispatch-macro-character #\# #\^ #'read-metadata-dispatch *clojure-readtable*)
+    (set-dispatch-macro-character #\# #\^ (lambda (s c n)
+                                              (declare (ignore c n))
+                                              (funcall (symbol-function 'read-metadata) s #\^))
+                            *clojure-readtable*)
 
     ;; ^metadata form - metadata syntax
-    (set-macro-character #\^ #'read-metadata *clojure-readtable*)
+    (set-macro-character #\^ (lambda (s c)
+                               (declare (ignore c))
+                               (funcall (symbol-function 'read-metadata) s #\^))
+                        nil *clojure-readtable*)
 
     ;; ##Inf, ##-Inf, ##NaN - special float literals
     (set-dispatch-macro-character #\# #\# #'read-special-float *clojure-readtable*)

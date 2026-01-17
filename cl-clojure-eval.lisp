@@ -246,6 +246,14 @@
   (name nil))
 
 ;;; ============================================================
+;;; Atom (mutable reference) representation
+;;; ============================================================
+
+(defstruct clojure-atom
+  "A Clojure atom - a mutable reference."
+  value)
+
+;;; ============================================================
 ;;; Test Helpers (no-ops for now)
 ;;; ============================================================
 
@@ -273,6 +281,11 @@
   "Assert a condition. For now, just return the condition."
   (declare (ignore msg))
   condition)
+
+(defun clojure-use-fixtures (fixtures &rest tests)
+  "Apply fixtures to tests. For now, no-op."
+  (declare (ignore fixtures tests))
+  nil)
 
 ;;; ============================================================
 ;;; Core Functions (built-ins)
@@ -328,6 +341,13 @@
   (register-core-function env 'deftest #'clojure-deftest)
   (register-core-function env 'testing #'clojure-testing)
   (register-core-function env 'is #'clojure-is)
+  (register-core-function env 'use-fixtures #'clojure-use-fixtures)
+
+  ;; Atom functions
+  (register-core-function env 'atom #'clojure-atom)
+  (register-core-function env 'swap! #'clojure-swap!)
+  (register-core-function env 'reset! #'clojure-reset!)
+  (register-core-function env 'deref #'clojure-deref)
 
   env)
 
@@ -469,6 +489,31 @@
 (defun clojure-number? (x) (numberp x))
 (defun clojure-fn? (x) (closure-p x))
 (defun clojure-vector? (x) (vectorp x))
+
+;;; Atom implementations
+(defun clojure-atom (initial-value)
+  "Create a new atom with initial-value."
+  (make-clojure-atom :value initial-value))
+
+(defun clojure-deref (atom-ref)
+  "Dereference an atom (or ref). Returns the current value."
+  (if (clojure-atom-p atom-ref)
+      (clojure-atom-value atom-ref)
+      ;; For other ref types, return as-is for now
+      atom-ref))
+
+(defun clojure-reset! (atom-ref new-value)
+  "Reset an atom to a new value. Returns the new value."
+  (when (clojure-atom-p atom-ref)
+    (setf (clojure-atom-value atom-ref) new-value))
+  new-value)
+
+(defun clojure-swap! (atom-ref fn-arg &rest args)
+  "Atomically swap the value of an atom by applying fn to current value and args."
+  (when (clojure-atom-p atom-ref)
+    (let ((new-value (apply fn-arg (clojure-atom-value atom-ref) args)))
+      (setf (clojure-atom-value atom-ref) new-value)
+      new-value)))
 
 ;;; ============================================================
 ;;; Truthiness

@@ -359,21 +359,52 @@
         (list result))
       ;; Recursive case: iterate over first collection
       (let* ((first-coll (car collections))
-             (first-coll-list (if (listp first-coll)
-                                  first-coll
-                                  (coerce first-coll 'list)))
              (first-binding (caar bindings))
              (rest-bindings (cdr bindings))
              (rest-collections (cdr collections)))
         (let ((results nil))
-          (dolist (elem first-coll-list)
-            (let* ((new-env (env-extend-lexical env first-binding elem))
-                   (nested-results (eval-for-nested rest-bindings
-                                                     rest-collections
-                                                     body-expr
-                                                     modifiers
-                                                     new-env)))
-              (setf results (append results nested-results))))
+          ;; Handle lazy ranges specially to avoid heap exhaustion
+          (cond
+            ((lazy-range-p first-coll)
+             (let ((start (lazy-range-start first-coll))
+                   (end (lazy-range-end first-coll))
+                   (step (lazy-range-step first-coll)))
+               (if end
+                   ;; Bounded range - iterate but limit to avoid heap issues
+                   (let ((iter-limit (min 10000 (- end start))))
+                     (loop for i from start below end by step
+                           for iter-count from 0
+                           while (< iter-count iter-limit)
+                           do (let* ((new-env (env-extend-lexical env first-binding i))
+                                     (nested-results (eval-for-nested rest-bindings
+                                                                       rest-collections
+                                                                       body-expr
+                                                                       modifiers
+                                                                       new-env)))
+                                (setf results (append results nested-results)))))
+                   ;; Infinite range - limit iterations
+                   (loop for i from start by step
+                         repeat 1000
+                         do (let* ((new-env (env-extend-lexical env first-binding i))
+                                   (nested-results (eval-for-nested rest-bindings
+                                                                     rest-collections
+                                                                     body-expr
+                                                                     modifiers
+                                                                     new-env)))
+                              (setf results (append results nested-results)))))))
+            ;; Regular collection - convert to list
+            (t
+             (let ((first-coll-list (if (listp first-coll)
+                                        first-coll
+                                        (coerce first-coll 'list))))
+               (dolist (elem first-coll-list)
+                 (let* ((new-env (env-extend-lexical env first-binding elem))
+                        (nested-results (eval-for-nested rest-bindings
+                                                          rest-collections
+                                                          body-expr
+                                                          modifiers
+                                                          new-env)))
+                   (setf results (append results nested-results)))))))
           results))))
 (defun eval-loop (form env)
   "Evaluate a loop form: (loop [bindings] body+) - with recur support."
@@ -462,6 +493,17 @@
     (dolist (expr body)
       (clojure-eval expr env))
     name))
+
+;;; ============================================================
+;;; Lazy Range representation
+;;; ============================================================
+
+(defstruct lazy-range
+  "A lazy range - generates numbers on demand to avoid heap exhaustion."
+  start
+  end
+  step
+  (current 0))
 
 ;;; ============================================================
 ;;; Closure (function) representation
@@ -575,7 +617,12 @@
   "True if all args are equal."
   (or (null args)
       (null (cdr args))
-      (apply #'equal args)))
+      (let* ((processed-args (mapcar (lambda (x)
+                                       (if (lazy-range-p x)
+                                           (lazy-range-to-list x)
+                                           x))
+                                     args)))
+        (apply #'equal processed-args))))
 
 (defun clojure< (x &rest args)
   "True if arguments are in strictly increasing order."
@@ -631,15 +678,31 @@
 
 (defun clojure-first (seq)
   "Return first element of sequence."
-  (if (or (null seq) (and (consp seq) (null (car seq))))
-      nil
-      (car seq)))
+  (cond
+    ((null seq) nil)
+    ((lazy-range-p seq)
+     (let ((start (lazy-range-start seq))
+           (end (lazy-range-end seq)))
+       (if (and end (>= start end))
+           nil
+           start)))
+    ((and (consp seq) (null (car seq))) nil)
+    (t (car seq))))
 
 (defun clojure-rest (seq)
   "Return rest of sequence."
-  (if (or (null seq) (and (consp seq) (null (cdr seq))))
-      '()
-      (cdr seq)))
+  (cond
+    ((null seq) '())
+    ((lazy-range-p seq)
+     (let ((start (lazy-range-start seq))
+           (end (lazy-range-end seq))
+           (step (lazy-range-step seq)))
+       (let ((new-start (+ start step)))
+         (if (and end (>= new-start end))
+             '()
+             (make-lazy-range :start new-start :end end :step step :current new-start)))))
+    ((and (consp seq) (null (cdr seq))) '())
+    (t (cdr seq))))
 
 (defun clojure-second (seq)
   "Return second element of sequence."
@@ -671,6 +734,14 @@
   "Return number of items in collection."
   (cond
     ((null coll) 0)
+    ((lazy-range-p coll)
+     (if (lazy-range-end coll)
+         (let ((start (lazy-range-start coll))
+               (end (lazy-range-end coll))
+               (step (lazy-range-step coll)))
+           (ceiling (/ (- end start) step)))
+         ;; For infinite ranges, return a special marker
+         1000000))
     ((listp coll) (length coll))
     ((vectorp coll) (length coll))
     ((stringp coll) (length coll))
@@ -678,9 +749,10 @@
 
 (defun clojure-vec (coll)
   "Create a vector from collection."
-  (if (vectorp coll)
-      coll
-      (coerce coll 'vector)))
+  (cond
+    ((vectorp coll) coll)
+    ((lazy-range-p coll) (coerce (lazy-range-to-list coll) 'vector))
+    (t (coerce coll 'vector))))
 
 (defun clojure-vector (&rest args)
   "Create a vector from arguments."
@@ -705,16 +777,20 @@
 (defun clojure-seq (coll)
   "Return a sequence from collection."
   (when coll
-    (if (listp coll)
-        coll
-        (coerce coll 'list))))
+    (cond
+      ((lazy-range-p coll) coll)
+      ((listp coll) coll)
+      (t (coerce coll 'list)))))
 
 (defun clojure-into (to from)
   "Conjoin elements from `from` into `to`.
    (into [] coll) returns a vector with coll's elements
    (into () coll) returns a list with coll's elements
    (into x y) uses conj to add y's elements to x"
-  (let ((from-seq (if (listp from) from (coerce from 'list))))
+  (let ((from-seq (cond
+                    ((lazy-range-p from) (lazy-range-to-list from))
+                    ((listp from) from)
+                    (t (coerce from 'list)))))
     (cond
       ;; If to is a vector, build a new vector
       ((vectorp to)
@@ -734,32 +810,65 @@
   (let ((result '()))
     (dolist (coll (reverse colls))
       (when coll
-        (let ((coll-list (if (listp coll) coll (coerce coll 'list))))
+        (let ((coll-list (cond
+                           ((lazy-range-p coll) (lazy-range-to-list coll))
+                           ((listp coll) coll)
+                           (t (coerce coll 'list)))))
           (setf result (append coll-list result)))))
     result))
 
 (defun clojure-range (&optional (start 0) end step)
   "Return a lazy sequence of numbers from start (inclusive) to end (exclusive).
-   (range) -> 0 1 2 3 ...
+   (range) -> infinite range starting from 0
    (range 10) -> 0 1 2 ... 9
    (range 1 10) -> 1 2 3 ... 9
    (range 1 10 2) -> 1 3 5 7 9"
-  (if (null end)
-      ;; One argument: treat as end, start from 0
-      (if (null start)
-          '()
-          (loop for i from 0 below start collect i))
-      ;; Two or three arguments
-      (let ((actual-step (if (null step) 1 step))
-            (actual-end end))
-        (loop for i from start below actual-end by actual-step collect i))))
+  (cond
+    ;; No arguments - infinite range starting from 0
+    ((and (null end) (null step))
+     (make-lazy-range :start 0 :end nil :step 1 :current 0))
+    ;; One argument: treat as end, start from 0
+    ((null end)
+     (if (null start)
+         '()
+         (make-lazy-range :start 0 :end start :step 1 :current 0)))
+    ;; Two or three arguments
+    (t
+     (let ((actual-step (if (null step) 1 step)))
+       (make-lazy-range :start start :end end :step actual-step :current start)))))
+
+(defun lazy-range-to-list (lr &optional (limit most-positive-fixnum))
+  "Convert a lazy range to a list, up to limit elements."
+  (if (not (lazy-range-p lr))
+      lr
+      (let ((start (lazy-range-start lr))
+            (end (lazy-range-end lr))
+            (step (lazy-range-step lr)))
+        (if end
+            ;; Bounded range
+            (loop for i from start below end by step
+                  while (> limit 0)
+                  collect i
+                  do (decf limit))
+            ;; Infinite range - use limit
+            (loop for i from start by step
+                  repeat limit
+                  collect i)))))
+
+(defun realize-range (lr)
+  "Realize a lazy range to a concrete list. For infinite ranges, limit to 1000."
+  (if (lazy-range-p lr)
+      (lazy-range-to-list lr (if (lazy-range-end lr) most-positive-fixnum 1000))
+      lr))
 
 (defun clojure-into-array (aseq &optional type)
   "Convert a sequence to a Java array. For SBCL, we return a vector instead."
   (declare (ignore type))
-  (if (listp aseq)
-      (coerce aseq 'vector)
-      (coerce aseq 'vector)))
+  (let ((seq-to-convert (cond
+                          ((lazy-range-p aseq) (lazy-range-to-list aseq))
+                          ((listp aseq) aseq)
+                          (t (coerce aseq 'list)))))
+    (coerce seq-to-convert 'vector)))
 
 (defun clojure-identity (x) x)
 
@@ -769,11 +878,17 @@
       ;; 3-argument form: (reduce f init coll)
       (if (null coll)
           init
-          (reduce f (cdr coll) :initial-value (funcall f init (car coll))))
+          (let ((coll-list (if (lazy-range-p coll)
+                               (lazy-range-to-list coll)
+                               coll)))
+            (reduce f (cdr coll-list) :initial-value (funcall f init (car coll-list)))))
       ;; 2-argument form: (reduce f coll)
       (if (null init)
           (error "Cannot reduce empty collection")
-          (reduce f (cdr init) :initial-value (car init)))))
+          (let ((coll-list (if (lazy-range-p init)
+                               (lazy-range-to-list init)
+                               init)))
+            (reduce f (cdr coll-list) :initial-value (car coll-list))))))
 
 (defun clojure-eval-fn (form)
   "Evaluate a Clojure form at runtime. This is the eval function available to Clojure code."
@@ -783,11 +898,31 @@
   "Return the first n elements of a collection."
   (if (or (null coll) (<= n 0))
       '()
-      (let ((coll-list (if (listp coll) coll (coerce coll 'list))))
-        (loop for i from 1 to n
-              for elem in coll-list
-              collect elem
-              while (< i (length coll-list))))))
+      (cond
+        ((lazy-range-p coll)
+         ;; Return a new lazy range with the end adjusted
+         (let ((start (lazy-range-start coll))
+               (end (lazy-range-end coll))
+               (step (lazy-range-step coll)))
+           (if end
+               (make-lazy-range :start start
+                               :end (min end (+ start (* n step)))
+                               :step step
+                               :current start)
+               (make-lazy-range :start start
+                               :end (+ start (* n step))
+                               :step step
+                               :current start))))
+        ((listp coll)
+         (loop for i from 1 to n
+               for elem in coll
+               collect elem
+               while (< i (length coll))))
+        (t (let ((coll-list (coerce coll 'list)))
+             (loop for i from 1 to n
+                   for elem in coll-list
+                   collect elem
+                   while (< i (length coll-list))))))))
 
 ;;; Predicate implementations
 (defun clojure-nil? (x) (null x))

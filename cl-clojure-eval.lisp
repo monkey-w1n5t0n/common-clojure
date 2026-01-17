@@ -34,16 +34,31 @@
   "Create the root environment with core bindings."
   (let ((env (make-env)))
     ;; Initialize with nil as a special value
-    (setf (gethash '[user nil] (env-vars env)) (make-var :name 'nil :value nil))
+    (setf (gethash (list 'user 'nil) (env-vars env)) (make-var :name 'nil :value nil))
     env))
 
 (defun env-get-var (env name &optional (ns '*current-ns*))
-  "Get a var from the environment. Returns NIL if not found."
-  (let* ((ns-name (if (eq ns '*current-ns*) *current-ns* ns))
-         (key (if (listp name) name (list ns-name name))))
-    (or (gethash key (env-vars env))
-        (when (env-parent env)
-          (env-get-var (env-parent env) name ns)))))
+  "Get a var from the environment. Returns NIL if not found.
+   Does case-insensitive lookup to handle Clojure's lowercase symbols."
+  (labels ((try-key (ns-name sym)
+             ;; Try the exact key first
+             (let ((key (list ns-name sym)))
+               (or (gethash key (env-vars env))
+                   ;; Try case-insensitive by searching all keys
+                   (block found
+                     (maphash (lambda (k v)
+                                (when (and (= (length k) 2)
+                                           (eq (first k) ns-name)
+                                           (cl:string-equal (symbol-name (second k))
+                                                                (symbol-name sym)))
+                                  (return-from found v)))
+                            (env-vars env))
+                     nil)))))
+    (let* ((ns-name (if (eq ns '*current-ns*) *current-ns* ns))
+           (direct-result (try-key ns-name name)))
+      (or direct-result
+          (when (env-parent env)
+            (env-get-var (env-parent env) name ns))))))
 
 (defun env-intern-var (env name &optional (ns '*current-ns*))
   "Intern a new var in the environment or return existing one."
@@ -156,6 +171,9 @@
   (let* ((bindings (cadr form))
          (body (cddr form))
          (new-env env))
+    ;; Convert vector bindings to list if needed
+    (when (vectorp bindings)
+      (setf bindings (coerce bindings 'list)))
     ;; Process bindings pairwise
     (loop for (name value-expr) on bindings by #'cddr
           while name
@@ -176,6 +194,9 @@
   (let* ((bindings (cadr form))
          (body (cddr form))
          (new-env env))
+    ;; Convert vector bindings to list if needed
+    (when (vectorp bindings)
+      (setf bindings (coerce bindings 'list)))
     ;; Process bindings pairwise
     (loop for (name value-expr) on bindings by #'cddr
           while name
@@ -253,6 +274,10 @@
   (register-core-function env 'seq #'clojure-seq)
   (register-core-function env 'identity #'clojure-identity)
 
+  ;; Boolean values (will be found via case-insensitive lookup)
+  (register-core-function env 'TRUE t)
+  (register-core-function env 'FALSE nil)
+
   env)
 
 ;;; Arithmetic implementations
@@ -325,11 +350,16 @@
       coll
       (if (listp coll)
           (append (reverse xs) coll)
-          ;; For vectors, add to end
           (if (vectorp coll)
-              (coerce (append (coerce coll 'list) xs) 'vector)
-              ;; For other collections, just append
-              (append (coerce coll 'list) xs)))))
+              ;; For vectors, add to end
+              (concatenate 'vector coll xs)
+              ;; For other collections, convert to list and append
+              ;; Use mapcar to handle arrays/strings without type issues
+              (let ((coll-list (when coll
+                                 (if (typep coll 'sequence)
+                                     (coerce coll 'list)
+                                     (list coll)))))
+                (append coll-list xs))))))
 
 (defun clojure-first (seq)
   "Return first element of sequence."
@@ -438,25 +468,34 @@
       (cons
        (let ((head (car form))
              (rest-form (cdr form)))
-         (cond
-           ;; Special forms
-           (eq head 'if) (eval-if form env)
-           (eq head 'do) (eval-do form env)
-           (eq head 'quote) (eval-quote form env)
-           (eq head 'var) (eval-var-quote form env)
-           (eq head 'def) (eval-def form env)
-           (eq head 'defn) (eval-defn form env)
-           (eq head 'fn) (eval-fn form env)
-           (eq head 'fn*) (eval-fn form env)
-           (eq head 'let) (eval-let form env)
-           (eq head 'loop) (eval-loop form env)
-
-           ;; Function application
-           (t
-            (let ((fn-value (clojure-eval head env))
-                  (args (mapcar #'(lambda (x) (clojure-eval x env))
-                                rest-form)))
-              (apply-function fn-value args))))))
+         ;; Use explicit if instead of cond to avoid macro expansion issues
+         ;; Compare symbol names case-insensitively because Clojure reader
+         ;; uses lowercase while CL reader uses uppercase
+         (if (and (symbolp head) (cl:string-equal (symbol-name head) "if"))
+             (eval-if form env)
+             (if (and (symbolp head) (cl:string-equal (symbol-name head) "do"))
+                 (eval-do form env)
+                 (if (and (symbolp head) (cl:string-equal (symbol-name head) "quote"))
+                     (eval-quote form env)
+                     (if (and (symbolp head) (cl:string-equal (symbol-name head) "var"))
+                         (eval-var-quote form env)
+                         (if (and (symbolp head) (cl:string-equal (symbol-name head) "def"))
+                             (eval-def form env)
+                             (if (and (symbolp head) (cl:string-equal (symbol-name head) "defn"))
+                                 (eval-defn form env)
+                                 (if (and (symbolp head) (cl:string-equal (symbol-name head) "fn"))
+                                     (eval-fn form env)
+                                     (if (and (symbolp head) (cl:string-equal (symbol-name head) "fn*"))
+                                         (eval-fn form env)
+                                         (if (and (symbolp head) (cl:string-equal (symbol-name head) "let"))
+                                             (eval-let form env)
+                                             (if (and (symbolp head) (cl:string-equal (symbol-name head) "loop"))
+                                                 (eval-loop form env)
+                                                 ;; Function application
+                                                 (let ((fn-value (clojure-eval head env))
+                                                       (args (mapcar #'(lambda (x) (clojure-eval x env))
+                                                                     rest-form)))
+                                                   (apply-function fn-value args))))))))))))))
 
       ;; Vector - evaluate elements (for some contexts)
       (vector form)
@@ -480,31 +519,31 @@
        ;; Bind parameters to arguments
        (cond
          ;; Vector parameters - fixed arity
-         (vectorp params)
-         (loop for param across params
-               for arg in args
-               do (setf new-env (env-extend-lexical new-env param arg)))
+         (typep params 'vector)
+         (cl:loop for param across params
+                  for arg in args
+                  do (setf new-env (env-extend-lexical new-env param arg)))
          ;; Handle & rest params
-         (when (and (> (length params) 1)
-                    (find '& params))
-           (let ((&-pos (position '& params))
-                 (rest-params (subseq params (1+ (position '& params))))
-                 (rest-args (nthcdr (length (subseq params 0 (position '& params))) args)))
+         (cl:when (and (cl:> (cl:length params) 1)
+                       (cl:find '& params))
+           (let ((&-pos (cl:position '& params))
+                 (rest-params (cl:subseq params (1+ (cl:position '& params))))
+                 (rest-args (cl:nthcdr (cl:length (cl:subseq params 0 (cl:position '& params))) args)))
              ;; Bind rest param
              (setf new-env (env-extend-lexical new-env
-                                               (car rest-params)
+                                               (cl:car rest-params)
                                                rest-args))))
          ;; List parameters
          (t
-          (loop for param in params
-                for arg in args
-                do (setf new-env (env-extend-lexical new-env param arg)))))
+          (cl:loop for param in params
+                   for arg in args
+                   do (setf new-env (env-extend-lexical new-env param arg)))))
 
        ;; Evaluate body
-       (if (null body)
+       (if (cl:null body)
            nil
-           (let ((last-expr (car (last body))))
-             (dolist (expr (butlast body))
+           (let ((last-expr (cl:car (cl:last body))))
+             (cl:dolist (expr (cl:butlast body))
                (clojure-eval expr new-env))
              (clojure-eval last-expr new-env)))))
 
@@ -528,9 +567,10 @@
   "Evaluate a Clojure string and return the result."
   (unless *current-env*
     (init-eval-system))
-  (cl-clojure-syntax:enable-clojure-syntax)
-  (let* ((form (cl-clojure-syntax:read-clojure-string string)))
-    (clojure-eval form *current-env*)))
+  (let* ((*readtable* (copy-readtable nil)))
+    (cl-clojure-syntax:enable-clojure-syntax)
+    (let* ((form (cl-clojure-syntax:read-clojure-string string)))
+      (clojure-eval form *current-env*))))
 
 (defun eval-file (path)
   "Evaluate all forms in a Clojure file."

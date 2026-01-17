@@ -2158,6 +2158,7 @@
   (register-core-function env 'count #'clojure-count)
   (register-core-function env 'vec #'clojure-vec)
   (register-core-function env 'vector #'clojure-vector)
+  (register-core-function env 'vector-of #'clojure-vector-of)
   (register-core-function env 'list #'clojure-list)
   (register-core-function env 'map #'clojure-map)
   (register-core-function env 'apply #'clojure-apply)
@@ -2600,6 +2601,23 @@
   "Create a vector from arguments."
   (coerce args 'vector))
 
+(defun clojure-vector-of (type &rest args)
+  "Create a typed vector of the specified primitive type.
+   In Clojure, this creates vectors backed by primitive arrays.
+   For SBCL, we return regular vectors since we don't have true primitive vectors.
+   Supported types: :int, :long, :float, :double, :short, :byte, :char, :boolean
+
+   When called with only a type: (vector-of :int) -> returns empty typed vector
+   When called with elements: (vector-of :int 1 2 3) -> returns vector with those elements"
+  (declare (ignore type))
+  ;; For our implementation, just return a regular vector
+  ;; In a full implementation, this would create arrays of primitive types
+  (if (null args)
+      ;; No initial elements - return empty vector
+      #()
+      ;; Has initial elements - return vector with those elements
+      (coerce args 'vector)))
+
 (defun clojure-list (&rest args)
   "Create a list from arguments."
   args)
@@ -2788,13 +2806,21 @@
       lr))
 
 (defun clojure-into-array (aseq &optional type)
-  "Convert a sequence to a Java array. For SBCL, we return a vector instead."
+  "Convert a sequence to a Java array. For SBCL, we return a vector instead.
+   Can be called as:
+   - (into-array coll) - creates Object array
+   - (into-array type coll) - creates typed array (type is ignored for SBCL)"
   (declare (ignore type))
-  (let ((seq-to-convert (cond
-                          ((lazy-range-p aseq) (lazy-range-to-list aseq))
-                          ((listp aseq) aseq)
-                          (t (coerce aseq 'list)))))
-    (coerce seq-to-convert 'vector)))
+  ;; Handle both arities: (into-array coll) and (into-array type coll)
+  ;; If aseq is a type keyword (like :int-type), the actual sequence must be in type
+  (let ((actual-seq (if (and (keywordp aseq) type)
+                       type  ;; (into-array :int-type coll) - use type arg as seq
+                       aseq)))  ;; Normal case: aseq is the sequence
+    (let ((seq-to-convert (cond
+                            ((lazy-range-p actual-seq) (lazy-range-to-list actual-seq))
+                            ((listp actual-seq) actual-seq)
+                            (t (coerce actual-seq 'list)))))
+      (coerce seq-to-convert 'vector))))
 
 ;; Type conversion functions for sequences
 (defun clojure-bytes (seq)

@@ -1906,3 +1906,57 @@ This allows tests like:
 2. Continue implementing more core functions as tests require them
 3. Implement proper `recur` support for loops
 4. Fix remaining compilation warnings
+
+---
+
+### Iteration 32 - 2026-01-17
+
+**Focus:** Implement vector-of and fix into-array type parameter handling
+
+**Changes Made:**
+
+1. **Implemented `vector-of` function** - cl-clojure-eval.lisp:2604-2619
+   - Creates a typed vector of the specified primitive type
+   - When called with only a type: `(vector-of :int)` -> returns empty vector
+   - When called with elements: `(vector-of :int 1 2 3)` -> returns vector with elements
+   - For SBCL, returns regular vectors (no true primitive vector support)
+   - Supported types: :int, :long, :float, :double, :short, :byte, :char, :boolean
+   - Registered in setup-core-functions
+
+2. **Fixed `into-array` to handle type parameter correctly** - cl-clojure-eval.lisp:2808-2823
+   - The function has two arities: `(into-array coll)` and `(into-array type coll)`
+   - Previously, the `&optional type` parameter caused issues
+   - When tests called `(into-array Integer/TYPE (map ... arange))`, the `:int-type` keyword was being treated as the sequence
+   - Added logic to detect when first arg is a type keyword and swap args accordingly
+   - Now correctly handles both `(into-array coll)` and `(into-array :int-type coll)` forms
+
+**Root Cause Analysis:**
+
+The error `:INT-TYPE is not of type SEQUENCE when binding SEQUENCE` was caused by:
+1. `Integer/TYPE` returns the keyword `:int-type`
+2. `into-array` has signature `(into-array coll)` or `(into-array type coll)`
+3. The test calls `(into-array Integer/TYPE (map ...))` which evaluates to `(into-array :int-type (map ...))`
+4. Our implementation's `&optional type` parameter meant `:int-type` was bound to `aseq` and the mapped sequence was bound to `type`
+5. The fix detects when `aseq` is a keyword and swaps to use `type` as the actual sequence
+
+**Errors Fixed:**
+- "Undefined symbol: vector-of" - FIXED ✅
+- ":INT-TYPE is not of type SEQUENCE when binding SEQUENCE" - FIXED ✅ (into-array type handling)
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅
+- Eval: 30 ok, 55 errors
+- The "vectors" test now progresses past `vector-of` calls
+- The "sequences" test now progresses past `into-array` calls
+- Heap exhaustion still occurs in sequences test, but on a different issue
+
+**Known Issues:**
+- Heap exhaustion in sequences test with error "The value T is not of type (UNSIGNED-BYTE 58)"
+  - This is a different error, possibly related to how `into` is handling the result of `vector-of`
+- The heap exhaustion suggests an infinite loop or unbounded recursion somewhere in the sequences test
+
+**Next Steps:**
+1. Debug the "The value T is not of type (UNSIGNED-BYTE 58)" error in sequences test
+2. Investigate potential infinite loop in `into` function when working with `vector-of` results
+3. Continue implementing more core functions as tests require them
+4. Fix remaining undefined symbols: subvec, volatile!, with-local-vars, etc.

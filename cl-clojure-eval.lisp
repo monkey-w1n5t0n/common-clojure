@@ -759,6 +759,11 @@
   (register-core-function env 'read-string #'clojure-read-string)
   (register-core-function env 'println #'clojure-println)
   (register-core-function env 'prn #'clojure-prn)
+  (register-core-function env 'constantly #'clojure-constantly)
+  (register-core-function env 'complement #'clojure-complement)
+  (register-core-function env 'fnil #'clojure-fnil)
+  (register-core-function env 'repeatedly #'clojure-repeatedly)
+  (register-core-function env 'filter #'clojure-filter)
 
   env)
 
@@ -1153,6 +1158,70 @@
   (if (clojure-some pred coll)
       nil
       'true))
+
+(defun clojure-constantly (x)
+  "Return a function that always returns x."
+  (lambda (&rest args) (declare (ignore args)) x))
+
+(defun clojure-complement (f)
+  "Return a function that returns the logical negation of f."
+  (lambda (&rest args)
+    (let ((result (apply f args)))
+      (if (or (null result) (eq result 'false))
+          'true
+          nil))))
+
+(defun clojure-fnil (f &rest fill-values)
+  "Return a function that calls f with fill-values for nil arguments.
+   (fnil f x y) returns a function that when called as (g a b c)
+   calls (f (or a x) (or b y) c)"
+  (lambda (&rest args)
+    (let ((filled-args
+            (loop for arg in args
+                  for i from 0
+                  for fill in fill-values
+                  collect (if (null arg) fill arg)
+                  finally (return (append filled-args (nthcdr i args))))))
+      (apply f filled-args))))
+
+(defun clojure-repeatedly (f &optional n)
+  "Return a lazy sequence of calling f repeatedly.
+   If n is provided, return only n elements."
+  (let ((results nil))
+    (if n
+        (loop repeat n
+              do (push (funcall f) results)
+              finally (return (nreverse results)))
+        ;; Infinite sequence - limit to 1000 for practicality
+        (loop repeat 1000
+              do (push (funcall f) results)
+              finally (return (nreverse results))))))
+
+(defun clojure-filter (pred coll)
+  "Return a lazy sequence of items in coll for which pred returns true."
+  (cond
+    ((null coll) '())
+    ((lazy-range-p coll)
+     (let ((start (lazy-range-start coll))
+           (end (lazy-range-end coll))
+           (step (lazy-range-step coll)))
+       (if end
+           (loop for i from start below end by step
+                 when (funcall pred i)
+                 collect i)
+           (loop for i from start by step
+                 repeat 1000
+                 when (funcall pred i)
+                 collect i))))
+    ((listp coll)
+     (loop for item in coll
+           when (funcall pred item)
+           collect item))
+    (t
+     (let ((coll-list (coerce coll 'list)))
+       (loop for item in coll-list
+             when (funcall pred item)
+             collect item)))))
 
 ;;; Predicate implementations
 (defun clojure-nil? (x) (null x))

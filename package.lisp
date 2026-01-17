@@ -59,4 +59,7 @@
            #:eval-fn
            #:eval-defn
            #:eval-let
-           #:eval-loop))
+           #:eval-loop
+           #:eval-ns
+           #:eval-deftest
+           #:eval-declare))

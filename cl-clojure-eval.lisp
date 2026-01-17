@@ -199,6 +199,41 @@
             ;; TODO: Handle recur return value
             result)))))
 
+(defun eval-ns (form env)
+  "Evaluate an ns form: (ns name & args) - namespace declaration.
+   For now, this is a no-op that just records the namespace name."
+  (declare (ignore env))
+  ;; Extract namespace name
+  (let* ((name (cadr form))
+         ;; Record the current namespace
+         (*current-ns* name))
+    ;; For now, just return the namespace name
+    ;; TODO: Handle :use, :require, :import directives
+    name))
+
+(defun eval-deftest (form env)
+  "Evaluate a deftest form: (deftest name body+) - define a test."
+  (let* ((name (cadr form))
+         (body (cddr form)))
+    ;; Create a closure for the test
+    (let ((test-fn (make-closure :params nil
+                                 :body body
+                                 :env env
+                                 :name name)))
+      ;; Store the test in the environment
+      (env-set-var env name test-fn)
+      name)))
+
+(defun eval-declare (form env)
+  "Evaluate a declare form: (declare name+) - declare vars without defining them.
+   Also handles metadata hints like ^:dynamic."
+  (dolist (item (cdr form))
+    ;; Skip metadata hints (they start with ^)
+    (when (symbolp item)
+      ;; Create a var with nil value
+      (env-intern-var env item)))
+  nil)
+
 ;;; ============================================================
 ;;; Closure (function) representation
 ;;; ============================================================
@@ -209,6 +244,35 @@
   body
   env
   (name nil))
+
+;;; ============================================================
+;;; Test Helpers (no-ops for now)
+;;; ============================================================
+
+(defun clojure-deftest (name &rest body)
+  "Define a test. Intern the test name as a var."
+  ;; Store the test function in the environment
+  (when *current-env*
+    (env-set-var *current-env* name
+                  (make-closure :params nil
+                                :body body
+                                :env *current-env*
+                                :name name)))
+  name)
+
+(defun clojure-testing (name &rest body)
+  "Define a test context. For now, just evaluate body and return nil."
+  (declare (ignore name))
+  ;; Evaluate all body forms
+  (when *current-env*
+    (dolist (form body)
+      (clojure-eval form *current-env*)))
+  nil)
+
+(defun clojure-is (condition &rest msg)
+  "Assert a condition. For now, just return the condition."
+  (declare (ignore msg))
+  condition)
 
 ;;; ============================================================
 ;;; Core Functions (built-ins)
@@ -259,6 +323,11 @@
   ;; Sequence functions
   (register-core-function env 'seq #'clojure-seq)
   (register-core-function env 'identity #'clojure-identity)
+
+  ;; Test helpers
+  (register-core-function env 'deftest #'clojure-deftest)
+  (register-core-function env 'testing #'clojure-testing)
+  (register-core-function env 'is #'clojure-is)
 
   env)
 
@@ -330,15 +399,12 @@
   "Conjoin elements to collection. For lists, adds to front."
   (cond
     ((null xs) coll)
+    ((null coll) (apply #'clojure-list xs))
     ((listp coll) (append (reverse xs) coll))
     ((vectorp coll)
      ;; Vector - add elements to end
-     (let ((list-coll (coerce coll 'list)))
-       (coerce (append list-coll xs) 'vector)))
-    (t
-     ;; Other types - try to treat as sequence
-     (let ((as-list (coerce coll 'list)))
-       (append (reverse xs) as-list)))))
+     (coerce (concatenate 'list coll xs) 'vector))
+    (t coll)))
 
 (defun clojure-first (seq)
   "Return first element of sequence."
@@ -458,7 +524,11 @@
            ((and (symbolp head) (string-equal (symbol-name head) "fn")) (eval-fn form env))
            ((and (symbolp head) (string-equal (symbol-name head) "fn*")) (eval-fn form env))
            ((and (symbolp head) (string-equal (symbol-name head) "let")) (eval-let form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "let*")) (eval-let form env))
            ((and (symbolp head) (string-equal (symbol-name head) "loop")) (eval-loop form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "ns")) (eval-ns form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "deftest")) (eval-deftest form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "declare")) (eval-declare form env))
 
            ;; Function application
            (t
@@ -552,12 +622,12 @@
   "Evaluate all forms in a Clojure file."
   (unless *current-env*
     (init-eval-system))
-  (let ((content (with-open-file (s path :direction :input)
-                   (let ((str (make-string (file-length s))))
-                     (read-sequence str s)
-                     str)))
-        (preprocessed (cl-clojure-syntax:preprocess-clojure-dots content))
-        (results nil))
+  (let* ((raw-content (with-open-file (s path :direction :input)
+                        (let ((str (make-string (file-length s))))
+                          (read-sequence str s)
+                          str)))
+         (preprocessed (cl-clojure-syntax:preprocess-clojure-dots raw-content))
+         (results nil))
     (with-input-from-string (stream preprocessed)
       (let ((*readtable* (cl-clojure-syntax:ensure-clojure-readtable)))
         (loop for form = (cl-clojure-syntax:read-clojure stream nil :eof)

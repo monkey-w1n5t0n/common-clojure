@@ -7,6 +7,32 @@
 (defvar *clojure-readtable* nil
   "The readtable used for reading Clojure code.")
 
+(defun read-tagged-literal (stream sub-char num)
+  "Read a Clojure tagged literal: #tag value
+   Examples: #uuid \"...\", #inst \"...\", #RecordType[field1 field2]
+   Returns (tagged-literal tag value)."
+  (declare (ignore num))
+  ;; The dispatch character (letter) has been consumed but we need to read the full tag
+  ;; Put the letter back and read the symbol
+  (unread-char sub-char stream)
+  ;; Read the tag symbol (everything until whitespace or special char)
+  (let ((tag-chars (list)))
+    ;; Read characters that form the tag
+    (loop
+      (let ((c (peek-char nil stream nil nil)))
+        (cond
+          ((null c) (return))
+          ;; Tag ends at whitespace or special characters (but not . which is part of namespaced tags)
+          ((member c '(#\Space #\Tab #\Newline #\Return #\( #\) #\[ #\] #\{ #\} #\" #\; #\,) :test #'char=)
+           (return))
+          (t
+           (push (read-char stream) tag-chars)))))
+    (let ((tag-name (coerce (nreverse tag-chars) 'string)))
+      ;; Read the value that follows the tag
+      (let ((value (read stream t nil t)))
+        ;; Return tagged literal representation
+        (list 'tagged-literal (intern tag-name) value)))))
+
 (defun ensure-clojure-readtable ()
   "Create the Clojure readtable if it doesn't exist."
   (unless *clojure-readtable*
@@ -46,8 +72,8 @@
     ;; ##Inf, ##-Inf, ##NaN - special float literals
     (set-dispatch-macro-character #\# #\# #'read-special-float *clojure-readtable*)
 
-    ;; 'form - quote
-    (set-macro-character #\' #'read-quote *clojure-readtable*)
+    ;; 'form - quote (non-terminating so ss' is read as one symbol in Clojure)
+    (set-macro-character #\' #'read-quote t *clojure-readtable*)
 
     ;; #'form - var quote
     (set-dispatch-macro-character #\# #\' #'read-var-quote *clojure-readtable*)
@@ -59,7 +85,15 @@
     (set-macro-character #\~ #'read-tilde-dispatch *clojure-readtable*)
 
     ;; #(body) - anonymous function literal
-    (set-dispatch-macro-character #\# #\( #'read-anon-fn *clojure-readtable*))
+    (set-dispatch-macro-character #\# #\( #'read-anon-fn *clojure-readtable*)
+
+    ;; Tagged literals: #tag value (like #uuid "...", #inst "...", #RecordType[...])
+    ;; Override CL's default dispatch chars for letters to handle Clojure tagged literals
+    (dolist (char '(#\a #\b #\c #\d #\e #\f #\g #\h #\i #\j #\k #\l #\m
+                    #\n #\o #\p #\q #\r #\s #\t #\u #\v #\w #\x #\y #\z
+                    #\A #\B #\C #\D #\E #\F #\G #\H #\I #\J #\K #\L #\M
+                    #\N #\O #\P #\Q #\R #\S #\T #\U #\V #\W #\X #\Y #\Z))
+      (set-dispatch-macro-character #\# char #'read-tagged-literal *clojure-readtable*)))
   *clojure-readtable*)
 
 (defun read-vector (stream char)
@@ -425,14 +459,16 @@
   (typecase form
     (symbol
      (let ((name (symbol-name form)))
-       (when (and (> (length name) 0)
-                  (char= (char name 0) #\%))
-         ;; Check if this is a placeholder we should replace
-         (let ((replacement (assoc name arg-map :test #'string=)))
-           (if replacement
-               (cdr replacement)
-               ;; Not a valid placeholder - could raise error here
-               form)))))
+       (if (and (> (length name) 0)
+                (char= (char name 0) #\%))
+           ;; Check if this is a placeholder we should replace
+           (let ((replacement (assoc name arg-map :test #'string=)))
+             (if replacement
+                 (cdr replacement)
+                 ;; Not a valid placeholder - return as-is
+                 form))
+           ;; Not a placeholder - return original symbol
+           form)))
     (list
      (mapcar #'(lambda (item) (replace-placeholders item arg-map)) form))
     (vector
@@ -447,6 +483,83 @@
   (ensure-clojure-readtable)
   (setq *readtable* *clojure-readtable*))
 
+;;; Preprocessing for dot-only tokens
+;;; Common Lisp's reader rejects tokens consisting only of dots (like "..")
+;;; but Clojure uses these as valid symbols. We preprocess the input to
+;;; escape such tokens with vertical bars: .. -> |..|
+
+(defun preprocess-clojure-dots (input-string)
+  "Preprocess a Clojure source string to escape dot-only tokens.
+   Converts tokens like '..' to '|..|' so CL's reader accepts them.
+   Also handles standalone '.' which is used for Java interop."
+  (with-output-to-string (out)
+    (let ((len (length input-string))
+          (i 0))
+      (labels ((delimiter-p (c)
+                 (member c '(#\Space #\Tab #\Newline #\Return #\( #\) #\[ #\] #\{ #\} #\" #\; #\, #\')))
+               (at-token-boundary-p (pos)
+                 (or (= pos 0)
+                     (delimiter-p (char input-string (1- pos)))))
+               (ends-token-p (pos)
+                 (or (>= pos len)
+                     (delimiter-p (char input-string pos)))))
+        (loop while (< i len) do
+          (let ((c (char input-string i)))
+            (cond
+              ;; Skip string literals entirely
+              ((char= c #\")
+               (write-char c out)
+               (incf i)
+               (loop while (< i len) do
+                 (let ((sc (char input-string i)))
+                   (write-char sc out)
+                   (incf i)
+                   (cond
+                     ((char= sc #\\)
+                      ;; Escape - write next char too
+                      (when (< i len)
+                        (write-char (char input-string i) out)
+                        (incf i)))
+                     ((char= sc #\")
+                      (return))))))
+              ;; Skip comments entirely
+              ((char= c #\;)
+               (loop while (and (< i len) (char/= (char input-string i) #\Newline)) do
+                 (write-char (char input-string i) out)
+                 (incf i)))
+              ;; Check for dot at token boundary
+              ((and (char= c #\.)
+                    (at-token-boundary-p i))
+               ;; Count consecutive dots
+               (let ((dot-start i)
+                     (dot-count 0))
+                 (loop while (and (< i len) (char= (char input-string i) #\.)) do
+                   (incf dot-count)
+                   (incf i))
+                 ;; Check if this is a dot-only token
+                 (if (ends-token-p i)
+                     ;; Dot-only token - escape it
+                     (progn
+                       (write-char #\| out)
+                       (loop repeat dot-count do (write-char #\. out))
+                       (write-char #\| out))
+                     ;; Dots followed by more chars (like .methodName) - write normally
+                     (progn
+                       (loop repeat dot-count do (write-char #\. out))))))
+              ;; Escape | character (CL uses it for escaped symbols)
+              ((char= c #\|)
+               (write-char #\\ out)
+               (write-char c out)
+               (incf i))
+              ;; Regular character
+              (t
+               (write-char c out)
+               (incf i)))))))))
+
+(defun make-preprocessed-stream (input-string)
+  "Create a stream from preprocessed Clojure source."
+  (make-string-input-stream (preprocess-clojure-dots input-string)))
+
 (defun read-clojure (stream &optional (eof-error-p t) (eof-value :eof))
   "Read a Clojure form from STREAM, post-processing to handle number suffixes.
    This wraps the standard READ function to handle Clojure-specific syntax like
@@ -456,6 +569,13 @@
                        :eof
                        (parse-suffixed-number form))))
     processed))
+
+(defun read-clojure-string (string &optional (eof-error-p t) (eof-value :eof))
+  "Read a Clojure form from a string, with preprocessing for dot tokens.
+   This is the main entry point for reading Clojure source code."
+  (let ((preprocessed (preprocess-clojure-dots string)))
+    (with-input-from-string (stream preprocessed)
+      (read-clojure stream eof-error-p eof-value))))
 
 (defun disable-clojure-syntax ()
   "Disable Clojure syntax, restoring default Common Lisp readtable."

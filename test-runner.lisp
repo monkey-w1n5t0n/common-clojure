@@ -33,20 +33,30 @@
 
 (defvar *test-dir* (get-test-dir))
 
+;;; Read entire file as string
+(defun read-file-to-string (path)
+  "Read the entire contents of a file as a string."
+  (with-open-file (s path :direction :input)
+    (let ((content (make-string (file-length s))))
+      (read-sequence content s)
+      content)))
+
 ;;; Try to read a Clojure file and report results
 (defun try-read-clojure-file (path)
   "Try to read a Clojure file. Returns :success if readable, :error if not."
   (handler-case
       (progn
-        (with-open-file (s path :direction :input)
-          ;; Use Clojure readtable and read-clojure for reading the file content
-          (let ((*readtable* (ensure-clojure-readtable)))
-            (loop for form = (read-clojure s nil :eof)
-                  until (eq form :eof)
-                  count t)))
+        ;; Read file, preprocess for dot tokens, then parse
+        (let* ((content (read-file-to-string path))
+               (preprocessed (preprocess-clojure-dots content)))
+          (with-input-from-string (s preprocessed)
+            (let ((*readtable* (ensure-clojure-readtable)))
+              (loop for form = (read-clojure s nil :eof)
+                    until (eq form :eof)
+                    count t))))
         :success)
     (error (c)
-      (declare (ignore c))
+      (format *error-output* "  Parse error: ~A~%" c)
       :error)))
 
 ;;; Categorize test files based on what features they need

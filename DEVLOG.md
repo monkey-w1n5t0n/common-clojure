@@ -2414,3 +2414,64 @@ Our implementation was trying to use RUNTIME BINDINGS instead of symbol substitu
 2. Investigate remaining "Undefined symbol: x" in macros and test files
 3. Implement `cast` function for numbers test
 4. Continue with other test failures
+---
+
+### Iteration 40 - 2026-01-17
+
+**Focus:** Fix critical OR bug in symbol evaluation - NIL as a valid value
+
+**Problem:**
+The control test (and other tests) were failing with "Undefined symbol: _" when 
+underscore parameters were bound to NIL values. The issue was in the `clojure-eval` 
+function's symbol evaluation code.
+
+**Root Cause Analysis:**
+
+The symbol evaluation code used `or` to chain lookup attempts:
+```lisp
+(t (or (env-get-lexical env form)
+       ;; Then check vars
+       (let ((var (env-get-var env form)))
+         ...)))
+```
+
+When `env-get-lexical` returned `NIL` (a valid value for symbols like `_` when 
+bound to `nil`), the `or` treated `NIL` as falsy and continued to the next clause.
+This caused the symbol lookup to fail even when the binding existed.
+
+In Clojure, `NIL` is a valid value and a symbol bound to `NIL` should return `NIL`, 
+not fall through to check vars and special forms.
+
+**Changes Made:**
+
+1. **Updated `env-get-lexical` to return two values** - cl-clojure-eval.lisp:108-143
+   - Now returns `(values value found-p)` where `found-p` is a boolean
+   - This distinguishes between "not found" and "found with value NIL"
+   - Updated all recursive calls to use `multiple-value-bind`
+
+2. **Updated `clojure-eval` symbol evaluation to use `multiple-value-bind`** - cl-clojure-eval.lisp:4768-4850
+   - Changed from `(or (env-get-lexical env form) ...)` to 
+     `(multiple-value-bind (lexical-value found-p) (env-get-lexical env form) ...)`
+   - Only checks vars and special forms if `found-p` is nil
+   - Correctly returns `NIL` when a symbol is bound to `NIL`
+
+**Errors Fixed:**
+- "Undefined symbol: _" when `_` is bound to `NIL` - FIXED ✅
+- "Undefined symbol: x" when `x` is bound to `NIL` - FIXED ✅
+- Symbols bound to `nil` now correctly return `nil` instead of falling through
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅
+- Eval: 30 ok, 55 errors (same count, but control test progresses further)
+- control test now fails with "Undefined symbol: sym" instead of "Undefined symbol: _"
+- Direct tests like `(let [x nil] x)` now work correctly
+
+**Known Issues:**
+- control test still has errors but progresses past the underscore issue
+- Many other tests still have various "Undefined symbol" errors
+- This fix is a critical bug fix that enables proper symbol lookup for NIL values
+
+**Next Steps:**
+1. Implement `cast` function for numbers test
+2. Continue implementing more core functions as tests require them
+3. Debug remaining "Undefined symbol" errors in various tests

@@ -109,6 +109,8 @@
   "Get a lexical binding from the environment.
    Checks regular bindings first, then letfn-table (for mutual recursion),
    then parent env.
+   Returns two values: the binding value (or NIL if not found) and a boolean
+   indicating whether the binding was found.
    Closures are wrapped in lambdas so they can be called via CL funcall/apply."
   ;; For lexical bindings, use string comparison for symbol names
   ;; to handle symbols from different packages
@@ -117,26 +119,28 @@
   (let ((name-string (string name)))
     (labels ((search-bindings (bindings)
                (cond
-                 ((null bindings) nil)
+                 ((null bindings) (values nil nil))
                  ((string= name-string (string (caar bindings)))
-                  (car bindings))
+                  (values (wrap-closure-for-call (cdar bindings)) t))
                  (t (search-bindings (cdr bindings))))))
       ;; First, check regular bindings
-      (let ((binding (search-bindings (env-bindings env))))
-        (if binding
-            (wrap-closure-for-call (cdr binding))
+      (multiple-value-bind (value found-p) (search-bindings (env-bindings env))
+        (if found-p
+            (values value found-p)
             ;; Second, check letfn-table (for letfn mutual recursion)
             (let ((letfn-table (env-letfn-table env)))
               (if (and letfn-table (hash-table-p letfn-table))
                   (let ((value (gethash name-string letfn-table)))
                     (if value
-                        (wrap-closure-for-call value)
+                        (values (wrap-closure-for-call value) t)
                         ;; Finally, check parent env
-                        (when (env-parent env)
-                          (env-get-lexical (env-parent env) name))))
+                        (if (env-parent env)
+                            (env-get-lexical (env-parent env) name)
+                            (values nil nil))))
                   ;; No letfn-table, check parent directly
-                  (when (env-parent env)
-                    (env-get-lexical (env-parent env) name)))))))))
+                  (if (env-parent env)
+                      (env-get-lexical (env-parent env) name)
+                      (values nil nil)))))))))
 
 (defun env-push-bindings (env bindings)
   "Create a new env frame with additional lexical bindings."
@@ -4761,15 +4765,18 @@
          ((string= (symbol-name form) "nil") nil)
          ((string= (symbol-name form) "true") t)
          ((string= (symbol-name form) "false") nil)
-         ;; Check lexical bindings first
-         (t (or (env-get-lexical env form)
-                 ;; Then check vars
-                 (let ((var (env-get-var env form)))
-                   (if var
-                       (var-value var)
-                 ;; Check for special symbol forms
-                 (let ((name (symbol-name form)))
-                   (cond
+         ;; Check lexical bindings first (use multiple-value-bind to distinguish NIL from not-found)
+         (t (multiple-value-bind (lexical-value found-p)
+                (env-get-lexical env form)
+                (if found-p
+                    lexical-value
+                    ;; Not found in lexical scope, check vars
+                    (let ((var (env-get-var env form)))
+                      (if var
+                          (var-value var)
+                          ;; Not a var either, check for special symbol forms
+                          (let ((name (symbol-name form)))
+                            (cond
                      ;; Hexadecimal literal symbols (e.g., 0xFFFF)
                      ((and (> (length name) 2)
                            (char= (char name 0) #\0)
@@ -4840,7 +4847,7 @@
                       form)
                      ;; Undefined symbol
                      (t
-                      (error "Undefined symbol: ~A" form))))))))))
+                      (error "Undefined symbol: ~A" form)))))))))))
 
       ;; List - evaluate as function call or special form
       (cons

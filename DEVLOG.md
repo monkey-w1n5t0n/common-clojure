@@ -958,3 +958,76 @@ The solution is to always wrap closures in a lambda before passing them to CL fu
 4. Fix remaining parse errors (8 files have parse issues)
 
 ---
+
+### Iteration 17 - 2025-01-17
+
+**Focus:** Fix critical bugs and update test runner to use eval system
+
+**Context:**
+The previous DEVLOG.md showed extensive work up to iteration 16, but when I started, the test-runner.lisp was not actually using the eval system - it was just returning `:not-implemented`. This iteration fixed that and got tests actually running.
+
+**Changes Made:**
+
+1. **Fixed `apply-function` parameter binding bug** - cl-clojure-eval.lisp:513-575
+   - The function had malformed `cond` structure with `when` used as a predicate
+   - The `loop` macro was being interpreted incorrectly (loop keywords treated as variables)
+   - Fixed the structure to properly handle vector and list parameters with `&` rest params
+   - Now correctly binds parameters to arguments when calling closures
+
+2. **Updated test-runner.lisp to use eval system** - test-runner.lisp:6-177
+   - Added loading of cl-clojure system (eval module)
+   - Updated `try-run-clojure-file` to actually evaluate test files using `eval-file`
+   - Added error details output to show first 10 error messages
+   - Removed `:not-implemented` status - now tests actually run
+
+3. **Fixed `eval-file` function** - cl-clojure-eval.lisp:596-612
+   - Added `declare` for `ftype` to help compiler understand `preprocess-clojure-dots`
+   - Nested the `preprocessed` binding to fix compilation warning about unbound `content`
+
+4. **Added `ns` special form stub** - cl-clojure-eval.lisp:494-497, 541-544
+   - `(ns ...)` namespace declarations are now recognized
+   - Currently just returns nil and doesn't change namespaces
+
+5. **Added test helper special forms:**
+   - `set!` - set variable value (cl-clojure-eval.lisp:216-225)
+   - `case` - switch statement (cl-clojure-eval.lisp:227-236) - simplified stub
+   - `deftest` - define test (cl-clojure-eval.lisp:238-247)
+
+6. **Added test helper function stubs:**
+   - `is` - assertion helper (cl-clojure-eval.lisp:463-467)
+   - `are` - repeated testing (cl-clojure-eval.lisp:469-473)
+   - `agent` - create agent (cl-clojure-eval.lisp:475-479)
+   - `atom` - create atom (cl-clojure-eval.lisp:481-484)
+   - `meta` - get metadata (cl-clojure-eval.lisp:486-489)
+   - `System/getProperty` - Java interop stub (cl-clojure-eval.lisp:491-501, 320-324)
+   - `defspec` - spec test definition (cl-clojure-eval.lisp:503-506)
+
+**Errors Fixed:**
+- "unmatched close parenthesis" in apply-function - FIXED ✅
+- "undefined variable: CONTENT" in eval-file - FIXED ✅
+- "Undefined symbol: ns" - FIXED ✅
+- "Undefined symbol: deftest" - FIXED ✅
+- "Undefined symbol: set!" - FIXED ✅
+- "Undefined symbol: case" - FIXED ✅
+- Test runner not actually running tests - FIXED ✅
+
+**Test Results:**
+- Parse: 68 ok, 0 errors ✅
+- Eval: 3 ok, 65 errors (progress from 0 ok!)
+- Tests now actually run instead of just parsing
+- First 3 test files evaluate without errors
+
+**Known Issues:**
+- Java interop syntax like `System/getProperty` needs better handling (currently returns lambda)
+- Many core functions still need implementation (read-string, swap-vals!, etc.)
+- Metadata handling is incomplete (meta stub just returns nil)
+- The 3 passing tests might be false positives (empty tests or similar)
+
+**Next Steps:**
+1. Implement Java interop syntax properly (Class/member notation)
+2. Add more core function stubs as tests require them
+3. Fix the `System/getProperty` style calls
+4. Implement metadata handling properly
+5. Continue investigating which tests actually pass and why
+
+---

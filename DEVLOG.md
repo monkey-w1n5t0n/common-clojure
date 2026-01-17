@@ -553,3 +553,47 @@ After extensive debugging, I discovered the root cause of "Undefined symbol: a":
 4. Must handle escaped backslashes `\\` correctly
 5. Consider using a separate preprocessing pass after `preprocess-clojure-dots`
 6. Alternative: Handle character evaluation at eval time
+
+---
+
+### Iteration 10 - 2025-01-17
+
+**Focus:** Implement Clojure character literal support
+
+**Changes Made:**
+
+1. **Implemented character literal reader macro** - cl-clojure-syntax.lisp:67-119
+   - Added `read-character-literal` function to handle `\char` syntax
+   - Set backslash (`\`) as a macro character in the Clojure readtable
+   - Supports single characters: `\a` → reads as character `a`
+   - Supports named characters: `\newline` → `#\Newline`, `\space` → `#\Space`, `\tab` → `#\Tab`
+   - Supports: `\return`, `\backspace`, `\formfeed`
+   - Placeholder support for `\uXXXX` unicode escapes
+
+2. **Added `==` function alias** - cl-clojure-eval.lisp:1203
+   - Registered `==` as an alias for `=` (clojure=)
+   - In Clojure, `==` is identical to `=`
+
+**Implementation Notes:**
+- The character literal reader intercepts backslash during the read phase
+- It reads the next character(s) and returns a Common Lisp character object
+- For named characters, it reads alphanumeric characters and maps them to CL named characters
+- Single characters are returned directly as CL characters
+
+**Errors Fixed:**
+- "Undefined symbol: a" (was caused by `\a` being read as an escaped symbol) - FIXED ✅
+- "Undefined symbol: ==" - FIXED ✅
+
+**Test Results:**
+- Parse: 60 ok, 8 errors (some tests have pre-existing parse issues)
+- Eval: 5 ok, 63 errors
+- The "numbers" test now progresses past character literals and `==`, but fails on "Undefined symbol: denominator"
+
+**Known Issues:**
+- Character literal reader may conflict with backslash usage in other contexts
+- Need to verify backslash handling in strings and comments is correct
+
+**Next Steps:**
+1. Implement `denominator` function
+2. Implement `numerator` function (likely needed too)
+3. Continue adding more core functions as tests require them

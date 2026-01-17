@@ -33,6 +33,42 @@
         ;; Return tagged literal representation
         (list 'tagged-literal (intern tag-name) value)))))
 
+(defun read-character-literal (stream char)
+  "Read a Clojure character literal: \\a, \\newline, etc.
+   Returns a Common Lisp character object.
+   Supports: \\a (single char), \\newline, \\space, \\tab, \\return, \\backspace, \\formfeed"
+  (declare (ignore char))
+  ;; Read the next character(s)
+  (let ((first-char (read-char stream t nil)))
+    (cond
+      ;; Named characters
+      ((and (char= first-char #\n)
+            (peek-char t stream nil nil)
+            (char= (peek-char t stream nil nil) #\e))
+       ;; Check for \newline
+       (let ((name (make-array 0 :element-type 'character :fill-pointer 0)))
+         (vector-push-extend first-char name)
+         (loop while (and (peek-char t stream nil nil)
+                         (alpha-char-p (peek-char t stream nil nil)))
+               do (vector-push-extend (read-char stream t nil) name))
+         (let ((name-str (string-downcase name)))
+           (cond
+             ((string= name-str "newline") #\Newline)
+             ((string= name-str "space") #\Space)
+             ((string= name-str "tab") #\Tab)
+             ((string= name-str "return") #\Return)
+             ((string= name-str "backspace") #\Backspace)
+             ((string= name-str "formfeed") #\Page)
+             ((string= name-str "u")
+              ;; Unicode escape \uXXXX - not fully implemented, return placeholder
+              (dotimes (i 4) (read-char stream t nil))
+              #\?)
+             (t
+              ;; Unknown named character - return the first char as-is
+              (char name 0))))))
+      ;; Single character
+      (t first-char))))
+
 (defun ensure-clojure-readtable ()
   "Create the Clojure readtable if it doesn't exist."
   (unless *clojure-readtable*
@@ -52,6 +88,10 @@
     ;; Note: In regular code comma is whitespace, but in backquote context it's unquote
     ;; We set it to our unquote handler to support syntax-quote
     (set-macro-character #\, #'read-clojure-unquote nil *clojure-readtable*)
+
+    ;; \char - character literal (Clojure syntax)
+    ;; In Clojure, \a is a character literal. In CL, character literals are #\a
+    (set-macro-character #\\ #'read-character-literal nil *clojure-readtable*)
 
     ;; ::foo - auto-resolved keyword
     (set-macro-character #\: #'read-colon-dispatch nil *clojure-readtable*)

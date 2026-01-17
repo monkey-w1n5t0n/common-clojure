@@ -1199,6 +1199,7 @@
 
   ;; Comparison functions
   (register-core-function env '= #'clojure=)
+  (register-core-function env '== #'clojure=)
   (register-core-function env '< #'clojure<)
   (register-core-function env '> #'clojure>)
   (register-core-function env '<= #'clojure<=)

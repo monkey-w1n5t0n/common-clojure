@@ -318,10 +318,16 @@
 
   ;; Java interop stubs
   (register-core-function env 'System (lambda (member)
-                                        (if (and (symbolp member)
-                                                 (cl:string-equal (symbol-name member) "getProperty"))
-                                            #'clojure-system-getproperty
-                                            (error "Unknown System member: ~A" member))))
+                                        (let ((member-name (if (keywordp member)
+                                                               (symbol-name member)
+                                                               (when (symbolp member)
+                                                                 (symbol-name member)))))
+                                          (cond
+                                            ((and member-name (cl:string-equal member-name "GETPROPERTY"))
+                                             #'clojure-system-getproperty)
+                                            ((and member-name (cl:string-equal member-name "getProperty"))
+                                             #'clojure-system-getproperty)
+                                            (t (error "Unknown System member: ~A" member))))))
 
   ;; Boolean values (will be found via case-insensitive lookup)
   (register-core-function env 'TRUE t)
@@ -551,13 +557,33 @@
 
       ;; Symbol - look up in environment
       (symbol
-       ;; Check lexical bindings first
-       (or (env-get-lexical env form)
-           ;; Then check vars
-           (let ((var (env-get-var env form)))
-             (if var
-                 (var-value var)
-                 (error "Undefined symbol: ~A" form)))))
+       ;; Check for Java interop syntax: Class/member
+       (let ((sym-name (symbol-name form))
+             (slash-pos (position #\/ (symbol-name form))))
+         ;(format *error-output* "DEBUG: symbol=~A, sym-name=~A, slash-pos=~A~%" form sym-name slash-pos)
+         (if slash-pos
+             ;; Java interop: Class/member
+             (let* ((class-name (subseq sym-name 0 slash-pos))
+                    (member-name (subseq sym-name (1+ slash-pos)))
+                    (class-sym (intern class-name (symbol-package form))))
+               ;; Look up the class and call it with member as argument
+               (let ((class-var (env-get-var env class-sym)))
+                 (if class-var
+                     (let ((class-value (var-value class-var)))
+                       (if (functionp class-value)
+                           (funcall class-value (intern member-name "KEYWORD"))
+                           (error "Class ~A is not a function" class-name)))
+                     ;; Class not found - create a stub lambda
+                     (lambda (member)
+                       (declare (ignore member))
+                       (error "Undefined class: ~A" class-name)))))
+             ;; Regular symbol - check lexical bindings first
+             (or (env-get-lexical env form)
+                 ;; Then check vars
+                 (let ((var (env-get-var env form)))
+                   (if var
+                       (var-value var)
+                       (error "Undefined symbol: ~A" form)))))))
 
       ;; List - evaluate as function call or special form
       (cons

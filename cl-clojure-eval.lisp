@@ -4578,7 +4578,11 @@
           (clojure-eval last-expr env)))))
 
 (defun eval-are (form env)
-  "Evaluate an are form: (are [args] expr & arg-pairs) - multiple assertions."
+  "Evaluate an are form: (are [args] expr & arg-pairs) - multiple assertions.
+   This performs symbol substitution on the template expression before
+   evaluating, similar to how Clojure's are macro expansion works."
+  ;; Syntax: (are [x y] expr v1 v2 v3 v4 ...)
+  ;; Expands to: (do (is (expr with v1,v2 substituted)) (is (expr with v3,v4 substituted)) ...)
   (let* ((args-vec (cadr form))
          (expr-expr (caddr form))
          (arg-pairs (cdddr form))
@@ -4604,17 +4608,23 @@
           for iter-count from 0
           while (and remaining (< iter-count 10000))
           do (let ((chunk (subseq remaining 0 (min arg-count (length remaining)))))
+               ;; If incomplete chunk, error (Clojure's are throws exception)
                (when (< (length chunk) arg-count)
                  (error "are: incomplete argument list"))
-               (let ((new-env env))
-                 ;; Evaluate each arg-value before binding
-                 (loop for i from 0 below arg-count
-                       for arg-name in arg-names
-                       for arg-value-form in chunk
-                       do (let ((arg-value (clojure-eval arg-value-form env)))
-                            (setf new-env (env-extend-lexical new-env arg-name arg-value))))
-                 (push (clojure-eval expr-expr new-env) results))))
-    (nreverse results)))
+               ;; Evaluate each arg-value-form to get actual values
+               (let ((evaluated-chunk
+                       (mapcar (lambda (arg-value-form)
+                                 (clojure-eval arg-value-form env))
+                               chunk)))
+                 ;; Substitute symbols in expr-expr with evaluated values
+                 ;; This is the key: we replace the SYMBOL itself, not bind it
+                 (let ((substituted-expr (substitute-symbols expr-expr arg-names evaluated-chunk)))
+                   ;; Evaluate the substituted expression
+                   (push (clojure-eval substituted-expr env) results)))))
+    ;; Return the last result (like do), or nil if no results
+    (if results
+        (car (last results))
+        nil)))
 
 (defun eval-do-template (form env)
   "Evaluate a do-template form: (do-template argv expr & values)
@@ -4652,17 +4662,30 @@
   "Recursively replace symbols in expr with corresponding values from old-symbols/new-values.
    This performs structural substitution, preserving the structure of expr.
    Compares symbols by name (string comparison) to handle package differences.
-   Handles both cons cells (lists) and vectors."
-  (flet ((symbol-match-p (s1 s2)
-            ;; Compare symbols by name, ignoring package
-            (and (symbolp s1) (symbolp s2)
-                 (string= (symbol-name s1) (symbol-name s2)))))
+   Handles both cons cells (lists) and vectors.
+   Does NOT substitute symbols inside nested binding scopes (fn, let, loop, etc.)."
+  (labels ((symbol-match-p (s1 s2)
+             ;; Compare symbols by name, ignoring package
+             (and (symbolp s1) (symbolp s2)
+                  (string= (symbol-name s1) (symbol-name s2))))
+           (binding-form-p (sym)
+             ;; Check if a symbol is a binding form (fn, let, loop, etc.)
+             (and (symbolp sym)
+                  (member (symbol-name sym)
+                          '("fn" "fn*" "let" "let*" "loop" "for" "doseq" "when-let" "if-let" "when-first")
+                          :test #'string=))))
     (cond
       ;; If expr is a symbol in old-symbols, replace it
       ((and (symbolp expr)
             (member expr old-symbols :test #'symbol-match-p))
        (let ((pos (position expr old-symbols :test #'symbol-match-p)))
          (nth pos new-values)))
+      ;; If expr is a cons cell starting with a binding form, skip substituting in the binding body
+      ((and (consp expr)
+            (symbolp (car expr))
+            (binding-form-p (car expr)))
+       ;; Don't substitute inside binding forms - they establish their own scope
+       expr)
       ;; If expr is a cons cell, recursively substitute in car and cdr
       ((consp expr)
        (let ((new-car (substitute-symbols (car expr) old-symbols new-values))

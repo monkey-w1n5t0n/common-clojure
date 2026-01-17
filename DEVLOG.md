@@ -2334,3 +2334,83 @@ The regex handling issue was that the `regex` symbol from the reader is in the `
 2. Investigate the let/macro binding issue
 3. Implement `persistent!` for transients test
 4. Continue with other test failures
+
+---
+
+### Iteration 39 - 2026-01-17
+
+**Focus:** Fix "Undefined symbol: x" error in are form evaluation
+
+**Problem:**
+
+The "Undefined symbol: x" error appeared in multiple test files (control, data, logic, macros, numbers, other_functions, predicates, test). The issue was that the `are` special form was trying to evaluate expressions with lexical bindings, but the symbols in the expression were being evaluated as variable lookups instead of being substituted with their values.
+
+**Root Cause Analysis:**
+
+In Clojure, `are` is a macro that expands at macro-expansion time. It uses `do-template` to perform SYMBOL SUBSTITUTION before evaluation:
+
+```clojure
+(defmacro are [argv expr & args]
+  `(temp/do-template ~argv (is ~expr) ~@args))
+```
+
+For example, `(are [x] (= x 1) 2 3)` expands to `(do (is (= 2 1)) (is (= 3 1)))`.
+
+Our implementation was trying to use RUNTIME BINDINGS instead of symbol substitution:
+- We would bind `x` to `2` in the environment
+- Then evaluate `(= x 1)` expecting `x` to resolve to `2`
+- But the symbol `x` in the expression was still the literal symbol `x`, not the value `2`
+
+**Changes Made:**
+
+1. **Rewrote `eval-are` to use symbol substitution** - cl-clojure-eval.lisp:4580-4635
+   - Changed from environment-based bindings to symbol substitution
+   - For each chunk of arguments, evaluate them to get values
+   - Use `substitute-symbols` to replace template symbols with actual values
+   - Evaluate the substituted expression
+
+2. **Updated `substitute-symbols` to respect binding scopes** - cl-clojure-eval.lisp:4661-4693
+   - Added `binding-form-p` helper to detect binding forms (fn, let, loop, etc.)
+   - Skip substitution inside binding forms to avoid replacing symbols in nested scopes
+   - This prevents issues like `(fn [_] (do _))` having `_` replaced
+
+**Before:**
+```lisp
+(let ((new-env env))
+  (loop for arg-name in arg-names
+        do (setf new-env (env-extend-lexical new-env arg-name arg-value)))
+  (push (clojure-eval expr-expr new-env) results))
+```
+
+**After:**
+```lisp
+(let ((evaluated-chunk (mapcar (lambda (form) (clojure-eval form env)) chunk)))
+  (let ((substituted-expr (substitute-symbols expr-expr arg-names evaluated-chunk)))
+    (push (clojure-eval substituted-expr env) results)))
+```
+
+**Errors Fixed:**
+- "Undefined symbol: x" in control test - FIXED ✅
+- "Undefined symbol: x" in data test - FIXED ✅
+- "Undefined symbol: x" in logic test - FIXED ✅
+- "Undefined symbol: x" in numbers test - FIXED ✅
+- "Undefined symbol: x" in other_functions test - FIXED ✅
+- "Undefined symbol: x" in predicates test - FIXED ✅
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅
+- Eval: 30 ok, 55 errors
+- Many tests now progress past the `are` forms
+- control test now fails with "Undefined symbol: _" (different issue - closure parameter binding)
+
+**Known Issues:**
+- control test fails with "Undefined symbol: _" - the underscore parameter in closures isn't being found in the environment
+- macros test still has "Undefined symbol: x" - needs investigation
+- numbers test now fails with "Undefined symbol: cast" (different issue)
+- other_functions test fails with "Undefined symbol: sym" (different issue)
+
+**Next Steps:**
+1. Debug the "Undefined symbol: _" error in control test (closure parameter binding issue)
+2. Investigate remaining "Undefined symbol: x" in macros and test files
+3. Implement `cast` function for numbers test
+4. Continue with other test failures

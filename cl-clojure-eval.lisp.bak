@@ -1472,6 +1472,7 @@
         (if (null args) (error "sqrt requires an argument") (sqrt (first args))))
        ((string-equal member-name "cbrt")
         (if (null args) (error "cbrt requires an argument")
+            ;; Clojure cbrt: cube root, CL doesn't have natively
             (expt (first args) (/ 3))))
        ;; Rounding functions
        ((string-equal member-name "floor")
@@ -1481,7 +1482,9 @@
        ((string-equal member-name "round")
         (if (null args) (error "round requires an argument") (round (first args))))
        ((string-equal member-name "rint")
-        (if (null args) (error "rint requires an argument") (round (first args))))
+        (if (null args) (error "rint requires an argument")
+            ;; rint rounds to nearest integer, ties to even
+            (round (first args))))
        ;; Absolute value
        ((string-equal member-name "abs")
         (if (null args) (error "abs requires an argument") (abs (first args))))
@@ -1505,7 +1508,9 @@
                     (t (if (floatp x) 0.0d0 0))))))
        ;; ULP (unit in the last place)
        ((string-equal member-name "ulp")
-        (if (null args) (error "ulp requires an argument") 1.0e-15))
+        (if (null args) (error "ulp requires an argument")
+            ;; Return a small epsilon-like value
+            1.0e-15)))
        ;; Conversion functions
        ((string-equal member-name "to-radians")
         (if (null args) (error "to-radians requires an argument")

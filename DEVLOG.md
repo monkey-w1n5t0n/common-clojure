@@ -1199,3 +1199,76 @@ The `@` reader macro was not implemented, causing `@a` to be read as an undefine
 3. Implement `re-find` and regex support (run_single_test needs it)
 4. Add more Java interop methods (Math trig functions, etc.)
 5. Fix remaining parse errors (8 files have parse issues)
+
+---
+
+### Iteration 21 - 2026-01-17
+
+**Focus:** Implement clojure.math namespace interop support
+
+**Changes Made:**
+
+1. **Implemented clojure.math namespace support** - cl-clojure-eval.lisp:1425-1531
+   - Added support for `clojure.math` functions aliased as `m`
+   - The test uses `(require '[clojure.math :as m])` then calls `(m/sin x)`
+   - Added to `eval-java-interop` dispatch with new clause for `m` and `clojure.math`
+
+2. **Implemented trigonometric functions**
+   - `m/sin`, `m/cos`, `m/tan` - basic trig functions
+   - `m/asin`, `m/acos`, `m/atan` - inverse trig functions
+   - `m/sinh`, `m/cosh`, `m/tanh` - hyperbolic functions
+   - `m/asinh`, `m/acosh`, `m/atanh` - inverse hyperbolic functions
+
+3. **Implemented exponential and logarithmic functions**
+   - `m/exp` - exponential function
+   - `m/log` - natural logarithm
+   - `m/log10` - base-10 logarithm
+   - `m/log1p` - log(1+x) function
+
+4. **Implemented power and root functions**
+   - `m/sqrt` - square root
+   - `m/cbrt` - cube root (implemented as `(expt x (/ 3))`)
+
+5. **Implemented rounding functions**
+   - `m/floor`, `m/ceil`, `m/round`, `m/rint`
+
+6. **Implemented other math functions**
+   - `m/abs` - absolute value
+   - `m/min`, `m/max` - minimum and maximum
+   - `m/hypot` - hypotenuse (sqrt(x² + y²))
+   - `m/signum` - sign function (-1, 0, or 1)
+   - `m/ulp` - unit in the last place (stub: returns 1.0e-15)
+   - `m/to-radians`, `m/to-degrees` - angle conversions
+   - `m/copySign` - copy sign from one number to another
+   - `m/nextAfter` - next floating-point value (stub)
+
+7. **Implemented clojure.math constants** - cl-clojure-eval.lisp:1030-1035
+   - `m/E` - Euler's number (e)
+   - `m/PI` - pi (π)
+   - Constants are handled in `java-interop-stub-lookup`
+   - Return double-float values for compatibility
+
+**Known Issues:**
+- NaN handling: Common Lisp's `sin` and other trig functions signal errors on NaN input
+- Clojure's math functions return NaN for NaN inputs, but CL signals FLOATING-POINT-INVALID-OPERATION
+- This causes the math test to fail with "arithmetic error FLOATING-POINT-INVALID-OPERATION"
+- Need to add NaN-aware wrappers for all math functions
+
+**Test Results:**
+- Parse: 60 ok, 8 errors ✅
+- Eval: 9 ok, 59 errors (same as iteration 20)
+- The "math" test now fails with NaN error instead of "Unsupported Java interop: m/sin"
+- The clojure.math functions are correctly dispatched and called
+
+**Implementation Notes:**
+- The `clojure.math` functions are added as a new clause in the outer `cond` of `eval-java-interop`
+- They come before the default error case, so they take precedence
+- The structure is: `((or (string-equal class-name "m") (string-equal class-name "clojure.math")) (cond ...))`
+- The inner `cond` dispatches based on `member-name` to the specific function
+
+**Next Steps:**
+1. Fix NaN handling for math functions (wrap with handler-case or check for NaN before calling)
+2. Implement `swap!` function (atoms and delays tests need it)
+3. Implement `binding` special form (atoms test needs `*warn-on-reflection*` binding)
+4. Implement `re-find` and regex support (run_single_test needs it)
+5. Continue implementing more core functions as tests require them

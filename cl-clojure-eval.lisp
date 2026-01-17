@@ -164,6 +164,34 @@
               (when (truthy? result)
                 (return-from nil result))))))))
 
+(defun eval-clojure-when (form env)
+  "Evaluate a when form: (when test body*) - evaluate body if test is truthy."
+  (let ((test-form (cadr form))
+        (body-forms (cddr form)))
+    (let ((test-result (clojure-eval test-form env)))
+      (when (truthy? test-result)
+        ;; Evaluate all body forms, returning the last
+        (if (null body-forms)
+            nil
+            (let ((last-expr (car (last body-forms))))
+              (dolist (expr (butlast body-forms))
+                (clojure-eval expr env))
+              (clojure-eval last-expr env)))))))
+
+(defun eval-when-not (form env)
+  "Evaluate a when-not form: (when-not test body*) - evaluate body if test is falsey."
+  (let ((test-form (cadr form))
+        (body-forms (cddr form)))
+    (let ((test-result (clojure-eval test-form env)))
+      (when (falsey? test-result)
+        ;; Evaluate all body forms, returning the last
+        (if (null body-forms)
+            nil
+            (let ((last-expr (car (last body-forms))))
+              (dolist (expr (butlast body-forms))
+                (clojure-eval expr env))
+              (clojure-eval last-expr env)))))))
+
 (defun eval-quote (form env)
   "Evaluate a quote form: (quote expr) - returns expr unevaluated."
   (declare (ignore env))
@@ -804,6 +832,12 @@
   (register-core-function env 'some #'clojure-some)
   (register-core-function env 'not-every? #'clojure-not-every?)
   (register-core-function env 'not-any? #'clojure-not-any?)
+  (register-core-function env 'get #'clojure-get)
+  (register-core-function env 'contains? #'clojure-contains?)
+  (register-core-function env 'assoc #'clojure-assoc)
+  (register-core-function env 'dissoc #'clojure-dissoc)
+  (register-core-function env 'keys #'clojure-keys)
+  (register-core-function env 'vals #'clojure-vals)
 
   ;; String/Symbol functions
   (register-core-function env 'symbol #'clojure-symbol)
@@ -813,9 +847,16 @@
   (register-core-function env 'prn #'clojure-prn)
   (register-core-function env 'constantly #'clojure-constantly)
   (register-core-function env 'complement #'clojure-complement)
+  (register-core-function env 'comp #'clojure-comp)
   (register-core-function env 'fnil #'clojure-fnil)
   (register-core-function env 'repeatedly #'clojure-repeatedly)
   (register-core-function env 'filter #'clojure-filter)
+  (register-core-function env 'juxt #'clojure-juxt)
+
+  ;; Metadata functions
+  (register-core-function env 'meta #'clojure-meta)
+  (register-core-function env 'with-meta #'clojure-with-meta)
+  (register-core-function env 'vary-meta #'clojure-vary-meta)
 
   env)
 
@@ -998,10 +1039,55 @@
   args)
 
 (defun clojure-map (fn-arg coll &rest colls)
-  "Apply fn to each item in collection(s). Returns lazy sequence."
-  (declare (ignore fn-arg coll colls))
-  ;; TODO: Implement map function
-  '())
+  "Apply fn to each item in collection(s). Returns lazy sequence.
+   Supports mapping over multiple collections in parallel."
+  (if (null colls)
+      ;; Single collection mapping
+      (cond
+        ((null coll) '())
+        ((lazy-range-p coll)
+         ;; For lazy ranges, limit to 1000 elements to avoid issues
+         (let ((start (lazy-range-start coll))
+               (end (lazy-range-end coll))
+               (step (lazy-range-step coll)))
+           (if end
+               ;; Bounded range
+               (loop for i from start below end by step
+                     collect (funcall fn-arg i))
+               ;; Infinite range - limit to 1000
+               (loop for i from start by step
+                     repeat 1000
+                     collect (funcall fn-arg i)))))
+        ((listp coll)
+         (mapcar fn-arg coll))
+        (t
+         ;; Convert to list and map
+         (mapcar fn-arg (coerce coll 'list))))
+      ;; Multiple collections - map in parallel
+      (let* ((all-colls (cons coll colls))
+             (min-length (apply #'min (mapcar (lambda (c)
+                                                (cond
+                                                  ((null c) 0)
+                                                  ((lazy-range-p c)
+                                                   (if (lazy-range-end c)
+                                                       (ceiling (/ (- (lazy-range-end c)
+                                                                      (lazy-range-start c))
+                                                                   (lazy-range-step c)))
+                                                       1000))
+                                                  ((listp c) (length c))
+                                                  (t (length (coerce c 'list)))))
+                                              all-colls))))
+        ;; Convert all to lists
+        (let ((coll-lists (mapcar (lambda (c)
+                                    (cond
+                                      ((null c) '())
+                                      ((lazy-range-p c) (lazy-range-to-list c))
+                                      ((listp c) c)
+                                      (t (coerce c 'list))))
+                                  all-colls)))
+          ;; Map function across elements at each position
+          (loop for i from 0 below min-length
+                collect (apply fn-arg (mapcar (lambda (c) (nth i c)) coll-lists)))))))
 
 (defun clojure-apply (fn-arg &rest args)
   "Apply fn to args with last arg being a list of args."
@@ -1228,13 +1314,15 @@
    (fnil f x y) returns a function that when called as (g a b c)
    calls (f (or a x) (or b y) c)"
   (lambda (&rest args)
-    (let ((filled-args
-            (loop for arg in args
-                  for i from 0
-                  for fill in fill-values
-                  collect (if (null arg) fill arg)
-                  finally (return (append filled-args (nthcdr i args))))))
-      (apply f filled-args))))
+    (let* ((fill-count (min (length fill-values) (length args)))
+           (filled-args
+             (loop for i from 0 below fill-count
+                   for arg in args
+                   for fill in fill-values
+                   collect (if (null arg) fill arg)))
+           (remaining-args (nthcdr fill-count args))
+           (all-args (append filled-args remaining-args)))
+      (apply f all-args))))
 
 (defun clojure-repeatedly (f &optional n)
   "Return a lazy sequence of calling f repeatedly.
@@ -1275,6 +1363,27 @@
              when (funcall pred item)
              collect item)))))
 
+(defun clojure-comp (&rest fns)
+  "Return a function that is the composition of the given functions.
+   (comp f g) returns a function that calls (f (g x...))
+   (comp) returns identity."
+  (if (null fns)
+      #'clojure-identity
+      (let ((fn-list (reverse fns)))
+        (lambda (&rest args)
+          (reduce (lambda (result fn)
+                    (if (listp result)
+                        (apply fn result)
+                        (funcall fn result)))
+                  fn-list
+                  :initial-value args)))))
+
+(defun clojure-juxt (&rest fns)
+  "Return a function that applies each function to arguments.
+   Returns a vector of results."
+  (lambda (&rest args)
+    (coerce (mapcar (lambda (f) (apply f args)) fns) 'vector)))
+
 ;;; Predicate implementations
 (defun clojure-nil? (x) (null x))
 (defun clojure-symbol? (x) (symbolp x))
@@ -1313,6 +1422,50 @@
     (setf (get 'atom-marker t) t)
     atom-container))
 
+;;; Metadata support
+;;; We wrap values that have metadata in a special marker cons cell
+
+(defvar *metadata-wrapper-marker* 'meta-wrapper
+  "Marker used to identify wrapped values with metadata.")
+
+(defun wrap-with-meta (value metadata)
+  "Wrap a value with metadata for tracking."
+  (cons *metadata-wrapper-marker* (cons metadata value)))
+
+(defun wrapped-p (value)
+  "Check if a value is wrapped with metadata."
+  (and (consp value)
+       (eq (car value) *metadata-wrapper-marker*)))
+
+(defun unwrap-value (wrapped)
+  "Get the value from a wrapped metadata object."
+  (caddr wrapped))
+
+(defun get-wrapped-metadata (wrapped)
+  "Get the metadata from a wrapped metadata object."
+  (cadr wrapped))
+
+(defun ensure-wrapped (value)
+  "Ensure a value is wrapped, adding empty metadata if not."
+  (if (wrapped-p value)
+      value
+      (wrap-with-meta value nil)))
+
+(defun clojure-meta (obj)
+  "Return the metadata of an object, or nil if it has none."
+  (if (wrapped-p obj)
+      (get-wrapped-metadata obj)
+      nil))
+
+(defun clojure-with-meta (obj metadata)
+  "Return an object of the same type and value as obj, with metadata."
+  (wrap-with-meta obj metadata))
+
+(defun clojure-vary-meta (obj meta-fn &rest args)
+  "Return an object with metadata transformed by meta-fn."
+  (let ((current-meta (clojure-meta obj)))
+    (wrap-with-meta obj (apply meta-fn current-meta args))))
+
 (defun clojure-read-string (string &optional (eof-error-p t) (eof-value :eof))
   "Read a single Clojure form from a string.
    Returns the read object. If no form is found, returns eof-value."
@@ -1335,6 +1488,105 @@
     (prin1 arg))
   (terpri)
   nil)
+
+;;; Map/Hash operations
+(defun clojure-get (map key &optional default)
+  "Get the value for key in map, returning default if not found."
+  (if (hash-table-p map)
+      (multiple-value-bind (value found-p)
+          (gethash key map)
+        (if found-p value default))
+      ;; For lists/vectors, treat as associative with integer keys
+      (if (and (integerp key) (or (listp map) (vectorp map)))
+          (let ((idx key))
+            (cond
+              ((listp map)
+               (if (and (>= idx 0) (< idx (length map)))
+                   (nth idx map)
+                   default))
+              ((vectorp map)
+               (if (and (>= idx 0) (< idx (length map)))
+                   (aref map idx)
+                   default))
+              (t default)))
+          default)))
+
+(defun clojure-contains? (coll key)
+  "Return true if coll contains key (for maps/sets)."
+  (cond
+    ((hash-table-p coll)
+     (multiple-value-bind (value found-p)
+         (gethash key coll)
+       (declare (ignore value))
+      (if found-p 'true nil)))
+    ((or (listp coll) (vectorp coll))
+     ;; For sequences, contains? checks if index is valid
+     (if (and (integerp key) (>= key 0))
+         (if (< key (length coll))
+             'true
+             nil)
+         nil))
+    (t nil)))
+
+(defun clojure-assoc (map &rest key-value-pairs)
+  "Associate key-value pairs to a map. Returns new map."
+  (unless (evenp (length key-value-pairs))
+    (error "assoc requires an even number of arguments"))
+  (if (hash-table-p map)
+      (let ((new-map (make-hash-table :test (hash-table-test map))))
+        ;; Copy all entries from old map
+        (maphash (lambda (k v)
+                   (setf (gethash k new-map) v))
+                 map)
+        ;; Add new key-value pairs
+        (loop for (key value) on key-value-pairs by #'cddr
+              do (setf (gethash key new-map) value))
+        new-map)
+      ;; For vectors, assoc sets values at indices
+      (if (vectorp map)
+          (let ((new-vec (copy-seq map)))
+            (loop for (key value) on key-value-pairs by #'cddr
+                  when (integerp key)
+                  do (if (and (>= key 0) (< key (length new-vec)))
+                         (setf (aref new-vec key) value)
+                         (error "Index out of bounds")))
+            new-vec)
+          ;; For lists, not supported yet
+          (error "assoc not supported for lists"))))
+
+(defun clojure-dissoc (map &rest keys)
+  "Dissociate keys from a map. Returns new map."
+  (if (hash-table-p map)
+      (let ((new-map (make-hash-table :test (hash-table-test map))))
+        ;; Copy all entries except those to dissoc
+        (maphash (lambda (k v)
+                   (unless (member k keys :test #'equal)
+                     (setf (gethash k new-map) v)))
+                 map)
+        new-map)
+      map))
+
+(defun clojure-keys (map)
+  "Return a sequence of keys in a map."
+  (if (hash-table-p map)
+      (let ((keys '()))
+        (maphash (lambda (k v)
+                   (declare (ignore v))
+                   (push k keys))
+                 map)
+        (nreverse keys))
+      nil))
+
+(defun clojure-vals (map)
+  "Return a sequence of values in a map."
+  (if (hash-table-p map)
+      (let ((vals '()))
+        (maphash (lambda (k v)
+                   (declare (ignore k))
+                   (push v vals))
+                 map)
+        (nreverse vals))
+      nil))
 
 ;;; Delay/Force implementations
 (defun clojure-delay (body-fn)
@@ -1381,10 +1633,23 @@
 
 (defun eval-are (form env)
   "Evaluate an are form: (are [args] expr & arg-pairs) - multiple assertions."
-  ;; For now, just return nil
-  ;; TODO: Implement full are semantics
-  (declare (ignore env))
-  nil)
+  (let* ((args-vec (cadr form))
+         (expr-expr (caddr form))
+         (arg-pairs (cdddr form))
+         (arg-count (length (coerce args-vec 'list)))
+         (results nil))
+    (loop for remaining = arg-pairs then (nthcdr arg-count remaining)
+          while remaining
+          do (let ((chunk (subseq remaining 0 (min arg-count (length remaining)))))
+               (when (< (length chunk) arg-count)
+                 (error "are: incomplete argument list"))
+               (let ((new-env env))
+                 (loop for i from 0 below arg-count
+                       for arg-name in (coerce args-vec 'list)
+                       for arg-value in chunk
+                       do (setf new-env (env-extend-lexical new-env arg-name arg-value)))
+                 (push (clojure-eval expr-expr new-env) results))))
+    (nreverse results)))
 
 (defun setup-test-macros (env)
   "Set up test helper symbols - no longer needed as they are special forms."
@@ -1464,6 +1729,8 @@
            ((and head-name (string= head-name "do")) (eval-do form env))
            ((and head-name (string= head-name "and")) (eval-and form env))
            ((and head-name (string= head-name "or")) (eval-or form env))
+           ((and head-name (string= head-name "when")) (eval-clojure-when form env))
+           ((and head-name (string= head-name "when-not")) (eval-when-not form env))
            ((and head-name (string= head-name "quote")) (eval-quote form env))
            ((and head-name (string= head-name "syntax-quote")) (eval-syntax-quote form env))
            ((and head-name (string= head-name "quasiquote")) (eval-syntax-quote form env))  ; CL's QUASIQUOTE
@@ -1500,11 +1767,11 @@
            ((and head-name (string= head-name "with-meta"))
             ;; with-meta attaches metadata to a value
             ;; (with-meta value metadata) -> value with metadata
-            ;; For now, we just evaluate the value and ignore metadata
-            ;; TODO: Actually store and propagate metadata
             (destructuring-bind (with-meta-sym value metadata) form
-              (declare (ignore with-meta-sym metadata))
-              (clojure-eval value env)))
+              (declare (ignore with-meta-sym))
+              (let ((evaluated-value (clojure-eval value env))
+                    (evaluated-metadata (clojure-eval metadata env)))
+                (wrap-with-meta evaluated-value evaluated-metadata))))
            ((and head-name (string= head-name "case"))
             ;; Case form: evaluate expr, then compare against each clause
             (let* ((expr-expr (cadr form))
@@ -1516,6 +1783,21 @@
                     when (equal expr-value (clojure-eval test env))
                       do (return-from clojure-eval (clojure-eval result env))
                     finally (return-from clojure-eval nil))))
+           ;; Handle set literals from reader: (set element...)
+           ;; The reader returns (set a b c) for #{a b c}
+           ((eq head 'set)
+            ;; Evaluate each element and create a set representation
+            ;; For now, we use a hash table with test 'equal to represent a set
+            (let ((elements (cdr form)))
+              (if (null elements)
+                  ;; Empty set - return empty hash table
+                  (make-hash-table :test 'equal)
+                  ;; Evaluate all elements and create hash table
+                  (let ((table (make-hash-table :test 'equal)))
+                    (dolist (elem elements)
+                      (let ((evaluated (clojure-eval elem env)))
+                        (setf (gethash evaluated table) t)))
+                    table))))
            ((and head-name (string= head-name "try"))
             ;; Try/catch/finally form
             (eval-try form env))
@@ -1543,49 +1825,59 @@
       (t form))))
 
 (defun apply-function (fn-value args)
-  "Apply a function value to arguments."
-  (typecase fn-value
-    ;; Clojure closure
-    (closure
-     (let* ((params (closure-params fn-value))
-            (body (closure-body fn-value))
-            (fn-env (closure-env fn-value))
-            ;; Create new environment with bindings
-            (new-env fn-env))
-       ;; Bind parameters to arguments
-       (cond
-         ;; Vector parameters - fixed arity or with & rest params
-         ((vectorp params)
-          (let* ((amp-pos (position (intern "&") params))
-                 (fixed-count (if amp-pos amp-pos (length params))))
-            ;; Bind fixed params
-            (loop for i from 0 below fixed-count
-                  for arg in args
-                  do (setf new-env (env-extend-lexical new-env (aref params i) arg)))
-            ;; Handle rest param if present
-            (when amp-pos
-              (let ((rest-param (aref params (1+ amp-pos)))
-                    (rest-args (nthcdr fixed-count args)))
-                (setf new-env (env-extend-lexical new-env rest-param rest-args))))))
-         ;; List parameters (less common but supported)
-         (t
-          (loop for param in params
-                for arg in args
-                do (setf new-env (env-extend-lexical new-env param arg)))))
+  "Apply a function value to arguments. Unwraps any metadata-wrapped values."
+  ;; Unwrap fn-value if it's wrapped with metadata
+  (let ((actual-fn (if (wrapped-p fn-value)
+                      (unwrap-value fn-value)
+                      fn-value))
+        ;; Unwrap all args
+        (unwrapped-args (mapcar (lambda (arg)
+                                  (if (wrapped-p arg)
+                                      (unwrap-value arg)
+                                      arg))
+                                args)))
+    (typecase actual-fn
+      ;; Clojure closure
+      (closure
+       (let* ((params (closure-params actual-fn))
+              (body (closure-body actual-fn))
+              (fn-env (closure-env actual-fn))
+              ;; Create new environment with bindings
+              (new-env fn-env))
+         ;; Bind parameters to arguments
+         (cond
+           ;; Vector parameters - fixed arity or with & rest params
+           ((vectorp params)
+            (let* ((amp-pos (position (intern "&") params))
+                   (fixed-count (if amp-pos amp-pos (length params))))
+              ;; Bind fixed params
+              (loop for i from 0 below fixed-count
+                    for arg in unwrapped-args
+                    do (setf new-env (env-extend-lexical new-env (aref params i) arg)))
+              ;; Handle rest param if present
+              (when amp-pos
+                (let ((rest-param (aref params (1+ amp-pos)))
+                      (rest-args (nthcdr fixed-count unwrapped-args)))
+                  (setf new-env (env-extend-lexical new-env rest-param rest-args))))))
+           ;; List parameters (less common but supported)
+           (t
+            (loop for param in params
+                  for arg in unwrapped-args
+                  do (setf new-env (env-extend-lexical new-env param arg)))))
 
-       ;; Evaluate body
-       (if (null body)
-           nil
-           (let ((last-expr (car (last body))))
-             (dolist (expr (butlast body))
-               (clojure-eval expr new-env))
-             (clojure-eval last-expr new-env)))))
+         ;; Evaluate body
+         (if (null body)
+             nil
+             (let ((last-expr (car (last body))))
+               (dolist (expr (butlast body))
+                 (clojure-eval expr new-env))
+               (clojure-eval last-expr new-env)))))
 
-    ;; Regular Lisp function
-    (function (apply fn-value args))
+      ;; Regular Lisp function
+      (function (apply actual-fn unwrapped-args))
 
-    ;; Error
-    (t (error "Cannot apply non-function: ~A" fn-value))))
+      ;; Error
+      (t (error "Cannot apply non-function: ~A" fn-value)))))
 
 ;;; ============================================================
 ;;; REPL and Evaluation Interface

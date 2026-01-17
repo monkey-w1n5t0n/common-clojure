@@ -2258,6 +2258,7 @@
   (register-core-function env 'fnil #'clojure-fnil)
   (register-core-function env 'repeatedly #'clojure-repeatedly)
   (register-core-function env 'filter #'clojure-filter)
+  (register-core-function env 'remove #'clojure-remove)
   (register-core-function env 'juxt #'clojure-juxt)
   (register-core-function env 'replicate #'clojure-replicate)
   (register-core-function env 'repeat #'clojure-repeat)
@@ -3536,6 +3537,35 @@
        (let ((coll-list (coerce coll 'list)))
          (loop for item in coll-list
                when (funcall callable-pred item)
+               collect item))))))
+
+(defun clojure-remove (pred coll)
+  "Return a lazy sequence of items in coll for which pred returns false (nil).
+   remove is the opposite of filter."
+  ;; Ensure pred is callable (wrap closures if needed)
+  (let ((callable-pred (ensure-callable pred)))
+    (cond
+      ((null coll) '())
+      ((lazy-range-p coll)
+       (let ((start (lazy-range-start coll))
+             (end (lazy-range-end coll))
+             (step (lazy-range-step coll)))
+         (if end
+             (loop for i from start below end by step
+                   unless (funcall callable-pred i)
+                   collect i)
+             (loop for i from start by step
+                   repeat 1000
+                   unless (funcall callable-pred i)
+                   collect i))))
+      ((listp coll)
+       (loop for item in coll
+             unless (funcall callable-pred item)
+             collect item))
+      (t
+       (let ((coll-list (coerce coll 'list)))
+         (loop for item in coll-list
+               unless (funcall callable-pred item)
                collect item))))))
 
 (defun clojure-comp (&rest fns)

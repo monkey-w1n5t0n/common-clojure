@@ -1960,3 +1960,42 @@ The error `:INT-TYPE is not of type SEQUENCE when binding SEQUENCE` was caused b
 2. Investigate potential infinite loop in `into` function when working with `vector-of` results
 3. Continue implementing more core functions as tests require them
 4. Fix remaining undefined symbols: subvec, volatile!, with-local-vars, etc.
+
+---
+
+## Iteration 33 - Debugging Sequences Test (2025-01-17)
+
+**Summary:**
+Investigated the "The value T is not of type (UNSIGNED-BYTE 58)" error in the sequences test.
+
+**What was attempted:**
+1. Traced through the error stack trace showing the error occurs in `lazy-range-to-list` called from `clojure-into`
+2. Examined the test code: `(into (vector-of :int) arange)` where `arange = (range 1 100)`
+3. Verified `clojure-vector-of` returns `#()` (empty vector) when called with just a type
+4. Verified `clojure-range` creates a valid lazy-range struct
+5. Tested `lazy-range-to-list` function in isolation - works correctly
+6. Investigated various causes of "(UNSIGNED-BYTE 58)" error - this is an SBCL internal type for string/array indices
+
+**Key findings:**
+- The "(UNSIGNED-BYTE 58)" type is SBCL's internal representation for array indices on certain systems
+- The error suggests `T` (boolean) is being used where an integer index is expected
+- The `lazy-range-to-list` function doesn't directly do any string/array indexing
+- The `clojure-into` function uses `coerce` which might be the source of the error
+- Isolation testing is difficult due to Clojure readtable interfering with Lisp code in scripts
+
+**Current status:**
+The root cause of the "(UNSIGNED-BYTE 58)" error remains unclear. The function implementations appear correct in isolation. The issue may be related to:
+1. Some interaction between the let-binding and the into/into-array calls
+2. A subtle bug in how values are passed between functions
+3. Package/symbol issues between cl-clojure-syntax and cl-clojure-eval
+
+**Next Steps:**
+1. Consider adding defensive checks in `clojure-into` to validate input types
+2. Look for any places where boolean `T` could be passed instead of a number
+3. Continue with other test failures that have clearer root causes
+4. Consider re-examining this issue after more core functionality is working
+
+**Changes Made:**
+- Implemented `clojure-remove` function (opposite of `filter`)
+- Registered `remove` as a core function
+- The clearing test now progresses past the `remove` call but fails on Java interop (expected)

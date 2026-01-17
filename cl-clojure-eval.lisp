@@ -282,6 +282,25 @@
   ;; For TDD purposes, just return nil
   nil)
 
+(defun eval-comment (form env)
+  "Evaluate a comment form: (comment & body) - ignore all forms, return nil."
+  (declare (ignore form env))
+  nil)
+
+(defun eval-extend-protocol (form env)
+  "Evaluate an extend-protocol form: (extend-protocol proto & impls)
+   For now, just return nil."
+  (declare (ignore env))
+  nil)
+
+(defun eval-in-ns (form env)
+  "Evaluate an in-ns form: (in-ns name) - switch to namespace."
+  (declare (ignore env))
+  (let* ((name (cadr form)))
+    ;; Set the current namespace
+    (setf *current-ns* name)
+    name))
+
 (defun eval-let (form env)
   "Evaluate a let form: (let [bindings] body+)"
   (let* ((bindings (cadr form))
@@ -542,6 +561,10 @@
   (register-core-function env 'range #'clojure-range)
   (register-core-function env 'repeat #'clojure-repeat)
   (register-core-function env 'iterate #'clojure-iterate)
+  (register-core-function env 'mapcat #'clojure-mapcat)
+  (register-core-function env 'delay #'clojure-delay)
+  (register-core-function env 'force #'clojure-force)
+  (register-core-function env 'make-hierarchy #'clojure-make-hierarchy)
 
   ;; Test helpers
   (register-core-function env 'deftest #'clojure-deftest)
@@ -759,6 +782,22 @@
       (setf current (funcall fn-arg current)))
     (nreverse result)))
 
+(defun clojure-mapcat (fn-arg coll)
+  "Map fn over coll and concat the results."
+  (apply #'append (mapcar fn-arg (if (vectorp coll) (coerce coll 'list) coll))))
+
+(defun clojure-delay (value)
+  "Create a delayed computation. For now, just return the value."
+  value)
+
+(defun clojure-force (delayed)
+  "Force evaluation of a delay. For now, just return the value."
+  delayed)
+
+(defun clojure-make-hierarchy ()
+  "Create a hierarchy for multimethods. For now, return an empty hash table."
+  (make-hash-table :test 'equal))
+
 (defun clojure-apply (fn-arg &rest args)
   "Apply fn to args with last arg being a list of args."
   (let ((all-but-last (butlast args))
@@ -883,6 +922,9 @@
            ((and (symbolp head) (string-equal (symbol-name head) "doseq")) (eval-doseq form env))
            ((and (symbolp head) (string-equal (symbol-name head) "dotimes")) (eval-dotimes form env))
            ((and (symbolp head) (string-equal (symbol-name head) "extend-type")) (eval-extend-type form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "comment")) (eval-comment form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "extend-protocol")) (eval-extend-protocol form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "in-ns")) (eval-in-ns form env))
 
            ;; Function application
            (t

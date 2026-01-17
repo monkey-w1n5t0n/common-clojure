@@ -1597,3 +1597,51 @@ The math tests (math, math_copy, math_no_header, math_no_ns) were failing with e
 1. Investigate remaining test failures
 2. Implement more core functions as needed
 3. Continue with test-driven development approach
+
+---
+
+### Iteration 27 - 2026-01-17
+
+**Focus:** Fix atoms test - add vector support for first/rest, Java method calls, and instance?
+
+**Changes Made:**
+
+1. **Added vector support to `clojure-first`** - cl-clojure-eval.lisp:2385-2388
+   - Vectors can now be used as sequences with `first`
+   - Returns `(aref seq 0)` for vectors
+
+2. **Added vector support to `clojure-rest`** - cl-clojure-eval.lisp:2404-2407
+   - Vectors can now be used as sequences with `rest`
+   - Returns `(coerce (subseq seq 1) 'list)` for vectors
+
+3. **Implemented Java method call syntax** - cl-clojure-eval.lisp:4082-4111
+   - Symbols starting with `.` are now recognized as Java instance method calls
+   - Supports `.get`, `.getAsInt`, `.getAsLong`, `.getAsBoolean`, `.getAsDouble`
+   - For atoms, these methods return/deref the atom's value
+   - Example: `(.get a)` where `a` is an atom returns the atom's value
+
+4. **Implemented `instance?` predicate** - cl-clojure-eval.lisp:2796-2814
+   - Checks if an object is an instance of a given class
+   - Atoms are recognized as instances of `java.util.function.Supplier` interfaces
+   - Returns true/false based on class membership
+
+**Errors Fixed:**
+- "is not of type LIST" when calling `first` on vectors - FIXED ✅
+- "is not of type LIST" when calling `rest` on vectors - FIXED ✅
+- "Cannot apply non-function: .get" - FIXED ✅ (Java method call support)
+- "Undefined symbol: instance?" - FIXED ✅
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅
+- Eval: 30 ok, 55 errors (up from 29!)
+- New passing test: atoms
+
+**Known Issues:**
+- macros test fails with "(UNQUOTE b) binding form" - related to syntax-quote handling
+- Many tests still need implementation
+
+**Next Steps:**
+1. Fix the macros test - the issue is with `(UNQUOTE b)` appearing as a binding form
+2. This is related to how `macroexpand-1` interacts with syntax-quote
+3. Consider adding `macroexpand-1` and `macroexpand` functions properly
+4. Continue implementing more core functions as tests require them

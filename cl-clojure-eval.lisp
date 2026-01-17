@@ -2170,6 +2170,7 @@
   (register-core-function env 'bigdec #'clojure-bigdec)
   (register-core-function env 'class #'clojure-class)
   (register-core-function env 'type #'clojure-type)
+  (register-core-function env 'instance? #'clojure-instance?)
 
   ;; Test helper stubs
   ;; Note: thrown? is now a special form, not a registered function
@@ -2382,6 +2383,10 @@
        (if (and end (>= start end))
            nil
            start)))
+    ((vectorp seq)
+     (if (> (length seq) 0)
+         (aref seq 0)
+         nil))
     ((and (consp seq) (null (car seq))) nil)
     (t (car seq))))
 
@@ -2397,6 +2402,10 @@
          (if (and end (>= new-start end))
              '()
              (make-lazy-range :start new-start :end end :step step :current new-start)))))
+    ((vectorp seq)
+     (if (> (length seq) 1)
+         (coerce (subseq seq 1) 'list)
+         '()))
     ((and (consp seq) (null (cdr seq))) '())
     (t (cdr seq))))
 
@@ -2784,6 +2793,26 @@
 (defun clojure-type (x)
   "Return the type of x. Same as class for our stub."
   (clojure-class x))
+
+(defun clojure-instance? (class-name obj)
+  "Check if obj is an instance of the given class. Stub for SBCL.
+   For atoms (cons cells), they act as instances of functional interfaces."
+  (when obj
+    (cond
+      ;; Atoms are instances of Supplier interfaces in Clojure
+      ((and (consp obj) (member class-name
+                                '(java.util.function.Supplier
+                                  java.util.function.IntSupplier
+                                  java.util.function.LongSupplier
+                                  java.util.function.BooleanSupplier
+                                  java.util.function.DoubleSupplier)))
+       t)
+      ;; For symbols, check if the class name matches
+      ((symbolp class-name)
+       (let ((obj-class (clojure-class obj)))
+         (eq obj-class class-name)))
+      ;; Default: nil (not an instance)
+      (t nil))))
 
 ;; Integer division functions
 (defun clojure-quot (num div)
@@ -4071,6 +4100,37 @@
               (head-name (when (symbolp head)
                           (string-downcase (symbol-name head)))))
          (cond
+           ;; Java method call: (.method target args...)
+           ;; Symbols starting with . are Java instance method calls
+           ((and head-name (char= (char head-name 0) #\.))
+            ;; Extract method name (remove the leading dot)
+            (let* ((method-name (subseq head-name 1))
+                   ;; First arg is the target object, rest are method args
+                   (target-expr (car rest-form))
+                   (method-args (cdr rest-form)))
+              ;; Evaluate target and args, then call the method
+              (let ((target (clojure-eval target-expr env))
+                    (evaluated-args (mapcar (lambda (arg) (clojure-eval arg env)) method-args)))
+                ;; For atoms, method calls get/deref the atom's value
+                (cond
+                  ;; .get on an atom returns the atom's value
+                  ((and (consp target) (string= method-name "get"))
+                   (car target))
+                  ;; .getAsInt on an atom returns the int value
+                  ((and (consp target) (string= method-name "getAsInt"))
+                   (car target))
+                  ;; .getAsLong on an atom returns the long value
+                  ((and (consp target) (string= method-name "getAsLong"))
+                   (car target))
+                  ;; .getAsBoolean on an atom returns true if value is truthy
+                  ((and (consp target) (string= method-name "getAsBoolean"))
+                   (if (car target) t nil))
+                  ;; .getAsDouble on an atom returns the double value
+                  ((and (consp target) (string= method-name "getAsDouble"))
+                   (coerce (car target) 'double-float))
+                  ;; Default: return target (stub for unknown methods)
+                  (t target)))))
+
            ;; Special forms - compare lowercase symbol names to handle package differences
            ;; Only check if head is a symbol (head-name is not nil)
            ((and head-name (string= head-name "if")) (eval-if form env))

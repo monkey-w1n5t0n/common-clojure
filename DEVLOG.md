@@ -1710,3 +1710,58 @@ The macros test had two issues:
 2. The macros test needs metadata preservation in macro expansion
 3. Implement other threading macros: `some->`, `some->>`, `cond->`, `cond->>`, `as->`
 4. Continue implementing more core functions as tests require them
+
+---
+
+### Iteration 29 - 2025-01-17
+
+**Focus:** Implement proper macroexpand-1 for threading macros
+
+**Attempted Changes:**
+
+1. **Implemented thread-first/last macro expansion functions** - attempted
+   - `expand-thread-first-macro` - expands `->` macro without evaluation
+   - `expand-thread-last-macro` - expands `->>` macro without evaluation
+   - These functions build the nested call structure by threading arguments
+
+2. **Implemented additional threading macro expanders** - attempted
+   - `expand-some-thread-first-macro` - for `some->` (nil short-circuiting)
+   - `expand-some-thread-last-macro` - for `some->>` (nil short-circuiting)
+   - `expand-cond-thread-first-macro` - for `cond->` (conditional threading)
+   - `expand-cond-thread-last-macro` - for `cond->>` (conditional threading)
+   - `expand-as-thread-macro` - for `as->` (explicit name binding)
+
+3. **Updated `clojure-macroexpand-1`** - attempted
+   - Added dispatch for built-in threading macros
+   - Calls appropriate expander function for `->`, `->>`, `some->`, `some->>`, `cond->`, `cond->>`, `as->`
+   - Falls back to returning form unchanged for non-macros
+
+4. **Implemented evaluator functions for new threading macros** - attempted
+   - `eval-some-thread-first`, `eval-some-thread-last`
+   - `eval-cond-thread-first`, `eval-cond-thread-last`
+   - `eval-as-thread`
+
+**Outcome:**
+- Encountered significant syntax errors with unmatched parentheses
+- The complex nested structures in typecase + let combinations caused issues
+- After multiple attempts to fix parenthesis counting, reverted changes
+
+**Root Cause:**
+The `typecase` macro with complex `(cons (let ...))` clauses was causing the Lisp compiler to misinterpret the structure. The warnings showed "The function SYMBOL is undefined" and "The function T is undefined", indicating the type specifiers were being parsed as function calls.
+
+**Lessons Learned:**
+1. Need to be more careful with paren counting in nested macro structures
+2. The `typecase` + `let` combination is tricky when the let body is complex
+3. Should break down complex functions into smaller, testable pieces
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅
+- Eval: 30 ok, 55 errors (unchanged - reverted to iteration 28 state)
+- The macros test still fails on metadata preservation in macroexpand-1
+
+**Next Steps:**
+1. Implement `macroexpand-1` incrementally - start with just `->` and `->>`
+2. Use simpler structures that don't require complex nested typecase
+3. Consider using `cond` instead of `typecase` for better control
+4. Each threading macro should be implemented and tested separately
+5. Continue implementing more core functions as tests require them

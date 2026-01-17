@@ -648,6 +648,58 @@
               (setq result (clojure-eval form-expr env))))
           result))))
 
+(defun eval-try (form env)
+  "Evaluate a try form: (try body catch* finally?)
+   Simplified implementation for basic exception handling."
+  (let* ((forms (cdr form))
+         (body-forms nil)
+         (catch-clauses nil)
+         (finally-clause nil)
+         (current forms))
+    ;; Parse the form - collect body forms until we hit catch or finally
+    (loop while (and current (not (eq (caar current) 'catch)) (not (eq (caar current) 'finally)))
+          do (push (pop current) body-forms))
+    (setq body-forms (nreverse body-forms))
+    ;; Parse catch and finally clauses
+    (loop while current
+          do (let ((clause (car current)))
+               (cond
+                 ((eq (car clause) 'catch)
+                  (push (cdr clause) catch-clauses))
+                 ((eq (car clause) 'finally)
+                  (setq finally-clause (cdr clause)))
+                 (t nil))
+               (pop current)))
+    (setq catch-clauses (nreverse catch-clauses))
+    ;; Evaluate body with error handling
+    (let ((result nil)
+          (error-occurred nil)
+          (caught-value nil))
+      (unwind-protect
+           (handler-case
+               ;; Evaluate body forms
+               (dolist (expr body-forms)
+                 (setq result (clojure-eval expr env)))
+             (error (c)
+               (setq error-occurred t)
+               (setq caught-value c)
+               ;; Try catch clauses
+               (block catching
+                 (dolist (clause catch-clauses)
+                   ;; clause: (classname sym body*)
+                   (let* ((sym (cadr clause))
+                          (catch-body (cddr clause))
+                          (new-env (env-extend-lexical env sym caught-value)))
+                     (return-from catching
+                       (dolist (expr catch-body)
+                         (setq result (clojure-eval expr new-env))))))
+                 (error c))))  ; re-throw if no catch matches
+        ;; Execute finally clause
+        (when finally-clause
+          (dolist (expr finally-clause)
+            (clojure-eval expr env))))
+      result)))
+
 ;;; ============================================================
 ;;; Lazy Range representation
 ;;; ============================================================
@@ -1464,6 +1516,9 @@
                     when (equal expr-value (clojure-eval test env))
                       do (return-from clojure-eval (clojure-eval result env))
                     finally (return-from clojure-eval nil))))
+           ((and head-name (string= head-name "try"))
+            ;; Try/catch/finally form
+            (eval-try form env))
 
            ;; Function application (including when head is not a symbol)
            (t

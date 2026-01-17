@@ -32,20 +32,21 @@
 
 (defun make-root-env ()
   "Create the root environment with core bindings."
-  (let ((env (make-env)))
-    ;; Initialize with nil, true, and false as special values (use string keys for consistency)
-    (setf (gethash (cons "user" "nil") (env-vars env)) (make-var :name 'nil :value nil))
-    (setf (gethash (cons "user" "true") (env-vars env)) (make-var :name 'true :value t))
-    (setf (gethash (cons "user" "false") (env-vars env)) (make-var :name 'false :value 'false))
+  (let ((env (make-env :vars (make-hash-table :test 'equal))))
+    ;; Initialize with nil as a special value
+    (setf (gethash "USER/NIL" (env-vars env))
+          (make-var :name 'nil :namespace 'user :value nil))
     env))
+
+(defun var-key (name &optional (ns '*current-ns*))
+  "Create a string key for var lookup, independent of symbol package and case.
+   Clojure symbols are case-sensitive but stored in uppercase for consistency."
+  (let ((ns-name (if (eq ns '*current-ns*) *current-ns* ns)))
+    (concatenate 'string (string-upcase (string ns-name)) "/" (string-upcase (string name)))))
 
 (defun env-get-var (env name &optional (ns '*current-ns*))
   "Get a var from the environment. Returns NIL if not found."
-  (let* ((ns-name (if (eq ns '*current-ns*) *current-ns* ns))
-         ;; Normalize symbols to lowercase strings for consistent hash keys
-         ;; because Clojure's :preserve case mode creates different symbols
-         (key (cons (string-downcase (symbol-name ns-name))
-                    (string-downcase (symbol-name name)))))
+  (let ((key (var-key name ns)))
     (or (gethash key (env-vars env))
         (when (env-parent env)
           (env-get-var (env-parent env) name ns)))))
@@ -53,9 +54,7 @@
 (defun env-intern-var (env name &optional (ns '*current-ns*))
   "Intern a new var in the environment or return existing one."
   (let* ((ns-name (if (eq ns '*current-ns*) *current-ns* ns))
-         ;; Normalize symbols to lowercase strings for consistent hash keys
-         (key (cons (string-downcase (symbol-name ns-name))
-                    (string-downcase (symbol-name name))))
+         (key (var-key name ns-name))
          (vars (env-vars env))
          (existing (gethash key vars)))
     (if existing
@@ -72,7 +71,11 @@
 
 (defun env-get-lexical (env name)
   "Get a lexical binding from the environment."
-  (let ((binding (assoc name (env-bindings env) :test #'equal)))
+  ;; For lexical bindings, use string comparison for symbol names
+  ;; to handle symbols from different packages
+  (let ((binding (assoc (string name) (env-bindings env)
+                        :test #'equal
+                        :key (lambda (x) (string (car x))))))
     (if binding
         (cdr binding)
         (when (env-parent env)
@@ -129,6 +132,49 @@
   (let ((name (cadr form)))
     (env-get-var *current-env* name)))
 
+(defun eval-syntax-quote (form env)
+  "Evaluate a syntax-quote form: `(syntax-quote form) - like quote but with unquote support."
+  ;; Syntax-quote returns its form, but processes any nested unquote/unquote-splicing
+  (let ((form-to-quote (cadr form)))
+    ;; Process the form, handling unquote and unquote-splicing
+    (process-syntax-quote form-to-quote env)))
+
+(defun process-syntax-quote (form env)
+  "Process a syntax-quote form, expanding unquote and unquote-splicing."
+  (typecase form
+    ;; Handle unquote - evaluate and return the value
+    (cons
+     (if (eq (car form) 'unquote)
+         ;; Evaluate the unquoted form in the current environment
+         (clojure-eval (cadr form) env)
+         ;; Handle unquote-splicing
+         (if (eq (car form) 'unquote-splicing)
+             ;; Evaluate and return the value (should be a list for splicing)
+             (clojure-eval (cadr form) env)
+             ;; Regular list - recursively process elements and build list
+             (let ((processed (mapcar (lambda (x) (process-syntax-quote x env)) form)))
+               processed))))
+    ;; For vectors, process each element and return as vector
+    (vector
+     (let ((processed (mapcar (lambda (x) (process-syntax-quote x env)) (coerce form 'list))))
+       (coerce processed 'vector)))
+    ;; For symbols, return them as-is (will be resolved when final code is evaluated)
+    ;; In a real implementation, symbols would be namespace-qualified
+    (symbol form)
+    ;; Everything else just return as-is
+    (t form)))
+
+(defun eval-unquote (form env)
+  "Evaluate an unquote form: (unquote form) - should only appear within syntax-quote."
+  ;; Unquote is handled during syntax-quote processing
+  ;; If we reach here, it's an unquote outside syntax-quote, which is an error
+  (error "Unquote outside syntax-quote"))
+
+(defun eval-unquote-splicing (form env)
+  "Evaluate an unquote-splicing form: (unquote-splicing form) - should only appear within syntax-quote."
+  ;; Unquote-splicing is handled during syntax-quote processing
+  (error "Unquote-splicing outside syntax-quote"))
+
 (defun eval-def (form env)
   "Evaluate a def form: (def name expr?) - create/intern a var."
   (let* ((name (cadr form))
@@ -159,146 +205,19 @@
     result))
 
 (defun eval-defmacro (form env)
-  "Evaluate a defmacro form: (defmacro name [args] body+) - def a macro.
-   For now, treat it like defn since we're not implementing true macro expansion.
-   In a full implementation, macros would be expanded at compile time."
-  ;; For TDD purposes, create a closure like defn
-  ;; Real macros need expansion which is complex
+  "Evaluate a defmacro form: (defmacro name [args] body+) - def a macro."
+  ;; defmacro creates a macro function - similar to defn but marked as macro
   (let* ((name (cadr form))
-         (rest (cddr form))
-         ;; Extract docstring if present
-         (has-doc (and (not (null rest)) (stringp (car rest))))
-         (body (if has-doc (cdr rest) rest))
-         ;; Create a function that wraps the macro body
-         (fn-expr `(def ,name (fn ,@body)))
-         (result (clojure-eval fn-expr env)))
-    result))
-
-(defun eval-defonce (form env)
-  "Evaluate a defonce form: (defonce name expr) - def if not already defined.
-   If the var is already bound, do nothing. Otherwise, define it."
-  (let* ((name (cadr form))
-         (value-expr (caddr form)))
-    ;; Check if var already exists
-    (let ((existing-var (env-get-var env name)))
-      (if existing-var
-          ;; Already defined, return the existing var's name
-          name
-          ;; Not defined, create it
-          (let ((value (clojure-eval value-expr env)))
-            (env-set-var env name value)
-            name)))))
-
-(defun eval-defrecord (form env)
-  "Evaluate a defrecord form: (defrecord name [fields] opts+ methods?)
-   For now, just create the name as a var with nil value.
-   Real defrecord creates a Java class with fields and methods."
-  (declare (ignore env))
-  ;; For TDD purposes, just return the name
-  ;; Real implementation would create a record type
-  (cadr form))
-
-(defun eval-defmethod (form env)
-  "Evaluate a defmethod form: (defmethod name dispatch-val [args] body)
-   For now, just create the name as a var with nil value.
-   Real defmethod adds a method implementation to a multimethod."
-  (declare (ignore env))
-  ;; For TDD purposes, just return the name
-  ;; Real implementation would add method to multimethod
-  (cadr form))
-
-(defun eval-definterface (form env)
-  "Evaluate a definterface form: (definterface name [method-sigs])
-   For now, just create the name as a var with nil value.
-   Real definterface creates a Java interface."
-  (declare (ignore env))
-  ;; For TDD purposes, just return the name
-  ;; Real implementation would create a Java interface
-  (cadr form))
-
-(defun eval-defprotocol (form env)
-  "Evaluate a defprotocol form: (defprotocol name [method-sigs])
-   For now, just create the name as a var with nil value.
-   Real defprotocol creates a protocol with methods."
-  (declare (ignore env))
-  ;; For TDD purposes, just return the name
-  ;; Real implementation would create a protocol
-  (cadr form))
-
-(defun eval-deftype (form env)
-  "Evaluate a deftype form: (deftype name [fields] implements+ methods?)
-   For now, just return the name as a no-op.
-   Real deftype creates a Java class with fields and methods."
-  (declare (ignore env))
-  ;; For TDD purposes, just return the name
-  ;; Real implementation would create a type
-  (cadr form))
-
-(defun eval-defstruct (form env)
-  "Evaluate a defstruct form: (defstruct name [fields])
-   For now, just return the name as a no-op.
-   Real defstruct creates a structure type with accessor functions."
-  (declare (ignore env))
-  ;; For TDD purposes, just return the name
-  ;; Real implementation would create a struct
-  (cadr form))
-
-(defun eval-require (form env)
-  "Evaluate a require form: (require lib-spec*) - load libraries.
-   For now, this is a no-op.
-   Real require would load and import Clojure libraries."
-  (declare (ignore env))
-  ;; For TDD purposes, just return nil
-  nil)
-
-(defun eval-import (form env)
-  "Evaluate an import form: (import import-spec*) - import Java classes.
-   For now, this is a no-op.
-   Real import would make Java classes available."
-  (declare (ignore env))
-  ;; For TDD purposes, just return nil
-  nil)
-
-(defun eval-doseq (form env)
-  "Evaluate a doseq form: (doseq [binding seq] body+) - loop for side effects.
-   For now, just return nil."
-  (declare (ignore env))
-  ;; For TDD purposes, just return nil
-  ;; Real implementation would iterate and evaluate body
-  nil)
-
-(defun eval-dotimes (form env)
-  "Evaluate a dotimes form: (dotimes [binding n] body+) - loop n times.
-   For now, just return nil."
-  (declare (ignore env))
-  ;; For TDD purposes, just return nil
-  ;; Real implementation would iterate from 0 to n-1
-  nil)
-
-(defun eval-extend-type (form env)
-  "Evaluate an extend-type form: (extend-type type & protocol+impls)
-   For now, just return nil."
-  (declare (ignore env))
-  ;; For TDD purposes, just return nil
-  nil)
-
-(defun eval-comment (form env)
-  "Evaluate a comment form: (comment & body) - ignore all forms, return nil."
-  (declare (ignore form env))
-  nil)
-
-(defun eval-extend-protocol (form env)
-  "Evaluate an extend-protocol form: (extend-protocol proto & impls)
-   For now, just return nil."
-  (declare (ignore env))
-  nil)
-
-(defun eval-in-ns (form env)
-  "Evaluate an in-ns form: (in-ns name) - switch to namespace."
-  (declare (ignore env))
-  (let* ((name (cadr form)))
-    ;; Set the current namespace
-    (setf *current-ns* name)
+         ;; Create the macro closure with macro-p flag set
+         (rest-form (cddr form))
+         (has-name (and (not (null rest-form))
+                        (not (vectorp (car rest-form)))))
+         (macro-name (if has-name (car rest-form) nil))
+         (params (if has-name (cadr rest-form) (car rest-form)))
+         (body (if has-name (cddr rest-form) (cdr rest-form)))
+         (macro (make-closure :params params :body body :env env :name macro-name :macro-p t)))
+    ;; Store the macro in the environment
+    (env-set-var env name macro)
     name))
 
 (defun eval-let (form env)
@@ -343,114 +262,34 @@
             result)))))
 
 (defun eval-ns (form env)
-  "Evaluate an ns form: (ns name & args) - namespace declaration.
-   For now, this is a no-op that just records the namespace name."
-  (declare (ignore env))
-  ;; Extract namespace name
+  "Evaluate a ns form: (ns name & options) - set current namespace."
+  ;; For now, just set the current namespace and make test macros available
+  ;; TODO: Handle :use, :import, :require, etc.
   (let* ((name (cadr form))
-         ;; Record the current namespace
-         (*current-ns* name))
-    ;; For now, just return the namespace name
-    ;; TODO: Handle :use, :require, :import directives
-    name))
+         ;; Extract the name part from a qualified symbol like clojure.test-clojure.agents
+         (ns-name (if (and (symbolp name)
+                          (find #\. (string name)))
+                     ;; For qualified symbols, store as-is for now
+                     name
+                     name)))
+    (setf *current-ns* ns-name)
+    ;; Automatically make test helpers available in new namespace
+    ;; This is a simplification - real Clojure uses :use to import symbols
+    (setup-test-macros env)
+    ns-name))
 
 (defun eval-deftest (form env)
-  "Evaluate a deftest form: (deftest name body+) - define a test.
-   The name may be wrapped in a with-meta form, so evaluate it first."
-  (let* ((name-expr (cadr form))
-         ;; Evaluate the name to handle with-meta
-         (name (if (and (consp name-expr) (symbolp (car name-expr)))
-                   (clojure-eval name-expr env)
-                   name-expr))
+  "Evaluate a deftest form: (deftest name body+) - define a test."
+  ;; For now, deftest just evaluates the body to check for errors
+  ;; It doesn't actually register or run the test yet
+  (let* ((name (cadr form))
          (body (cddr form)))
-    ;; Create a closure for the test
-    (let ((test-fn (make-closure :params nil
-                                 :body body
-                                 :env env
-                                 :name name)))
-      ;; Store the test in the environment
-      (env-set-var env name test-fn)
-      name)))
-
-(defun eval-declare (form env)
-  "Evaluate a declare form: (declare name+) - declare vars without defining them.
-   Also handles metadata hints like ^:dynamic."
-  (dolist (item (cdr form))
-    ;; Skip metadata hints (they start with ^)
-    (when (symbolp item)
-      ;; Create a var with nil value
-      (env-intern-var env item)))
-  nil)
-
-(defun eval-set-bang (form env)
-  "Evaluate a set! form: (set! var expr) - set the value of a var."
-  ;; set! can be used in two forms:
-  ;; (set! var-name value) - set a var's value
-  ;; (set! (.instance-field obj) value) - set a Java field (not implemented yet)
-  (let* ((target (cadr form))
-         (value-expr (caddr form))
-         (value (clojure-eval value-expr env)))
-    ;; For now, just handle simple symbol targets (vars)
-    ;; TODO: Handle Java field assignment
-    (cond
-      ;; Symbol target - set the var's value
-      ((symbolp target)
-       (let ((var (env-get-var env target)))
-         (if var
-             (progn
-               (setf (var-value var) value)
-               value)
-             ;; If var doesn't exist, create it and set
-             (env-set-var env target value))))
-      ;; TODO: Handle Java interop forms like (.field obj)
-      (t (error "Unsupported set! target: ~A" target)))))
-
-(defun eval-with-meta (form env)
-  "Evaluate a with-meta form: (with-meta obj metadata) - attach metadata to an object.
-   For symbols (like in deftest names), we just return the symbol itself
-   since the metadata is attached to the var, not the value.
-   For other objects, we would need a way to store metadata separately."
-  (declare (ignore env))
-  ;; In Clojure, metadata is attached to objects (especially symbols and vars)
-  ;; For eval purposes in deftest, we can ignore the metadata and just return
-  ;; the underlying form (usually a symbol)
-  (let ((obj (cadr form))
-        (metadata (caddr form)))
-    (declare (ignore metadata))
-    ;; For now, just return the object without metadata
-    ;; A full implementation would store metadata somewhere
-    obj))
-
-(defun eval-case (form env)
-  "Evaluate a case form: (case expr test1 result1 test2 result2 ... default?)
-   Compares expr (using =) against each test and returns the corresponding result.
-   If no match and no default, returns nil."
-  (let* ((expr (cadr form))
-         (expr-value (clojure-eval expr env))
-         (clauses (cddr form)))
-    ;; Process clauses pairwise
-    (loop for (test result) on clauses by #'cddr
-          while test
-          do (cond
-               ;; Last clause with no result pair - this is the default
-               ((null (cdr (member test clauses)))
-                ;; This is the default case
-                (return-from eval-case (clojure-eval test env)))
-               ;; Special case: test can be a list of values (v1 v2 v3)
-               ((and (listp test) (not (null test)))
-                ;; Check if expr-value matches any of the test values
-                (if (find expr-value test :test #'clojure=)
-                    (return-from eval-case (clojure-eval result env))
-                    ;; Continue to next clause
-                    nil))
-               ;; Single value test
-               (t
-                (if (clojure= expr-value test)
-                    (return-from eval-case (clojure-eval result env))
-                    ;; Continue to next clause
-                    nil))))
-    ;; No match found and no default clause
-    nil))
+    ;; Evaluate the body forms (they typically use `is` assertions)
+    ;; For now, just return the test name
+    ;; TODO: Actually collect and run tests
+    (dolist (expr body)
+      (clojure-eval expr env))
+    name))
 
 ;;; ============================================================
 ;;; Closure (function) representation
@@ -461,49 +300,8 @@
   params
   body
   env
-  (name nil))
-
-;;; ============================================================
-;;; Atom (mutable reference) representation
-;;; ============================================================
-
-(defstruct clojure-atom
-  "A Clojure atom - a mutable reference."
-  value)
-
-;;; ============================================================
-;;; Test Helpers (no-ops for now)
-;;; ============================================================
-
-(defun clojure-deftest (name &rest body)
-  "Define a test. Intern the test name as a var."
-  ;; Store the test function in the environment
-  (when *current-env*
-    (env-set-var *current-env* name
-                  (make-closure :params nil
-                                :body body
-                                :env *current-env*
-                                :name name)))
-  name)
-
-(defun clojure-testing (name &rest body)
-  "Define a test context. For now, just evaluate body and return nil."
-  (declare (ignore name))
-  ;; Evaluate all body forms
-  (when *current-env*
-    (dolist (form body)
-      (clojure-eval form *current-env*)))
-  nil)
-
-(defun clojure-is (condition &rest msg)
-  "Assert a condition. For now, just return the condition."
-  (declare (ignore msg))
-  condition)
-
-(defun clojure-use-fixtures (fixtures &rest tests)
-  "Apply fixtures to tests. For now, no-op."
-  (declare (ignore fixtures tests))
-  nil)
+  (name nil)
+  (macro-p nil))  ; true if this is a macro
 
 ;;; ============================================================
 ;;; Core Functions (built-ins)
@@ -515,6 +313,10 @@
 
 (defun setup-core-functions (env)
   "Set up all core functions in the environment."
+
+  ;; Boolean values
+  (env-set-var env 'true t)
+  (env-set-var env 'false 'false)
 
   ;; Arithmetic functions
   (register-core-function env '+ #'clojure+)
@@ -554,74 +356,8 @@
   ;; Sequence functions
   (register-core-function env 'seq #'clojure-seq)
   (register-core-function env 'identity #'clojure-identity)
-  (register-core-function env 'reduce #'clojure-reduce)
-  (register-core-function env 'map #'clojure-map)
-  (register-core-function env 'filter #'clojure-filter)
-  (register-core-function env 'constantly #'clojure-constantly)
-  (register-core-function env 'range #'clojure-range)
-  (register-core-function env 'repeat #'clojure-repeat)
-  (register-core-function env 'iterate #'clojure-iterate)
-  (register-core-function env 'mapcat #'clojure-mapcat)
-  (register-core-function env 'delay #'clojure-delay)
-  (register-core-function env 'force #'clojure-force)
-  (register-core-function env 'make-hierarchy #'clojure-make-hierarchy)
-
-  ;; Test helpers
-  (register-core-function env 'deftest #'clojure-deftest)
-  (register-core-function env 'testing #'clojure-testing)
-  (register-core-function env 'is #'clojure-is)
-  (register-core-function env 'use-fixtures #'clojure-use-fixtures)
-
-  ;; Atom functions
-  (register-core-function env 'atom #'clojure-atom)
-  (register-core-function env 'swap! #'clojure-swap!)
-  (register-core-function env 'reset! #'clojure-reset!)
-  (register-core-function env 'deref #'clojure-deref)
-
-  ;; File loading
-  (register-core-function env 'load #'clojure-load)
-
-  ;; Test library stubs
-  (register-core-function env 'defspec #'clojure-defspec)
-
-  ;; Java interop stubs - System/getProperty
-  ;; Note: Use lowercase because env-get-var normalizes to lowercase
-  (setf (gethash (cons "user" "system/getproperty") (env-vars env))
-        (make-var :name 'System/getProperty :value #'clojure-get-property))
 
   env)
-
-;;; Load function
-(defvar *load-path* nil
-  "Search path for loading Clojure files.")
-
-(defun clojure-load (path &optional relative-to)
-  "Load a Clojure file from the given path.
-   The path can be a string (without .clj extension) or a full path.
-   For now, this is a no-op that returns nil.
-   TODO: Implement actual file loading."
-  (declare (ignore path relative-to))
-  ;; For now, just return nil since we're not loading Java-specific code
-  ;; In a full implementation, this would:
-  ;; 1. Find the file on the classpath/load-path
-  ;; 2. Add .clj extension if needed
-  ;; 3. Read and evaluate all forms in the file
-  nil)
-
-;;; Test library stubs
-(defun clojure-defspec (name &rest args)
-  "Stub for clojure.test.generative/defspec.
-   Defines a generative test. For now, just return the name as a no-op."
-  (declare (ignore args))
-  name)
-
-;;; Java interop stubs
-(defun clojure-get-property (&rest args)
-  "Stub for Java System/getProperty.
-   Returns nil so case tests fall through to the default.
-   The real call would be (Class/method args...) but for now we just return nil."
-  (declare (ignore args))
-  nil)
 
 ;;; Arithmetic implementations
 (defun clojure+ (&rest args)
@@ -689,14 +425,26 @@
 
 (defun clojure-conj (coll &rest xs)
   "Conjoin elements to collection. For lists, adds to front."
-  (cond
-    ((null xs) coll)
-    ((null coll) (apply #'clojure-list xs))
-    ((listp coll) (append (reverse xs) coll))
-    ((vectorp coll)
-     ;; Vector - add elements to end
-     (coerce (concatenate 'list coll xs) 'vector))
-    (t coll)))
+  (if (null xs)
+      coll
+      (cond
+        ;; For lists, add to front
+        ((listp coll)
+         (append (reverse xs) coll))
+        ;; For vectors, add to end
+        ((vectorp coll)
+         (coerce (append (coerce coll 'list) xs) 'vector))
+        ;; For strings, concatenate
+        ((stringp coll)
+         (concatenate 'string coll (apply #'concatenate 'string (mapcar #'string xs))))
+        ;; For hash tables (sets), just return coll (conj to set not implemented)
+        ((hash-table-p coll)
+         coll)
+        ;; For sequences, convert to list and append
+        ((typep coll 'sequence)
+         (append (coerce coll 'list) xs))
+        ;; For anything else, return as-is
+        (t coll))))
 
 (defun clojure-first (seq)
   "Return first element of sequence."
@@ -734,69 +482,10 @@
   args)
 
 (defun clojure-map (fn-arg coll &rest colls)
-  "Apply fn to each item in collection(s). Returns a list."
-  (if (null colls)
-      ;; Single collection
-      (mapcar fn-arg (if (vectorp coll) (coerce coll 'list) coll))
-      ;; Multiple collections
-      (apply #'mapcar (cons fn-arg (mapcar (lambda (c)
-                                              (if (vectorp c) (coerce c 'list) c))
-                                            (cons coll colls))))))
-
-(defun clojure-reduce (fn-arg coll &optional initial)
-  "Reduce collection using fn. If initial provided, use it."
-  (let ((lst (if (vectorp coll) (coerce coll 'list) coll)))
-    (if initial
-        (reduce fn-arg lst :initial-value initial)
-        (reduce fn-arg lst))))
-
-(defun clojure-filter (pred coll)
-  "Filter collection using predicate."
-  (let ((lst (if (vectorp coll) (coerce coll 'list) coll)))
-    (remove-if-not pred lst)))
-
-(defun clojure-constantly (value)
-  "Return a function that always returns value."
-  (lambda (&rest args) (declare (ignore args)) value))
-
-(defun clojure-range (&optional (start 0) end step)
-  "Create a range of numbers."
-  (cond
-    ((null end) (loop for i from start below 10 collect i))
-    ((null step) (loop for i from start below end collect i))
-    (t (loop for i from start below end by step collect i))))
-
-(defun clojure-repeat (n &optional value)
-  "Create a sequence of n repeats of value."
-  (if value
-      (make-list n :initial-element value)
-      (make-list n :initial-element n)))
-
-(defun clojure-iterate (fn-arg initial)
-  "Create an infinite lazy sequence starting with initial and applying fn."
-  ;; For now, just return a limited sequence
-  (let ((result nil)
-        (current initial))
-    (dotimes (i 10)
-      (push current result)
-      (setf current (funcall fn-arg current)))
-    (nreverse result)))
-
-(defun clojure-mapcat (fn-arg coll)
-  "Map fn over coll and concat the results."
-  (apply #'append (mapcar fn-arg (if (vectorp coll) (coerce coll 'list) coll))))
-
-(defun clojure-delay (value)
-  "Create a delayed computation. For now, just return the value."
-  value)
-
-(defun clojure-force (delayed)
-  "Force evaluation of a delay. For now, just return the value."
-  delayed)
-
-(defun clojure-make-hierarchy ()
-  "Create a hierarchy for multimethods. For now, return an empty hash table."
-  (make-hash-table :test 'equal))
+  "Apply fn to each item in collection(s). Returns lazy sequence."
+  (declare (ignore fn-arg coll colls))
+  ;; TODO: Implement map function
+  '())
 
 (defun clojure-apply (fn-arg &rest args)
   "Apply fn to args with last arg being a list of args."
@@ -821,30 +510,40 @@
 (defun clojure-fn? (x) (closure-p x))
 (defun clojure-vector? (x) (vectorp x))
 
-;;; Atom implementations
-(defun clojure-atom (initial-value)
-  "Create a new atom with initial-value."
-  (make-clojure-atom :value initial-value))
+;;; ============================================================
+;;; Test Helper Special Forms (from clojure.test)
+;;; ============================================================
 
-(defun clojure-deref (atom-ref)
-  "Dereference an atom (or ref). Returns the current value."
-  (if (clojure-atom-p atom-ref)
-      (clojure-atom-value atom-ref)
-      ;; For other ref types, return as-is for now
-      atom-ref))
+(defun eval-is (form env)
+  "Evaluate an is form: (is expr) - test assertion."
+  ;; For now, just evaluate the expression and return it
+  ;; TODO: Actually track test results
+  (let ((expr (cadr form)))
+    (clojure-eval expr env)))
 
-(defun clojure-reset! (atom-ref new-value)
-  "Reset an atom to a new value. Returns the new value."
-  (when (clojure-atom-p atom-ref)
-    (setf (clojure-atom-value atom-ref) new-value))
-  new-value)
+(defun eval-testing (form env)
+  "Evaluate a testing form: (testing name & body) - context for tests."
+  ;; Evaluate all body forms and return the last result
+  (let ((body (cddr form)))
+    (if (null body)
+        nil
+        (let ((last-expr (car (last body))))
+          (dolist (expr (butlast body))
+            (clojure-eval expr env))
+          (clojure-eval last-expr env)))))
 
-(defun clojure-swap! (atom-ref fn-arg &rest args)
-  "Atomically swap the value of an atom by applying fn to current value and args."
-  (when (clojure-atom-p atom-ref)
-    (let ((new-value (apply fn-arg (clojure-atom-value atom-ref) args)))
-      (setf (clojure-atom-value atom-ref) new-value)
-      new-value)))
+(defun eval-are (form env)
+  "Evaluate an are form: (are [args] expr & arg-pairs) - multiple assertions."
+  ;; For now, just return nil
+  ;; TODO: Implement full are semantics
+  (declare (ignore env))
+  nil)
+
+(defun setup-test-macros (env)
+  "Set up test helper symbols - no longer needed as they are special forms."
+  (declare (ignore env))
+  ;; This is now a no-op since is, testing, are are special forms
+  nil)
 
 ;;; ============================================================
 ;;; Truthiness
@@ -888,50 +587,42 @@
       ;; List - evaluate as function call or special form
       (cons
        (let ((head (car form))
-             (rest-form (cdr form)))
+             (rest-form (cdr form))
+             (head-name (string-downcase (string (car form)))))
          (cond
-           ;; Special forms - compare by symbol name (lowercase for Clojure compatibility)
-           ((and (symbolp head) (string-equal (symbol-name head) "if")) (eval-if form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "do")) (eval-do form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "quote")) (eval-quote form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "var")) (eval-var-quote form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "def")) (eval-def form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "defn")) (eval-defn form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "fn")) (eval-fn form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "fn*")) (eval-fn form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "let")) (eval-let form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "let*")) (eval-let form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "loop")) (eval-loop form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "ns")) (eval-ns form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "deftest")) (eval-deftest form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "declare")) (eval-declare form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "set!")) (eval-set-bang form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "with-meta")) (eval-with-meta form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "case")) (eval-case form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "defmacro")) (eval-defmacro form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "defn-")) (eval-defn form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "defonce")) (eval-defonce form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "defrecord")) (eval-defrecord form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "defmethod")) (eval-defmethod form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "definterface")) (eval-definterface form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "defprotocol")) (eval-defprotocol form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "deftype")) (eval-deftype form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "defstruct")) (eval-defstruct form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "require")) (eval-require form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "import")) (eval-import form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "doseq")) (eval-doseq form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "dotimes")) (eval-dotimes form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "extend-type")) (eval-extend-type form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "comment")) (eval-comment form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "extend-protocol")) (eval-extend-protocol form env))
-           ((and (symbolp head) (string-equal (symbol-name head) "in-ns")) (eval-in-ns form env))
+           ;; Special forms - compare lowercase symbol names to handle package differences
+           ((string= head-name "if") (eval-if form env))
+           ((string= head-name "do") (eval-do form env))
+           ((string= head-name "quote") (eval-quote form env))
+           ((string= head-name "syntax-quote") (eval-syntax-quote form env))
+           ((string= head-name "unquote") (eval-unquote form env))
+           ((string= head-name "unquote-splicing") (eval-unquote-splicing form env))
+           ((string= head-name "var") (eval-var-quote form env))
+           ((string= head-name "def") (eval-def form env))
+           ((string= head-name "defn") (eval-defn form env))
+           ((string= head-name "defmacro") (eval-defmacro form env))
+          ((string= head-name "deftest") (eval-deftest form env))
+          ((string= head-name "is") (eval-is form env))
+          ((string= head-name "testing") (eval-testing form env))
+          ((string= head-name "are") (eval-are form env))
+           ((string= head-name "fn") (eval-fn form env))
+           ((string= head-name "fn*") (eval-fn form env))
+           ((string= head-name "let") (eval-let form env))
+           ((string= head-name "loop") (eval-loop form env))
+          ((string= head-name "ns") (eval-ns form env))
 
            ;; Function application
            (t
-            (let ((fn-value (clojure-eval head env))
-                  (args (mapcar #'(lambda (x) (clojure-eval x env))
-                                rest-form)))
-              (apply-function fn-value args))))))
+            (let ((fn-value (clojure-eval head env)))
+              ;; Check if it's a macro - macros receive unevaluated arguments
+              (if (and (closure-p fn-value) (closure-macro-p fn-value))
+                  ;; Macro expansion: call with unevaluated args, then eval result
+                  (let* ((expanded (apply-function fn-value rest-form)))
+                    (clojure-eval expanded env))
+                  ;; Normal function: eval args then apply
+                  (let ((args (mapcar #'(lambda (x) (clojure-eval x env))
+                                      rest-form)))
+                    (apply-function fn-value args))))))))
 
       ;; Vector - evaluate elements (for some contexts)
       (vector form)
@@ -954,28 +645,20 @@
             (new-env fn-env))
        ;; Bind parameters to arguments
        (cond
-         ;; Vector parameters - fixed arity
+         ;; Vector parameters - fixed arity or with & rest params
          ((vectorp params)
-          (loop for param across params
-                for arg in args
-                do (setf new-env (env-extend-lexical new-env param arg))))
-         ;; Vector parameters with & rest params
-         ((and (vectorp params)
-               (> (length params) 1)
-               (find '& params))
-          (let* ((&-pos (position '& params))
-                 (rest-params (subseq params (1+ &-pos)))
-                 (fixed-count &-pos)
-                 (rest-args (nthcdr fixed-count args)))
+          (let* ((amp-pos (position (intern "&") params))
+                 (fixed-count (if amp-pos amp-pos (length params))))
             ;; Bind fixed params
-            (loop for i from 0 below &-pos
+            (loop for i from 0 below fixed-count
                   for arg in args
                   do (setf new-env (env-extend-lexical new-env (aref params i) arg)))
-            ;; Bind rest param
-            (setf new-env (env-extend-lexical new-env
-                                              (car rest-params)
-                                              rest-args))))
-         ;; List parameters
+            ;; Handle rest param if present
+            (when amp-pos
+              (let ((rest-param (aref params (1+ amp-pos)))
+                    (rest-args (nthcdr fixed-count args)))
+                (setf new-env (env-extend-lexical new-env rest-param rest-args))))))
+         ;; List parameters (less common but supported)
          (t
           (loop for param in params
                 for arg in args
@@ -1003,26 +686,25 @@
   "Initialize the evaluation system with root environment."
   (setf *current-env* (make-root-env))
   (setup-core-functions *current-env*)
+  (setup-test-macros *current-env*)
   *current-env*)
 
 (defun eval-string (string)
   "Evaluate a Clojure string and return the result."
   (unless *current-env*
     (init-eval-system))
-  ;; Use dynamic binding for readtable so we don't affect global state
-  (let* ((*readtable* (cl-clojure-syntax:ensure-clojure-readtable))
-         (form (cl-clojure-syntax:read-clojure-string string)))
+  (let* ((form (cl-clojure-syntax:read-clojure-string string)))
     (clojure-eval form *current-env*)))
 
 (defun eval-file (path)
   "Evaluate all forms in a Clojure file."
   (unless *current-env*
     (init-eval-system))
-  (let* ((raw-content (with-open-file (s path :direction :input)
-                        (let ((str (make-string (file-length s))))
-                          (read-sequence str s)
-                          str)))
-         (preprocessed (cl-clojure-syntax:preprocess-clojure-dots raw-content))
+  (let* ((content (with-open-file (s path :direction :input)
+                    (let ((str (make-string (file-length s))))
+                      (read-sequence str s)
+                      str)))
+         (preprocessed (cl-clojure-syntax:preprocess-clojure-dots content))
          (results nil))
     (with-input-from-string (stream preprocessed)
       (let ((*readtable* (cl-clojure-syntax:ensure-clojure-readtable)))

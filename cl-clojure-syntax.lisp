@@ -577,7 +577,8 @@
    This is the main entry point for reading Clojure source code."
   (let ((preprocessed (preprocess-clojure-dots string)))
     (with-input-from-string (stream preprocessed)
-      (read-clojure stream eof-error-p eof-value))))
+      (let ((*readtable* (ensure-clojure-readtable)))
+        (read-clojure stream eof-error-p eof-value)))))
 
 (defun disable-clojure-syntax ()
   "Disable Clojure syntax, restoring default Common Lisp readtable."

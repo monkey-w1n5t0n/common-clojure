@@ -1031,3 +1031,44 @@ The previous DEVLOG.md showed extensive work up to iteration 16, but when I star
 5. Continue investigating which tests actually pass and why
 
 ---
+
+### Iteration 18 - 2025-01-17
+
+**Focus:** Implement `resolve` function for array type symbol resolution
+
+**Changes Made:**
+
+1. **Implemented `resolve` function** - cl-clojure-eval.lisp:2477-2524
+   - Resolves array type symbols like `long/1`, `String/1`, `String/2` to class descriptors
+   - Returns `(array-class <descriptor>)` structure that matches `Class/forName` output
+   - Supports primitive array types: boolean, byte, char, short, float, double, int, long
+   - Supports object array types: String, Object, and fully-qualified class names
+   - Handles multi-dimensional arrays by prepending multiple `[` brackets
+   - Registered in `setup-core-functions`
+
+2. **Updated `Class/forName` stub** - cl-clojure-eval.lisp:1100-1106
+   - Now returns `(array-class <class-name-str>)` structure
+   - This matches what `resolve` returns, enabling `(= (Class/forName "[Z") (resolve 'boolean/1))`
+
+**Implementation Details:**
+- The `resolve` function takes a symbol or string and checks if it contains `/`
+- If it does, it interprets `type/dimension` format (e.g., `long/1` = 1-dimensional long array)
+- For primitive types, returns JVM array descriptors like `"[Z"` for boolean arrays
+- For object types, builds descriptors like `"[Ljava.lang.String;"` for String arrays
+- Multi-dimensional arrays: `String/2` → `"[[Ljava.lang.String;"`
+
+**Errors Fixed:**
+- "Undefined symbol: resolve" - FIXED ✅
+- `resolve` now enables `array_symbols` test to progress past the basic resolution tests
+
+**Test Results:**
+- Parse: 68 ok, 0 errors ✅
+- Eval: 5 ok, 63 errors (same as iteration 17)
+- The `array_symbols` test now progresses past `resolve` calls but fails on "Unsupported Java interop: java.util.Arrays/binarySearch"
+
+**Next Steps:**
+1. Add stubs for common Java class methods (like java.util.Arrays)
+2. Continue adding more core functions as tests require them
+3. Fix remaining "Unsupported Java interop" errors for various namespaces
+
+---

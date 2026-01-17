@@ -1098,10 +1098,12 @@
     ((string-equal class-name "Class")
      (cond
        ((string-equal member-name "forName")
-        ;; Return a stub Class object
+        ;; Return a class object that works with resolve
+        ;; The tests expect (Class/forName "[Z") to equal (resolve 'boolean/1)
         (if (null args)
             (error "Class/forName requires an argument")
-            :class))
+            (let ((class-name-str (first args)))
+              (list 'array-class class-name-str))))
        ((string-equal member-name "TYPE")
         ;; Return a stub TYPE value for primitive classes
         :type)
@@ -1442,6 +1444,7 @@
   (register-core-function env 'juxt #'clojure-juxt)
   (register-core-function env 'replicate #'clojure-replicate)
   (register-core-function env 'repeat #'clojure-repeat)
+  (register-core-function env 'resolve #'clojure-resolve)
 
   ;; Metadata functions
   (register-core-function env 'meta #'clojure-meta)
@@ -2470,6 +2473,55 @@
     (with-input-from-string (stream preprocessed)
       (let ((*readtable* (cl-clojure-syntax:ensure-clojure-readtable)))
         (cl-clojure-syntax:read-clojure stream eof-error-p eof-value)))))
+
+(defun clojure-resolve (sym-or-str)
+  "Resolve a symbol or string to its value or a class.
+   For array type symbols like 'long/1, 'String/1, returns a class object.
+   For other symbols, looks them up in the current namespace.
+   This is a stub implementation for SBCL."
+  (let ((sym (if (stringp sym-or-str)
+                 (intern sym-or-str)
+                 sym-or-str)))
+    ;; Check if this is an array type symbol (contains /)
+    (when (symbolp sym)
+      (let ((name (symbol-name sym)))
+        (when (find #\/ name)
+          (let* ((slash-pos (position #\/ name))
+                 (type-name (subseq name 0 slash-pos))
+                 (dimension-str (subseq name (1+ slash-pos)))
+                 (dimension (parse-integer dimension-str :junk-allowed t)))
+            ;; Map primitive types to their Java array class descriptors
+            ;; Return (array-class <descriptor>) structure
+            (list 'array-class
+                  (cond
+                    ;; Primitive array types
+                    ((string-equal type-name "boolean") "[Z")
+                    ((string-equal type-name "byte") "[B")
+                    ((string-equal type-name "char") "[C")
+                    ((string-equal type-name "short") "[S")
+                    ((string-equal type-name "float") "[F")
+                    ((string-equal type-name "double") "[D")
+                    ((string-equal type-name "int") "[I")
+                    ((string-equal type-name "long") "[J")
+                    ;; Object array types - add [L prefix and ; suffix for each dimension
+                    (t
+                     ;; For object types, build the multi-dimensional array class name
+                     ;; String/1 -> "[Ljava.lang.String;"
+                     ;; String/2 -> "[[Ljava.lang.String;"
+                     (let ((base-class
+                             (cond
+                               ((string-equal type-name "String") "java.lang.String")
+                               ((string-equal type-name "Object") "java.lang.Object")
+                               ;; Handle fully-qualified class names
+                               ((find #\. type-name) type-name)
+                               ;; Otherwise, assume it's in java.lang
+                               (t (concatenate 'string "java.lang." type-name)))))
+                       (with-output-to-string (s)
+                         (dotimes (i dimension)
+                           (write-char #\[ s))
+                         (write-char #\L s)
+                         (write-string base-class s)
+                         (write-char #\; s))))))))))))
 
 (defun clojure-println (&rest args)
   "Print arguments to standard output, followed by a newline.

@@ -82,13 +82,20 @@
   "Get a lexical binding from the environment."
   ;; For lexical bindings, use string comparison for symbol names
   ;; to handle symbols from different packages
-  (let ((binding (assoc (string name) (env-bindings env)
-                        :test #'equal
-                        :key (lambda (x) (string (car x))))))
-    (if binding
-        (cdr binding)
-        (when (env-parent env)
-          (env-get-lexical (env-parent env) name)))))
+  ;; We manually search because assoc's :key would need to handle both
+  ;; the lookup value and list elements, which have different types
+  (let ((name-string (string name)))
+    (labels ((search-bindings (bindings)
+               (cond
+                 ((null bindings) nil)
+                 ((string= name-string (string (caar bindings)))
+                  (car bindings))
+                 (t (search-bindings (cdr bindings))))))
+      (let ((binding (search-bindings (env-bindings env))))
+        (if binding
+            (cdr binding)
+            (when (env-parent env)
+              (env-get-lexical (env-parent env) name)))))))
 
 (defun env-push-bindings (env bindings)
   "Create a new env frame with additional lexical bindings."
@@ -234,11 +241,15 @@
   (let* ((bindings (cadr form))
          (body (cddr form))
          (new-env env))
-    ;; Process bindings pairwise
-    (loop for (name value-expr) on bindings by #'cddr
-          while name
-          do (let ((value (clojure-eval value-expr new-env)))
-               (setf new-env (env-extend-lexical new-env name value))))
+    ;; Convert vector bindings to list for iteration
+    (let ((bindings-list (if (vectorp bindings)
+                             (coerce bindings 'list)
+                             bindings)))
+      ;; Process bindings pairwise
+      (loop for (name value-expr) on bindings-list by #'cddr
+            while name
+            do (let ((value (clojure-eval value-expr new-env)))
+                 (setf new-env (env-extend-lexical new-env name value)))))
     ;; Evaluate body in new environment
     (if (null body)
         nil
@@ -346,6 +357,7 @@
   (register-core-function env 'cons #'clojure-cons)
   (register-core-function env 'conj #'clojure-conj)
   (register-core-function env 'first #'clojure-first)
+  (register-core-function env 'second #'clojure-second)
   (register-core-function env 'rest #'clojure-rest)
   (register-core-function env 'count #'clojure-count)
   (register-core-function env 'vec #'clojure-vec)
@@ -353,6 +365,7 @@
   (register-core-function env 'list #'clojure-list)
   (register-core-function env 'map #'clojure-map)
   (register-core-function env 'apply #'clojure-apply)
+  (register-core-function env 'str #'clojure-str)
 
   ;; Predicate functions
   (register-core-function env 'nil? #'clojure-nil?)
@@ -467,6 +480,32 @@
   (if (or (null seq) (and (consp seq) (null (cdr seq))))
       '()
       (cdr seq)))
+
+(defun clojure-second (seq)
+  "Return second element of sequence."
+  (cond
+    ((null seq) nil)
+    ((vectorp seq)
+     (if (> (length seq) 1)
+         (aref seq 1)
+         nil))
+    ((and (consp seq) (null (cdr seq))) nil)
+    ((consp seq) (cadr seq))
+    (t nil)))
+
+(defun clojure-str (&rest args)
+  "Convert arguments to string and concatenate. With no args, returns empty string."
+  (if (null args)
+      ""
+      (apply #'concatenate 'string (mapcar (lambda (x)
+                                              (typecase x
+                                                (null "")
+                                                (string x)
+                                                (character (string x))
+                                                (symbol (symbol-name x))
+                                                (keyword (symbol-name x))
+                                                (t (princ-to-string x))))
+                                            args))))
 
 (defun clojure-count (coll)
   "Return number of items in collection."

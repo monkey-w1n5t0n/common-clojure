@@ -133,6 +133,9 @@
     ;; ~form - unquote (and ~@form for unquote-splicing)
     (set-macro-character #\~ #'read-tilde-dispatch *clojure-readtable*)
 
+    ;; @form - deref reader macro (non-terminating so @@ is read as one token)
+    (set-macro-character #\@ #'read-deref t *clojure-readtable*)
+
     ;; #(body) - anonymous function literal
     (set-dispatch-macro-character #\# #\( #'read-anon-fn *clojure-readtable*)
 
@@ -358,6 +361,12 @@
    Returns (var form)."
   (declare (ignore sub-char num))
   (list 'var (read stream t nil t)))
+
+(defun read-deref (stream char)
+  "Read a Clojure deref: @form
+   Returns (deref form)."
+  (declare (ignore char))
+  (list 'deref (read stream t nil t)))
 
 (defun read-syntax-quote (stream char)
   "Read a Clojure syntax quote: `form

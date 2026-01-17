@@ -3,6 +3,30 @@
 
 (in-package #:cl-clojure-eval)
 
+;;; Forward declarations for functions used before definition
+(declaim (ftype (function (&rest t) t) clojure-set-union))
+(declaim (ftype (function (&rest t) t) clojure-set-intersection))
+(declaim (ftype (function (&rest t) t) clojure-set-difference))
+(declaim (ftype (function (t t) t) clojure-set-select))
+(declaim (ftype (function (t t) t) clojure-set-project))
+(declaim (ftype (function (t t) t) clojure-set-rename))
+(declaim (ftype (function (t t) t) clojure-set-rename-keys))
+(declaim (ftype (function (t t) t) clojure-set-index))
+(declaim (ftype (function (t t &optional t) t) clojure-set-join))
+(declaim (ftype (function (t) t) clojure-set-map-invert))
+(declaim (ftype (function (t t) t) clojure-set-subset))
+(declaim (ftype (function (t t) t) clojure-set-superset))
+(declaim (ftype (function (t t) t) clojure-prewalk-replace))
+(declaim (ftype (function (&rest t) t) clojure-hash-set))
+(declaim (ftype (function (&rest t) t) clojure-sorted-set))
+(declaim (ftype (function (t) t) set-to-list))
+(declaim (ftype (function (t t) t) set-contains-p))
+(declaim (ftype (function (t) t) copy-set))
+(declaim (ftype (function (t) t) list-to-vector))
+(declaim (ftype (function (t) t) hash-table-keys))
+(declaim (ftype (function (t) t) ensure-callable))
+(declaim (ftype (function (t t &rest t) t) eval-java-interop))
+
 ;;; ============================================================
 ;;; Environment and Var System
 ;;; ============================================================
@@ -1339,6 +1363,65 @@
             (sxhash (first args))))
        (t
         (error "Unsupported Arrays method: ~A" member-name))))
+    ;; clojure.set functions (set/union, set/intersection, etc.)
+    ((string-equal class-name "set")
+     (cond
+       ((string-equal member-name "union")
+        (apply #'clojure-set-union args))
+       ((string-equal member-name "intersection")
+        (if (null args)
+            (error "intersection requires at least one argument")
+            (apply #'clojure-set-intersection args)))
+       ((string-equal member-name "difference")
+        (apply #'clojure-set-difference args))
+       ((string-equal member-name "select")
+        (if (< (length args) 2)
+            (error "select requires a predicate and a set")
+            (clojure-set-select (first args) (second args))))
+       ((string-equal member-name "project")
+        (if (< (length args) 2)
+            (error "project requires a set and key sequence")
+            (clojure-set-project (first args) (second args))))
+       ((string-equal member-name "rename")
+        (if (< (length args) 2)
+            (error "rename requires a set and rename map")
+            (clojure-set-rename (first args) (second args))))
+       ((string-equal member-name "rename-keys")
+        (if (< (length args) 2)
+            (error "rename-keys requires a map and rename map")
+            (clojure-set-rename-keys (first args) (second args))))
+       ((string-equal member-name "index")
+        (if (< (length args) 2)
+            (error "index requires a set and key sequence")
+            (clojure-set-index (first args) (second args))))
+       ((string-equal member-name "join")
+        (cond
+          ((null args) (error "join requires at least one set"))
+          ((= (length args) 1) (first args))
+          (t (clojure-set-join (first args) (second args)))))
+       ((string-equal member-name "map-invert")
+        (if (null args)
+            (error "map-invert requires a map")
+            (clojure-set-map-invert (first args))))
+       ((string-equal member-name "subset?")
+        (if (< (length args) 2)
+            (error "subset? requires two sets")
+            (clojure-set-subset (first args) (second args))))
+       ((string-equal member-name "superset?")
+        (if (< (length args) 2)
+            (error "superset? requires two sets")
+            (clojure-set-superset (first args) (second args))))
+       (t
+        (error "Unsupported set method: ~A" member-name))))
+    ;; clojure.walk functions (w/prewalk-replace, etc.)
+    ((string-equal class-name "w")
+     (cond
+       ((string-equal member-name "prewalk-replace")
+        (if (< (length args) 2)
+            (error "prewalk-replace requires a map and a form")
+            (clojure-prewalk-replace (first args) (second args))))
+       (t
+        (error "Unsupported w method: ~A" member-name))))
     ;; Default: error for unknown Java interop
     (t
      (error "Unsupported Java interop: ~A/~A" class-name member-name))))
@@ -1548,7 +1631,10 @@
   ;; String/Symbol functions
   (register-core-function env 'symbol #'clojure-symbol)
   (register-core-function env 'atom #'clojure-atom)
+  (register-core-function env 'deref #'clojure-deref)
   (register-core-function env 'swap-vals! #'clojure-swap-vals!)
+  (register-core-function env 'hash-set #'clojure-hash-set)
+  (register-core-function env 'sorted-set #'clojure-sorted-set)
   (register-core-function env 'read-string #'clojure-read-string)
   (register-core-function env 'println #'clojure-println)
   (register-core-function env 'prn #'clojure-prn)
@@ -2534,6 +2620,46 @@
       ;; Return vector [old-value new-value]
       (vector old-value new-value))))
 
+(defun clojure-deref (ref)
+  "Dereference a ref (atom, delay, future, etc.), returning its value.
+   For atoms, the value is in the car of the cons cell.
+   For delays, we need to force evaluation and return the cached value."
+  (typecase ref
+    (delay
+     ;; For delays, force evaluation and return the value
+     (force-delay ref))
+    (cons
+     ;; For atoms (cons cells), get the value from car
+     (car ref))
+    (t
+     ;; Default: try to get the value
+     (if (consp ref)
+         (car ref)
+         ref))))
+
+(defun force-delay (delay-obj)
+  "Force evaluation of a delay, caching the result."
+  (unless (delay-forced-p delay-obj)
+    (setf (delay-value delay-obj)
+          (funcall (delay-thunk delay-obj)))
+    (setf (delay-forced-p delay-obj) t))
+  (delay-value delay-obj))
+
+;;; Set creation functions
+(defun clojure-hash-set (&rest elements)
+  "Create a hash set from elements."
+  (let ((result (make-hash-table :test 'equal)))
+    (dolist (elem elements)
+      (setf (gethash elem result) t))
+    result))
+
+(defun clojure-sorted-set (&rest elements)
+  "Create a sorted set from elements. For now, same as hash-set."
+  (let ((result (make-hash-table :test 'equal)))
+    (dolist (elem elements)
+      (setf (gethash elem result) t))
+    result))
+
 ;;; Metadata support
 ;;; We wrap values that have metadata in a special marker cons cell
 
@@ -2767,6 +2893,276 @@
                  map)
         (nreverse vals))
       nil))
+
+;;; ============================================================
+;;; clojure.set functions
+;;; ============================================================
+
+(defun clojure-set-union (&rest sets)
+  "Return the union of all sets. Works with hash tables and lists."
+  (if (null sets)
+      ;; No arguments - return empty set
+      (make-hash-table :test 'equal)
+      ;; Collect all elements from all sets
+      (let ((result (make-hash-table :test 'equal)))
+        (dolist (s sets)
+          (dolist (item (set-to-list s))
+            (setf (gethash item result) t)))
+        result)))
+
+(defun clojure-set-intersection (&rest sets)
+  "Return the intersection of all sets. Requires at least one argument."
+  (if (null sets)
+      (error "intersection requires at least one argument")
+      (if (null (cdr sets))
+          ;; Single argument - return the set itself
+          (copy-set (first sets))
+          ;; Find intersection of multiple sets
+          (let* ((first-set (set-to-list (first sets)))
+                 (rest-sets (cdr sets))
+                 (result (make-hash-table :test 'equal)))
+            (dolist (item first-set)
+              ;; Check if item is in all other sets
+              (when (every #'(lambda (s) (set-contains-p s item))
+                          rest-sets)
+                (setf (gethash item result) t)))
+            result))))
+
+(defun clojure-set-difference (&rest sets)
+  "Return the difference of sets (first set minus all others)."
+  (if (null sets)
+      (make-hash-table :test 'equal)
+      (if (null (cdr sets))
+          ;; Single argument - return the set itself
+          (copy-set (first sets))
+          ;; Remove elements from first set that are in any other set
+          (let* ((first-set (set-to-list (first sets)))
+                 (rest-sets (cdr sets))
+                 (result (make-hash-table :test 'equal)))
+            (dolist (item first-set)
+              ;; Keep item only if it's not in any other set
+              (when (notany #'(lambda (s) (set-contains-p s item))
+                          rest-sets)
+                (setf (gethash item result) t)))
+            result))))
+
+(defun clojure-set-select (pred set)
+  "Return a set of elements in set for which pred returns true."
+  (let ((result (make-hash-table :test 'equal))
+        (callable-pred (ensure-callable pred)))
+    (dolist (item (set-to-list set))
+      (when (funcall callable-pred item)
+        (setf (gethash item result) t)))
+    result))
+
+(defun clojure-set-project (set key-seq)
+  "Project set to only include keys in key-seq."
+  (let ((result (make-hash-table :test 'equal)))
+    (dolist (item (set-to-list set))
+      (when (and (hash-table-p item)
+                 (> (hash-table-count item) 0))
+        (let ((new-map (make-hash-table :test 'equal)))
+          (dolist (key (list-to-vector key-seq))
+            (when (gethash key item)
+              (setf (gethash key new-map) (gethash key item))))
+          (setf (gethash new-map result) t))))
+    result))
+
+(defun clojure-set-rename (set rename-map)
+  "Rename keys in maps in set according to rename-map."
+  (let ((result (make-hash-table :test 'equal)))
+    (dolist (item (set-to-list set))
+      (when (and (hash-table-p item)
+                 (> (hash-table-count item) 0))
+        (let ((new-map (make-hash-table :test 'equal)))
+          ;; Copy all keys
+          (maphash (lambda (k v)
+                     (setf (gethash k new-map) v))
+                   item)
+          ;; Rename keys
+          (maphash (lambda (old-key new-key)
+                     (when (gethash old-key item)
+                       (setf (gethash new-key new-map)
+                             (gethash old-key item))
+                       (remhash old-key new-map)))
+                   rename-map)
+          (setf (gethash new-map result) t))
+        ;; Non-map items stay as-is
+        (setf (gethash item result) t)))
+    result))
+
+(defun clojure-set-rename-keys (map rename-map)
+  "Rename keys in map according to rename-map."
+  (if (not (hash-table-p map))
+      map
+      (let ((result (make-hash-table :test 'equal)))
+        ;; Copy all keys
+        (maphash (lambda (k v)
+                   (setf (gethash k result) v))
+                 map)
+        ;; Rename keys
+        (maphash (lambda (old-key new-key)
+                   (when (gethash old-key map)
+                     (setf (gethash new-key result)
+                           (gethash old-key map))
+                     (remhash old-key result)))
+                 rename-map)
+        result)))
+
+(defun clojure-set-index (set key-seq)
+  "Index set by key-seq, returning a map of key-values to sets of matching maps."
+  (let ((result (make-hash-table :test 'equal))
+        (keys (list-to-vector key-seq)))
+    (dolist (item (set-to-list set))
+      (when (hash-table-p item)
+        (let ((key-values (make-hash-table :test 'equal)))
+          ;; Extract values for each key
+          (dolist (k keys)
+            (setf (gethash k key-values)
+                  (gethash k item)))
+          ;; Create lookup key
+          (let ((lookup-key (if (= (hash-table-count key-values) 1)
+                               ;; Single key - use value directly
+                               (let ((vals (hash-table-keys key-values)))
+                                 (gethash (first vals) key-values))
+                               ;; Multiple keys - use the key-values map
+                               key-values)))
+            ;; Add item to the set for this key
+            (let ((existing-set (gethash lookup-key result)))
+              (if existing-set
+                  (setf (gethash item existing-set) t)
+                  (let ((new-set (make-hash-table :test 'equal)))
+                    (setf (gethash item new-set) t)
+                    (setf (gethash lookup-key result) new-set))))))))
+    result))
+
+(defun clojure-set-join (set1 set2 &optional keyseq)
+  "Join two sets of maps on common keys."
+  (let ((result (make-hash-table :test 'equal))
+        (keys (if keyseq keyseq nil)))
+    ;; If no keyseq specified, find common keys
+    (when (null keys)
+      (let ((sample1 (first (set-to-list set1)))
+            (sample2 (first (set-to-list set2))))
+        (when (and sample1 sample2)
+          (maphash (lambda (k v)
+                     (declare (ignore v))
+                     (when (gethash k sample2)
+                       (push k keys)))
+                   sample1))))
+    ;; Perform join
+    (dolist (item1 (set-to-list set1))
+      (when (hash-table-p item1)
+        (dolist (item2 (set-to-list set2))
+          (when (hash-table-p item2)
+            ;; Check if items match on all keys
+            (when (every #'(lambda (k)
+                            (equal (gethash k item1)
+                                   (gethash k item2)))
+                        keys)
+              ;; Merge the two maps
+              (let ((merged (make-hash-table :test 'equal)))
+                (maphash (lambda (k v)
+                           (setf (gethash k merged) v))
+                         item1)
+                (maphash (lambda (k v)
+                           (setf (gethash k merged) v))
+                         item2)
+                (setf (gethash merged result) t)))))))
+    result))
+
+(defun clojure-set-map-invert (map)
+  "Invert a map, making values keys and keys values."
+  (if (not (hash-table-p map))
+      map
+      (let ((result (make-hash-table :test 'equal)))
+        (maphash (lambda (k v)
+                   (setf (gethash v result) k))
+                 map)
+        result)))
+
+(defun clojure-set-subset (sub super)
+  "Return true if sub is a subset of super."
+  (if (and (hash-table-p sub) (hash-table-p super))
+      (let ((super-list (set-to-list super)))
+        (every #'(lambda (item) (member item super-list :test #'equal))
+               (set-to-list sub)))
+      ;; Empty set is subset of anything
+      (and (or (null sub) (and (hash-table-p sub) (zerop (hash-table-count sub)))) t)))
+
+(defun clojure-set-superset (super sub)
+  "Return true if super is a superset of sub."
+  (clojure-set-subset sub super))
+
+(defun set-to-list (set)
+  "Convert a set (hash table or list) to a list of elements."
+  (cond
+    ((hash-table-p set)
+     (let ((keys '()))
+       (maphash (lambda (k v)
+                  (declare (ignore v))
+                  (push k keys))
+                set)
+       (nreverse keys)))
+    ((listp set)
+     ;; Handle the (set items...) representation
+     (if (and (consp set) (eq (car set) 'set))
+         (cdr set)
+         set))
+    (t (list set))))
+
+(defun set-contains-p (set item)
+  "Check if set contains item."
+  (cond
+    ((hash-table-p set)
+     (not (null (gethash item set))))
+    ((and (listp set) (eq (car set) 'set))
+     (member item (cdr set) :test #'equal))
+    ((listp set)
+     (member item set :test #'equal))
+    (t nil)))
+
+(defun copy-set (set)
+  "Copy a set."
+  (if (hash-table-p set)
+      (let ((result (make-hash-table :test 'equal)))
+        (maphash (lambda (k v)
+                   (declare (ignore v))
+                   (setf (gethash k result) t))
+                 set)
+        result)
+      set))
+
+(defun list-to-vector (lst)
+  "Convert a list to a vector (or list if not a list)."
+  (if (listp lst)
+      lst
+      (list lst)))
+
+(defun hash-table-keys (table)
+  "Return a list of keys in a hash table."
+  (let ((keys '()))
+    (maphash (lambda (k v)
+               (declare (ignore v))
+               (push k keys))
+             table)
+    (nreverse keys)))
+
+;;; ============================================================
+;;; clojure.walk functions
+;;; ============================================================
+
+(defun clojure-prewalk-replace (smap form)
+  "Replace occurrences of keys in smap with their values in form (pre-walk)."
+  (labels ((walk (f)
+             (let ((replacement (gethash f smap)))
+               (if replacement
+                   replacement
+                   (if (consp f)
+                       (cons (walk (car f))
+                             (and (cdr f) (walk (cdr f))))
+                       f)))))
+    (walk form)))
 
 ;;; Delay/Force implementations
 (defun clojure-delay (body-fn)

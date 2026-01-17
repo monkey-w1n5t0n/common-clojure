@@ -1130,3 +1130,72 @@ The previous DEVLOG.md showed extensive work up to iteration 16, but when I star
 5. Fix remaining parse errors (8 files have parse issues)
 
 ---
+
+### Iteration 20 - 2025-01-17
+
+**Focus:** Implement @ (deref) reader macro and clojure.set interop
+
+**Changes Made:**
+
+1. **Implemented `@` (deref) reader macro** - cl-clojure-syntax.lisp:136-137, 365-369
+   - Added `@` as a macro character in the Clojure readtable
+   - Implemented `read-deref` function to convert `@form` to `(deref form)`
+   - The `@` is non-terminating so `@@x` is read correctly
+
+2. **Implemented `deref` function** - cl-clojure-eval.lisp:2619-2634
+   - Handles dereferencing of atoms (cons cells) - returns `car` value
+   - Handles dereferencing of delays (structs) - forces evaluation and returns cached value
+   - Uses `typecase` to dispatch based on ref type
+   - Added `force-delay` helper to evaluate and cache delay values
+
+3. **Implemented clojure.set functions** - cl-clojure-eval.lisp:1342-1401, 2856-3124
+   - Added support for `set/namespace` in `eval-java-interop`
+   - Implemented `clojure-set-union` - union of all sets (variadic)
+   - Implemented `clojure-set-intersection` - intersection of all sets (requires 1+ arg)
+   - Implemented `clojure-set-difference` - first set minus all others
+   - Implemented `clojure-set-select` - filter set by predicate
+   - Implemented `clojure-set-project` - project set to only include keys
+   - Implemented `clojure-set-rename` - rename keys in maps in set
+   - Implemented `clojure-set-rename-keys` - rename keys in a map
+   - Implemented `clojure-set-index` - index set by key sequence
+   - Implemented `clojure-set-join` - join two sets of maps
+   - Implemented `clojure-set-map-invert` - invert a map
+   - Implemented `clojure-set-subset` - check if subset
+   - Implemented `clojure-set-superset` - check if superset
+   - Helper functions: `set-to-list`, `set-contains-p`, `copy-set`, `list-to-vector`, `hash-table-keys`
+
+4. **Implemented `hash-set` and `sorted-set` functions** - cl-clojure-eval.lisp:2644-2657
+   - `hash-set` creates a hash table set from elements
+   - `sorted-set` creates a sorted set (stub, same as hash-set for now)
+   - Both are variadic and accept any number of elements
+
+5. **Added forward declarations** - cl-clojure-eval.lisp:6-28
+   - Added `declaim` declarations for all set functions to fix compilation warnings
+   - This allows functions to be called before they're defined
+
+**Root Cause Analysis:**
+
+The `@` reader macro was not implemented, causing `@a` to be read as an undefined symbol. The `set/union` syntax was being interpreted as Java interop, so we needed to add special handling for the `set` namespace in `eval-java-interop`.
+
+**Errors Fixed:**
+- "Undefined symbol: @a" - FIXED ✅ (@ reader macro and deref function)
+- "Unsupported Java interop: set/union" - FIXED ✅ (clojure.set interop support)
+- "is not of type LIST when dereferencing delays" - FIXED ✅ (typecase dispatch in deref)
+- "Undefined symbol: hash-set" - FIXED ✅ (hash-set function)
+
+**Test Results:**
+- Parse: 60 ok, 8 errors
+- Eval: 9 ok, 59 errors (up from 8 ok!)
+- New passing test: clojure_set
+
+**Known Issues:**
+- The ARR compilation warning still exists but doesn't cause issues
+- Some functions like `sorted-set` are stubs (unsorted)
+- Many core functions still need implementation (binding, swap!, re-find, etc.)
+
+**Next Steps:**
+1. Implement `swap!` function (atoms and delays tests need it)
+2. Implement `binding` special form (atoms test needs `*warn-on-reflection*` binding)
+3. Implement `re-find` and regex support (run_single_test needs it)
+4. Add more Java interop methods (Math trig functions, etc.)
+5. Fix remaining parse errors (8 files have parse issues)

@@ -217,9 +217,39 @@ The error `#(_ inputs) is not a string designator` was misleading. The actual is
 - The "macros" test error changed from "(UNQUOTE |b|) is not a string designator" to a different error
 
 **Next Steps:**
-1. Implement stubs for Java interop symbols (Math/round, Class/TYPE, etc.)
+1. Investigate why m/E and m/PI are returning lambdas instead of values
 2. Continue adding more core functions as tests require them
 3. Fix remaining destructuring edge cases
+
+---
+
+### Iteration 24 - 2025-01-17
+
+**Focus:** Debug clojure.math constants (m/E, m/PI) issue
+
+**Problem:**
+The math test fails with "The value #<FUNCTION ...> is not of type NUMBER".
+This indicates that `m/E` is returning a lambda instead of the numeric value `e`.
+
+**Investigation:**
+1. Checked `java-interop-stub-lookup` - should return early for m/E and m/PI via `return-from`
+2. Added constants to `eval-java-interop` for E and PI as a workaround
+3. The lambda is still being returned, suggesting the `return-from` is not being reached
+
+**Possible Causes:**
+- The `when` condition in `java-interop-stub-lookup` might not be matching
+- The symbol might be in a different package or format than expected
+- `string-equal` might not be working as expected with the actual symbol names
+
+**Test Results:**
+- Parse: 77 ok, 8 errors
+- Eval: 25 ok, 60 errors
+- Math test still fails with lambda being returned for m/E
+
+**Next Steps:**
+1. Debug the actual symbol name and package for `m/E`
+2. Consider adding debug output to trace the evaluation path
+3. Alternative: handle m/E and m/PI at a different level (e.g., in the reader)
 
 ---
 

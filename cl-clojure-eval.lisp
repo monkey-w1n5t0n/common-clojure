@@ -1488,6 +1488,11 @@
     ;; In Clojure: (require '[clojure.math :as m]) then (m/sin x)
     ((or (string-equal class-name "m") (string-equal class-name "clojure.math"))
      (cond
+       ;; Constants - E and PI (args are ignored for these)
+       ((string-equal member-name "E")
+        (coerce (exp 1.0d0) 'double-float))
+       ((string-equal member-name "PI")
+        (coerce pi 'double-float))
        ;; Trigonometric functions - wrapped for NaN handling
        ((string-equal member-name "sin")
         (if (null args) (error "sin requires an argument") (safe-math-fn1 #'sin (first args))))

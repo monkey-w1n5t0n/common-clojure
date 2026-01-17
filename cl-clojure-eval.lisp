@@ -324,8 +324,12 @@
       ;; Process bindings pairwise
       (loop for (name value-expr) on bindings-list by #'cddr
             while name
-            do (let ((value (clojure-eval value-expr new-env)))
-                 (setf new-env (env-extend-lexical new-env name value)))))
+            do (let ((value (clojure-eval value-expr new-env))
+                     (binding-form (if (vectorp name)
+                                      (coerce name 'list)
+                                      name)))
+                 ;; Use extend-binding to handle destructuring (including nested vectors)
+                 (setf new-env (extend-binding new-env binding-form value)))))
     ;; Evaluate body in new environment
     (if (null body)
         nil
@@ -426,6 +430,7 @@
    - A symbol: bind value to that symbol
    - A list: destructuring - bind each element of value list to corresponding symbol
    - Supports & for rest parameters: [a b & rest] binds first two to a,b and rest to remaining
+   - Supports nested destructuring: [[a b] & rest] recursively binds nested structures
    Returns the new environment."
   (cond
     ((symbolp binding-form)
@@ -444,24 +449,32 @@
                   (regular-count (min (length regular-bindings)
                                       (length value-list)))
                   (rest-values (nthcdr regular-count value-list)))
-             ;; Bind regular parameters
+             ;; Bind regular parameters - use recursive extend-binding for nested destructuring
+             ;; Convert vector binding forms to lists for destructuring
              (loop for i below regular-count
                    for sym in regular-bindings
                    for val in value-list
-                   do (setf new-env (env-extend-lexical new-env sym val)))
-             ;; Bind rest parameter if present
+                   for binding-sym = (if (vectorp sym) (coerce sym 'list) sym)
+                   do (setf new-env (extend-binding new-env binding-sym val)))
+             ;; Bind rest parameter if present - recursively if it's a list/vector
+             ;; Convert vector binding forms to lists for destructuring
              (when rest-binding
-               (setf new-env (env-extend-lexical new-env rest-binding rest-values)))
+               (let ((rest-binding-sym (if (vectorp rest-binding)
+                                          (coerce rest-binding 'list)
+                                          rest-binding)))
+                 (setf new-env (extend-binding new-env rest-binding-sym rest-values))))
              new-env)
-           ;; No rest parameter - simple destructuring
+           ;; No rest parameter - simple destructuring with recursive binding
+           ;; Convert vector binding forms to lists for destructuring
            (let ((value-list (if (consp value) value (coerce value 'list))))
              (loop for sym in binding-form
                    for val in value-list
+                   for binding-sym = (if (vectorp sym) (coerce sym 'list) sym)
                    with new-env = env
-                   do (setf new-env (env-extend-lexical new-env sym val))
+                   do (setf new-env (extend-binding new-env binding-sym val))
                    finally (return new-env))))))
     (t
-     (error "Invalid binding form: ~A" binding-form))))
+     (error "Invalid binding form: ~A (type: ~A)" binding-form (type-of binding-form)))))
 
 (defun eval-for-nested (bindings body-expr env)
   "Evaluate nested for comprehension, producing list of results.
@@ -601,8 +614,12 @@
     ;; Process bindings pairwise
     (loop for (name value-expr) on bindings by #'cddr
           while name
-          do (let ((value (clojure-eval value-expr new-env)))
-               (setf new-env (env-extend-lexical new-env name value))))
+          do (let ((value (clojure-eval value-expr new-env))
+                   (binding-form (if (vectorp name)
+                                    (coerce name 'list)
+                                    name)))
+               ;; Use extend-binding to handle destructuring (including nested vectors)
+               (setf new-env (extend-binding new-env binding-form value))))
     ;; Evaluate body in new environment
     (if (null body)
         nil

@@ -175,3 +175,47 @@
 4. Add more core functions as tests require them
 
 ---
+
+### Iteration 4 - 2025-01-17
+
+**Focus:** Fix nested destructuring in let/loop forms
+
+**Changes Made:**
+
+1. **Fixed nested destructuring in `extend-binding`** - cl-clojure-eval.lisp:427-477
+   - The function was only handling symbol and list binding forms
+   - When destructuring nested vectors like `[[_ inputs] & expectations]`, the inner binding forms were still vectors
+   - Added recursive handling: when a binding form element is a vector, convert it to a list before destructuring
+   - Updated both the "has rest parameter" and "no rest parameter" branches
+
+2. **Updated `eval-let` to use `extend-binding`** - cl-clojure-eval.lisp:315-339
+   - Changed from using `env-extend-lexical` directly to using `extend-binding`
+   - This allows `let` to handle vector destructuring, including nested vectors
+   - Converts vector binding forms to lists before passing to `extend-binding`
+
+3. **Updated `eval-loop` to use `extend-binding`** - cl-clojure-eval.lisp:599-624
+   - Same fix as `eval-let` for the `loop` special form
+   - Both `let` and `loop` now support full destructuring
+
+**Root Cause Analysis:**
+The error `#(_ inputs) is not a string designator` was misleading. The actual issue was:
+- When binding form was `[[_ inputs] & expectations]`, it was converted to `'([_ inputs] & expectations)`
+- The `extend-binding` function would extract `regular-bindings = '([_ inputs])`
+- But the element `[_ inputs]` was still a vector (SIMPLE-VECTOR), not a list
+- When `extend-binding` was called recursively with `[_ inputs]` as binding form, it didn't match `symbolp` or `listp`
+- The fix: convert vector binding forms to lists before recursive destructuring
+
+**Errors Fixed:**
+- "Invalid binding form: #(_ inputs)" - FIXED ✅
+- Nested destructuring now works correctly
+
+**Test Results:**
+- Parse: 68 ok, 0 errors ✅
+- Eval: 4 ok, 64 errors
+- The "numbers" test now gets past destructuring but fails on "Undefined symbol: Math/round"
+- The "macros" test error changed from "(UNQUOTE |b|) is not a string designator" to a different error
+
+**Next Steps:**
+1. Implement stubs for Java interop symbols (Math/round, Class/TYPE, etc.)
+2. Continue adding more core functions as tests require them
+3. Fix remaining destructuring edge cases

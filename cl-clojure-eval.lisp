@@ -234,6 +234,29 @@
       (env-intern-var env item)))
   nil)
 
+(defun eval-set-bang (form env)
+  "Evaluate a set! form: (set! var expr) - set the value of a var."
+  ;; set! can be used in two forms:
+  ;; (set! var-name value) - set a var's value
+  ;; (set! (.instance-field obj) value) - set a Java field (not implemented yet)
+  (let* ((target (cadr form))
+         (value-expr (caddr form))
+         (value (clojure-eval value-expr env)))
+    ;; For now, just handle simple symbol targets (vars)
+    ;; TODO: Handle Java field assignment
+    (cond
+      ;; Symbol target - set the var's value
+      ((symbolp target)
+       (let ((var (env-get-var env target)))
+         (if var
+             (progn
+               (setf (var-value var) value)
+               value)
+             ;; If var doesn't exist, create it and set
+             (env-set-var env target value))))
+      ;; TODO: Handle Java interop forms like (.field obj)
+      (t (error "Unsupported set! target: ~A" target)))))
+
 ;;; ============================================================
 ;;; Closure (function) representation
 ;;; ============================================================
@@ -574,6 +597,7 @@
            ((and (symbolp head) (string-equal (symbol-name head) "ns")) (eval-ns form env))
            ((and (symbolp head) (string-equal (symbol-name head) "deftest")) (eval-deftest form env))
            ((and (symbolp head) (string-equal (symbol-name head) "declare")) (eval-declare form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "set!")) (eval-set-bang form env))
 
            ;; Function application
            (t

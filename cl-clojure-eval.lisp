@@ -685,6 +685,10 @@
   (register-core-function env 'reduce #'clojure-reduce)
   (register-core-function env 'eval #'clojure-eval-fn)
   (register-core-function env 'take #'clojure-take)
+  (register-core-function env 'every? #'clojure-every?)
+  (register-core-function env 'some #'clojure-some)
+  (register-core-function env 'not-every? #'clojure-not-every?)
+  (register-core-function env 'not-any? #'clojure-not-any?)
 
   ;; String/Symbol functions
   (register-core-function env 'symbol #'clojure-symbol)
@@ -1034,6 +1038,58 @@
                    for elem in coll-list
                    collect elem
                    while (< i (length coll-list))))))))
+
+(defun clojure-every? (pred coll)
+  "Return true if pred is true for every element in coll."
+  (cond
+    ((null coll) 'true)
+    ((lazy-range-p coll)
+     (let ((start (lazy-range-start coll))
+           (end (lazy-range-end coll))
+           (step (lazy-range-step coll)))
+       (if end
+           (loop for i from start below end by step
+                 always (funcall pred i))
+           ;; For infinite ranges, limit to 1000 elements
+           (loop for i from start by step
+                 repeat 1000
+                 always (funcall pred i)))))
+    ((listp coll)
+     (every pred coll))
+    (t
+     (every pred (coerce coll 'list)))))
+
+(defun clojure-some (pred coll)
+  "Return the first truthy value of (pred x) for any x in coll, or nil if none."
+  (cond
+    ((null coll) nil)
+    ((lazy-range-p coll)
+     (let ((start (lazy-range-start coll))
+           (end (lazy-range-end coll))
+           (step (lazy-range-step coll)))
+       (if end
+           (loop for i from start below end by step
+                 thereis (funcall pred i))
+           ;; For infinite ranges, limit to 1000 elements
+           (loop for i from start by step
+                 repeat 1000
+                 thereis (funcall pred i)))))
+    ((listp coll)
+     (some pred coll))
+    (t
+     (some pred (coerce coll 'list)))))
+
+(defun clojure-not-every? (pred coll)
+  "Return true if pred is not true for every element in coll (i.e., false for some element)."
+  (if (clojure-every? pred coll)
+      nil
+      'true))
+
+(defun clojure-not-any? (pred coll)
+  "Return true if pred is not true for any element in coll."
+  (if (clojure-some pred coll)
+      nil
+      'true))
 
 ;;; Predicate implementations
 (defun clojure-nil? (x) (null x))

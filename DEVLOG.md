@@ -283,3 +283,127 @@ The error `|double| is not of type REAL` was caused by multiple bugs:
 2. Implement `mapcat` function
 3. Implement `re-find` and regex support
 4. Add more Java interop methods as tests require them
+
+---
+
+### Iteration 6 - 2025-01-17
+
+**Focus:** Implement defonce, fix are macro, Java constructors, thrown?, and many numeric functions
+
+**Changes Made:**
+
+1. **Implemented `defonce` special form** - cl-clojure-eval.lisp:240-250
+   - Defines a var only if it doesn't already exist or has no value
+   - Handles metadata on the name (e.g., `^:dynamic`)
+   - Used for one-time initialization in test files
+
+2. **Fixed `are` macro to evaluate argument values** - cl-clojure-eval.lisp:2054-2089
+   - The arg-values were being used as-is without evaluation
+   - Now evaluates each arg-value before binding to the parameter
+   - Fixes tests like `(are [x y] (= x y) (+ 1.2) 1.2)` where `(+ 1.2)` needs to be evaluated
+
+3. **Implemented Java constructor calls** - cl-clojure-eval.lisp:1062-1132
+   - Symbols ending with `.` (e.g., `Byte.`, `Integer.`) are now recognized as constructors
+   - Added `eval-java-constructor` function
+   - Supports constructors for primitive types: `Byte.`, `Short.`, `Integer.`, `Long.`, `Float.`, `Double.`, `Character.`, `Boolean.`
+
+4. **Implemented `thrown?` as a special form within `is`** - cl-clojure-eval.lisp:2344-2371
+   - `(is (thrown? ExceptionType expr))` now catches exceptions
+   - Uses `handler-case` to catch errors and return 'true on exception, nil on success
+   - Added stub exception classes: `ClassCastException`, `IllegalArgumentException`, etc.
+
+5. **Implemented arbitrary precision arithmetic functions**
+   - `*'` - arbitrary precision multiplication (interned symbol)
+   - `-'` - arbitrary precision subtraction (interned symbol)
+   - Both are aliases to regular `*` and `-` for now
+
+6. **Added bigint literal support** - cl-clojure-eval.lisp:2356-2365
+   - Symbols ending with `N` (e.g., `123N`) are parsed as integers
+   - Symbols ending with `M` (e.g., `1.2M`) are parsed as floats
+
+7. **Added bigint/bigint conversion functions** - cl-clojure-eval.lisp:1808-1811
+   - `bigint`, `biginteger`, `bigdec` - stubs that just return the number
+
+8. **Added numeric predicate functions** - cl-clojure-eval.lisp:1215-1224, 1823-1840
+   - `integer?`, `float?`, `decimal?` - type checking predicates
+   - `even?`, `odd?`, `neg?`, `pos?`, `zero?` - numeric predicates
+   - `true?`, `false?` - truthiness predicates
+
+9. **Added integer division functions** - cl-clojure-eval.lisp:1244-1246, 1813-1822
+   - `quot` - quotient (truncated division)
+   - `rem` - remainder (same sign as dividend)
+   - `mod` - modulo (same sign as divisor)
+
+10. **Added bitwise manipulation functions** - cl-clojure-eval.lisp:1252-1262, 1841-1875
+    - `bit-shift-left`, `bit-shift-right`, `unsigned-bit-shift-right`
+    - `bit-and`, `bit-or`, `bit-xor`, `bit-not`
+    - `bit-clear`, `bit-set`, `bit-flip`, `bit-test`
+
+11. **Added `replicate` and `repeat` functions** - cl-clojure-eval.lisp:1277-1278, 2091-2105
+    - `replicate` - creates a list with n copies of x
+    - `repeat` - creates a lazy (or limited) sequence of repeated values
+
+12. **Fixed `apply` to handle lazy ranges and vectors** - cl-clojure-eval.lisp:1575-1586
+    - Converts lazy ranges to lists before appending
+    - Converts vectors to lists before appending
+
+13. **Fixed `fn` docstring handling** - cl-clojure-eval.lisp:304-323
+    - Now handles `(fn name docstring [params] body)` format
+    - Detects docstring by checking if first element is string and second is vector
+    - Skips docstring when extracting name, params, and body
+
+14. **Fixed `defn-` (private defn)** - cl-clojure-eval.lisp:2566-2567
+    - Now properly handled as an alias to `eval-defn`
+
+15. **Added array conversion functions** - cl-clojure-eval.lisp:1219-1226, 1703-1750
+    - `bytes`, `booleans`, `shorts`, `chars`, `ints`, `longs`, `floats`, `doubles`
+    - `boolean-array` function
+    - Convert sequences to typed arrays (vectors for SBCL)
+
+16. **Added type conversion functions** - cl-clojure-eval.lisp:1325-1335, 1785-1792
+    - `byte`, `short` - truncate to integer
+    - `class`, `type` - return type keyword
+
+17. **Updated `is` to handle message argument** - cl-clojure-eval.lisp:2344-2357
+    - `(is expr message)` format now works (message is ignored)
+
+18. **Added `+` type checking** - cl-clojure-eval.lisp:1301-1309
+    - Now throws error if any argument to `+` is not a number
+    - Needed for `(is (thrown? ClassCastException (+ "ab" "cd")))` test
+
+19. **Added static field value lookup** - cl-clojure-eval.lisp:862-878
+    - Static fields like `Byte/MAX_VALUE` now return values directly instead of lambdas
+    - Methods like `Math/round` still return lambdas
+
+**Errors Fixed:**
+- "Undefined symbol: defonce" - FIXED ✅
+- "(+ 1.2) is not of type NUMBER" - FIXED ✅ (are macro now evaluates arg values)
+- "Undefined symbol: Byte." - FIXED ✅ (Java constructor support)
+- "Undefined symbol: ClassCastException" - FIXED ✅ (exception class stubs)
+- "Undefined symbol: *'" - FIXED ✅ (interned symbol registration)
+- "Undefined symbol: 9223372036854775808N" - FIXED ✅ (bigint literal support)
+- "Undefined symbol: bigint" - FIXED ✅ (bigint conversion stub)
+- "Undefined symbol: integer?" - FIXED ✅ (numeric predicates)
+- "Undefined symbol: -'" - FIXED ✅ (arbitrary precision subtraction)
+- "Undefined symbol: quot" - FIXED ✅ (division functions)
+- "Undefined symbol: even?" - FIXED ✅ (even/odd predicates)
+- "Undefined symbol: bit-shift-left" - FIXED ✅ (bit manipulation functions)
+- "Undefined symbol: boolean-array" - FIXED ✅ (array functions)
+- "Undefined symbol: booleans" - FIXED ✅ (array conversion functions)
+- "Undefined symbol: n" (in defn- body) - FIXED ✅ (fn docstring handling)
+- "#(... 1) is not of type LIST" - FIXED ✅ (apply function now handles lazy ranges)
+
+**Test Results:**
+- Parse: 68 ok, 0 errors ✅
+- Eval: 5 ok, 63 errors
+- The "numbers" test now gets through most of its tests but fails on "invalid number of arguments: 2"
+
+**Known Issues:**
+- "numbers" test fails with "invalid number of arguments: 2" - runtime error, source unclear
+- This might be related to `str` function or some other arity issue
+
+**Next Steps:**
+1. Debug the "invalid number of arguments: 2" error in the numbers test
+2. Implement `mapcat` function
+3. Implement `re-find` and regex support
+4. Add more core functions as tests require them

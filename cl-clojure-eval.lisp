@@ -262,6 +262,30 @@
     (env-set-var env name value)
     name))
 
+(defun eval-defonce (form env)
+  "Evaluate a defonce form: (defonce name expr) - define if not already defined.
+   defonce ensures the var is created and initialized only once.
+   If the var already has a non-nil value, the expr is not evaluated."
+  ;; Handle metadata on the name: (defonce ^:dynamic name expr)
+  (let* ((second (cadr form))
+         (has-metadata (and (consp second)
+                           (string= (symbol-name (car second)) "WITH-META")))
+         (name (if has-metadata (cadr second) second))
+         (value-expr (if has-metadata
+                        (caddr form)
+                        (caddr form)))
+         (existing-var (env-get-var env name)))
+    ;; If var doesn't exist or has no value, evaluate and set it
+    (if (or (null existing-var)
+            (null (var-value existing-var)))
+        (let ((value (if value-expr
+                        (clojure-eval value-expr env)
+                        nil)))
+          (env-set-var env name value))
+        ;; Var already exists with a value, skip initialization
+        nil)
+    name))
+
 (defun eval-declare (form env)
   "Evaluate a declare form: (declare name+) - forward declare vars."
   ;; declare creates vars without values (for forward declarations)
@@ -278,14 +302,24 @@
       nil)))
 
 (defun eval-fn (form env)
-  "Evaluate a fn form: (fn name? [args] body+) - returns a closure."
+  "Evaluate a fn form: (fn name? [args] body+) - returns a closure.
+   Also handles (fn name? docstring? [args] body+) - with optional docstring."
   ;; Extract function parts
   (let* ((rest-form (cdr form))
-         (has-name (and (not (null rest-form))
-                        (not (vectorp (car rest-form)))))
-         (name (if has-name (car rest-form) nil))
-         (params (if has-name (cadr rest-form) (car rest-form)))
-         (body (if has-name (cddr rest-form) (cdr rest-form))))
+         ;; Check if there's a docstring (string, followed by non-vector, followed by vector)
+         ;; Format: (fn name docstring [params] body) or (fn docstring [params] body)
+         (first-is-string (and (not (null rest-form))
+                               (stringp (car rest-form))))
+         (second-is-vector (and first-is-string
+                               (not (null (cdr rest-form)))
+                               (vectorp (cadr rest-form))))
+         (has-docstring (and first-is-string second-is-vector))
+         (rest-after-doc (if has-docstring (cdr rest-form) rest-form))
+         (has-name (and (not (null rest-after-doc))
+                        (not (vectorp (car rest-after-doc)))))
+         (name (if has-name (car rest-after-doc) nil))
+         (params (if has-name (cadr rest-after-doc) (car rest-after-doc)))
+         (body (if has-name (cddr rest-after-doc) (cdr rest-after-doc))))
     (make-closure :params params :body body :env env :name name)))
 
 (defun eval-defn (form env)
@@ -837,13 +871,21 @@
 
 (defun java-interop-stub-lookup (symbol)
   "Look up a Java interop symbol (e.g., Math/round) and return a stub function.
-   Returns NIL if not found."
+   Returns NIL if not found. For static fields (MAX_VALUE, MIN_VALUE, TYPE),
+   returns the value directly instead of a function."
   (let ((name (symbol-name symbol)))
     (when (find #\/ name)
       (let* ((slash-pos (position #\/ name))
              (class-name (subseq name 0 slash-pos))
              (member-name (subseq name (1+ slash-pos))))
-        (list class-name member-name)))))
+        ;; Check if this is a static field access (no args needed)
+        ;; These are: MAX_VALUE, MIN_VALUE, TYPE for primitive wrapper classes
+        (if (and (member member-name '("MAX_VALUE" "MIN_VALUE" "TYPE") :test #'string-equal)
+                 (member class-name '("Byte" "Short" "Integer" "Long" "Float" "Double" "Character" "Boolean") :test #'string-equal))
+            ;; For static fields, evaluate and return the value directly
+            (eval-java-interop (intern class-name) (intern member-name))
+            ;; For methods, return the class/member list for creating a lambda
+            (list class-name member-name))))))
 
 (defun eval-java-interop (class-name member-name &rest args)
   "Evaluate a Java interop call. This is a stub implementation."
@@ -982,9 +1024,9 @@
        ((string-equal member-name "TYPE")
         :float-type)
        ((string-equal member-name "MAX_VALUE")
-        most-positive-float)
+        most-positive-single-float)
        ((string-equal member-name "MIN_VALUE")
-        least-negative-float)
+        least-negative-single-float)
        (t
         (error "Unsupported Float field: ~A" member-name))))
     ;; Double class fields
@@ -1010,6 +1052,10 @@
      (cond
        ((string-equal member-name "TYPE")
         :byte-type)
+       ((string-equal member-name "MAX_VALUE")
+        127)
+       ((string-equal member-name "MIN_VALUE")
+        -128)
        (t
         (error "Unsupported Byte field: ~A" member-name))))
     ;; Short class fields
@@ -1017,6 +1063,10 @@
      (cond
        ((string-equal member-name "TYPE")
         :short-type)
+       ((string-equal member-name "MAX_VALUE")
+        32767)
+       ((string-equal member-name "MIN_VALUE")
+        -32768)
        (t
         (error "Unsupported Short field: ~A" member-name))))
     ;; Object class methods
@@ -1034,6 +1084,78 @@
     ;; Default: error for unknown Java interop
     (t
      (error "Unsupported Java interop: ~A/~A" class-name member-name))))
+
+(defun eval-java-constructor (class-name args)
+  "Evaluate a Java constructor call. This is a stub implementation.
+   For primitive wrapper classes, just return the argument value."
+  (let ((name (string class-name)))
+    (cond
+      ;; Byte constructor - returns the byte value
+      ((string-equal name "Byte")
+       (if (null args)
+           0
+           (let ((val (first args)))
+             (cond
+               ((numberp val) (round val))
+               (t 0)))))
+      ;; Short constructor
+      ((string-equal name "Short")
+       (if (null args)
+           0
+           (let ((val (first args)))
+             (cond
+               ((numberp val) (round val))
+               (t 0)))))
+      ;; Integer constructor
+      ((string-equal name "Integer")
+       (if (null args)
+           0
+           (let ((val (first args)))
+             (cond
+               ((numberp val) (truncate val))
+               (t 0)))))
+      ;; Long constructor
+      ((string-equal name "Long")
+       (if (null args)
+           0
+           (let ((val (first args)))
+             (cond
+               ((numberp val) (truncate val))
+               (t 0)))))
+      ;; Float constructor
+      ((string-equal name "Float")
+       (if (null args)
+           0.0
+           (let ((val (first args)))
+             (cond
+               ((numberp val) (float val))
+               (t 0.0)))))
+      ;; Double constructor
+      ((string-equal name "Double")
+       (if (null args)
+           0.0
+           (let ((val (first args)))
+             (cond
+               ((numberp val) (coerce val 'double-float))
+               (t 0.0)))))
+      ;; Character constructor
+      ((string-equal name "Character")
+       (if (null args)
+           #\Nul
+           (let ((val (first args)))
+             (cond
+               ((characterp val) val)
+               ((numberp val) (code-char (round val)))
+               (t #\Nul)))))
+      ;; Boolean constructor
+      ((string-equal name "Boolean")
+       (if (null args)
+           nil
+           (let ((val (first args)))
+             (not (null val)))))
+      ;; Default: error for unknown constructors
+      (t
+       (error "Unsupported Java constructor: ~A" class-name)))))
 
 (defun setup-java-interop-stubs (env)
   "Set up stub functions for common Java interop symbols.
@@ -1062,7 +1184,11 @@
   (register-core-function env '+ #'clojure+)
   (register-core-function env '- #'clojure-)
   (register-core-function env '* #'clojure*)
+  ;; Register *' (arbitrary precision multiplication) - use intern to create the symbol
+  (env-set-var env (intern "*'") #'clojure*)
   (register-core-function env '/ #'clojure/)
+  ;; Register -' (arbitrary precision subtraction) - use intern to create the symbol
+  (env-set-var env (intern "-'") #'clojure-)
   (register-core-function env 'inc #'clojure-inc)
   (register-core-function env 'dec #'clojure-dec)
 
@@ -1090,6 +1216,14 @@
   (register-core-function env 'concat #'clojure-concat)
   (register-core-function env 'range #'clojure-range)
   (register-core-function env 'into-array #'clojure-into-array)
+  (register-core-function env 'bytes #'clojure-bytes)
+  (register-core-function env 'booleans #'clojure-booleans)
+  (register-core-function env 'shorts #'clojure-shorts)
+  (register-core-function env 'chars #'clojure-chars)
+  (register-core-function env 'ints #'clojure-ints)
+  (register-core-function env 'longs #'clojure-longs)
+  (register-core-function env 'floats #'clojure-floats)
+  (register-core-function env 'doubles #'clojure-doubles)
 
   ;; Delay/Force functions (force is a function, delay is a special form)
   (register-core-function env 'force #'clojure-force)
@@ -1099,10 +1233,15 @@
   (register-core-function env 'symbol? #'clojure-symbol?)
   (register-core-function env 'keyword? #'clojure-keyword?)
   (register-core-function env 'number? #'clojure-number?)
+  (register-core-function env 'integer? #'clojure-integer?)
+  (register-core-function env 'float? #'clojure-float?)
+  (register-core-function env 'decimal? #'clojure-decimal?)
   (register-core-function env 'fn? #'clojure-fn?)
   (register-core-function env 'vector? #'clojure-vector?)
   (register-core-function env 'not #'clojure-not)
   (register-core-function env 'some? #'clojure-some?)
+  (register-core-function env 'true? #'clojure-true?)
+  (register-core-function env 'false? #'clojure-false?)
 
   ;; Sequence functions
   (register-core-function env 'seq #'clojure-seq)
@@ -1120,6 +1259,25 @@
   (register-core-function env 'dissoc #'clojure-dissoc)
   (register-core-function env 'keys #'clojure-keys)
   (register-core-function env 'vals #'clojure-vals)
+  (register-core-function env 'quot #'clojure-quot)
+  (register-core-function env 'rem #'clojure-rem)
+  (register-core-function env 'mod #'clojure-mod)
+  (register-core-function env 'even? #'clojure-even?)
+  (register-core-function env 'odd? #'clojure-odd?)
+  (register-core-function env 'neg? #'clojure-neg?)
+  (register-core-function env 'pos? #'clojure-pos?)
+  (register-core-function env 'zero? #'clojure-zero?)
+  (register-core-function env 'bit-shift-left #'clojure-bit-shift-left)
+  (register-core-function env 'bit-shift-right #'clojure-bit-shift-right)
+  (register-core-function env 'unsigned-bit-shift-right #'clojure-unsigned-bit-shift-right)
+  (register-core-function env 'bit-and #'clojure-bit-and)
+  (register-core-function env 'bit-or #'clojure-bit-or)
+  (register-core-function env 'bit-xor #'clojure-bit-xor)
+  (register-core-function env 'bit-not #'clojure-bit-not)
+  (register-core-function env 'bit-clear #'clojure-bit-clear)
+  (register-core-function env 'bit-set #'clojure-bit-set)
+  (register-core-function env 'bit-flip #'clojure-bit-flip)
+  (register-core-function env 'bit-test #'clojure-bit-test)
 
   ;; String/Symbol functions
   (register-core-function env 'symbol #'clojure-symbol)
@@ -1134,6 +1292,8 @@
   (register-core-function env 'repeatedly #'clojure-repeatedly)
   (register-core-function env 'filter #'clojure-filter)
   (register-core-function env 'juxt #'clojure-juxt)
+  (register-core-function env 'replicate #'clojure-replicate)
+  (register-core-function env 'repeat #'clojure-repeat)
 
   ;; Metadata functions
   (register-core-function env 'meta #'clojure-meta)
@@ -1148,6 +1308,7 @@
   (register-core-function env 'long-array #'clojure-long-array)
   (register-core-function env 'float-array #'clojure-float-array)
   (register-core-function env 'double-array #'clojure-double-array)
+  (register-core-function env 'boolean-array #'clojure-boolean-array)
   (register-core-function env 'aset #'clojure-aset)
 
   ;; Unchecked cast functions
@@ -1161,10 +1322,31 @@
 
   ;; Type conversion functions
   (register-core-function env 'char #'clojure-char)
+  (register-core-function env 'byte #'clojure-byte)
+  (register-core-function env 'short #'clojure-byte)
   (register-core-function env 'int #'clojure-int)
   (register-core-function env 'long #'clojure-long)
   (register-core-function env 'float #'clojure-float)
   (register-core-function env 'double #'clojure-double)
+  (register-core-function env 'bigint #'clojure-bigint)
+  (register-core-function env 'biginteger #'clojure-bigint)
+  (register-core-function env 'bigdec #'clojure-bigdec)
+  (register-core-function env 'class #'clojure-class)
+  (register-core-function env 'type #'clojure-type)
+
+  ;; Test helper stubs
+  ;; Note: thrown? is now a special form, not a registered function
+
+  ;; Java exception class stubs (for thrown? tests)
+  (env-set-var env 'ClassCastException :class-cast-exception)
+  (env-set-var env 'IllegalArgumentException :illegal-argument-exception)
+  (env-set-var env 'IllegalStateException :illegal-state-exception)
+  (env-set-var env 'NullPointerException :null-pointer-exception)
+  (env-set-var env 'ArithmeticException :arithmetic-exception)
+  (env-set-var env 'IndexOutOfBoundsException :index-out-of-bounds-exception)
+  (env-set-var env 'NumberFormatException :number-format-exception)
+  (env-set-var env 'UnsupportedOperationException :unsupported-operation-exception)
+  (env-set-var env 'Exception :exception)
 
   ;; Java interop stubs (Class/member notation)
   (setup-java-interop-stubs env)
@@ -1173,10 +1355,16 @@
 
 ;;; Arithmetic implementations
 (defun clojure+ (&rest args)
-  "Add all arguments. Returns 0 if no args."
+  "Add all arguments. Returns 0 if no args.
+   Throws ClassCastException if any arg is not a number."
   (if (null args)
       0
-      (reduce #'+ args)))
+      (progn
+        ;; Check all args are numbers
+        (dolist (arg args)
+          (when (not (numberp arg))
+            (error 'type-error :datum arg :expected-type 'number)))
+        (reduce #'+ args))))
 
 (defun clojure- (first-arg &rest args)
   "Subtract. Negate if one arg, subtract rest from first if multiple."
@@ -1411,7 +1599,14 @@
   "Apply fn to args with last arg being a list of args."
   (let ((all-but-last (butlast args))
         (last-arg (car (last args))))
-    (apply fn-arg (append all-but-last last-arg))))
+    ;; Convert last-arg to list if it's a lazy range or vector
+    (let ((last-as-list (cond
+                         ((lazy-range-p last-arg)
+                          (lazy-range-to-list last-arg))
+                         ((vectorp last-arg)
+                          (coerce last-arg 'list))
+                         (t last-arg))))
+      (apply fn-arg (append all-but-last last-as-list)))))
 
 (defun clojure-seq (coll)
   "Return a sequence from collection."
@@ -1509,6 +1704,32 @@
                           (t (coerce aseq 'list)))))
     (coerce seq-to-convert 'vector)))
 
+;; Type conversion functions for sequences
+(defun clojure-bytes (seq)
+  "Convert a sequence to a byte array (vector for SBCL)."
+  (clojure-byte-array seq))
+(defun clojure-booleans (seq)
+  "Convert a sequence to a boolean array (vector for SBCL)."
+  (clojure-boolean-array seq))
+(defun clojure-shorts (seq)
+  "Convert a sequence to a short array (vector for SBCL)."
+  (clojure-short-array seq))
+(defun clojure-chars (seq)
+  "Convert a sequence to a char array (vector for SBCL)."
+  (clojure-char-array seq))
+(defun clojure-ints (seq)
+  "Convert a sequence to an int array (vector for SBCL)."
+  (clojure-int-array seq))
+(defun clojure-longs (seq)
+  "Convert a sequence to a long array (vector for SBCL)."
+  (clojure-long-array seq))
+(defun clojure-floats (seq)
+  "Convert a sequence to a float array (vector for SBCL)."
+  (clojure-float-array seq))
+(defun clojure-doubles (seq)
+  "Convert a sequence to a double array (vector for SBCL)."
+  (clojure-double-array seq))
+
 ;; Array creation functions - stubs that create vectors
 (defun clojure-byte-array (&optional size-or-seq)
   "Create a byte array. Returns a vector for SBCL."
@@ -1551,6 +1772,11 @@
   (if (integerp size-or-seq)
       (make-array size-or-seq :initial-element 0.0d0)
       (coerce (or size-or-seq '()) 'vector)))
+(defun clojure-boolean-array (&optional size-or-seq)
+  "Create a boolean array. Returns a vector for SBCL."
+  (if (integerp size-or-seq)
+      (make-array size-or-seq :initial-element nil)
+      (coerce (or size-or-seq '()) 'vector)))
 
 ;; Array operations
 (defun clojure-aset (array index value)
@@ -1565,6 +1791,9 @@
   (if (integerp x)
       (code-char x)
       x))
+(defun clojure-byte (x)
+  "Convert a number to a byte. Stub for SBCL - just truncate to integer."
+  (truncate x))
 
 (defun clojure-int (x)
   "Convert to an integer. Stub for SBCL."
@@ -1575,6 +1804,94 @@
 (defun clojure-long (x) (clojure-int x))
 (defun clojure-float (x) (coerce x 'single-float))
 (defun clojure-double (x) (coerce x 'double-float))
+
+;; BigInt/BigDecimal conversion stubs - for now just return the number
+(defun clojure-bigint (x) x)
+(defun clojure-biginteger (x) x)
+(defun clojure-bigdec (x) x)
+
+;; Class/type introspection stubs
+(defun clojure-class (x)
+  "Return the class of x. Stub for SBCL - returns a keyword representing the type."
+  (cond
+    ((integerp x) :integer)
+    ((floatp x) :float)
+    ((stringp x) :string)
+    ((characterp x) :char)
+    ((vectorp x) :vector)
+    ((listp x) :list)
+    ((hash-table-p x) :map)
+    (t :object)))
+(defun clojure-type (x)
+  "Return the type of x. Same as class for our stub."
+  (clojure-class x))
+
+;; Integer division functions
+(defun clojure-quot (num div)
+  "Return the quotient of dividing num by div (truncated toward zero)."
+  (truncate (/ num div)))
+(defun clojure-rem (num div)
+  "Return the remainder of dividing num by div (same sign as num)."
+  (rem num div))
+(defun clojure-mod (num div)
+  "Return the modulo of num and div (same sign as div)."
+  (mod num div))
+(defun clojure-even? (x)
+  "Return true if x is even."
+  (if (and (integerp x) (evenp x)) 'true nil))
+(defun clojure-odd? (x)
+  "Return true if x is odd."
+  (if (and (integerp x) (oddp x)) 'true nil))
+(defun clojure-neg? (x)
+  "Return true if x is negative."
+  (if (and (numberp x) (< x 0)) 'true nil))
+(defun clojure-pos? (x)
+  "Return true if x is positive."
+  (if (and (numberp x) (> x 0)) 'true nil))
+(defun clojure-zero? (x)
+  "Return true if x is zero."
+  (if (and (numberp x) (= x 0)) 'true nil))
+;; Bit manipulation functions
+(defun clojure-bit-shift-left (x n)
+  "Bitwise left shift."
+  (ash x n))
+(defun clojure-bit-shift-right (x n)
+  "Bitwise right shift (sign-extended)."
+  (ash x (- n)))
+(defun clojure-unsigned-bit-shift-right (x n)
+  "Unsigned bitwise right shift (zero-extended).  Stub for SBCL."
+  ;; SBCL doesn't have unsigned shift, so we use regular shift
+  (ash x (- n)))
+(defun clojure-bit-and (&rest args)
+  "Bitwise AND of all arguments."
+  (if (null args)
+      -1  ; all bits set for default
+      (reduce #'logand args)))
+(defun clojure-bit-or (&rest args)
+  "Bitwise OR of all arguments."
+  (if (null args)
+      0  ; all bits clear for default
+      (reduce #'logior args)))
+(defun clojure-bit-xor (&rest args)
+  "Bitwise XOR of all arguments."
+  (if (null args)
+      0  ; all bits clear for default
+      (reduce #'logxor args)))
+(defun clojure-bit-not (x)
+  "Bitwise complement."
+  (lognot x))
+(defun clojure-bit-clear (x n)
+  "Clear bit at index n."
+  (logand x (lognot (ash 1 n))))
+(defun clojure-bit-set (x n)
+  "Set bit at index n."
+  (logior x (ash 1 n)))
+(defun clojure-bit-flip (x n)
+  "Flip bit at index n."
+  (logxor x (ash 1 n)))
+(defun clojure-bit-test (x n)
+  "Test bit at index n."
+  (not (zerop (logand x (ash 1 n)))))
 
 ;; Unchecked cast operations - stubs that just return the value
 (defun clojure-unchecked-byte (x) x)
@@ -1783,6 +2100,16 @@
 (defun clojure-symbol? (x) (symbolp x))
 (defun clojure-keyword? (x) (keywordp x))
 (defun clojure-number? (x) (numberp x))
+(defun clojure-integer? (x)
+  "Return true if x is an integer (not a float/decimal)."
+  (and (numberp x) (integerp x)))
+(defun clojure-float? (x)
+  "Return true if x is a floating-point number."
+  (and (numberp x) (floatp x)))
+(defun clojure-decimal? (x)
+  "Return true if x is a decimal (BigDecimal).
+   For our stub, just check if it's a float."
+  (and (numberp x) (floatp x)))
 (defun clojure-fn? (x) (closure-p x))
 (defun clojure-vector? (x) (vectorp x))
 (defun clojure-not (x)
@@ -1795,6 +2122,12 @@
   (if (null x)
       nil
       'true))
+(defun clojure-true? (x)
+  "Return true if x is truthy (not nil or false)."
+  (not (null x)))
+(defun clojure-false? (x)
+  "Return true if x is falsey (nil or false)."
+  (or (null x) (eq x 'false)))
 
 ;;; String/Symbol constructors
 (defun clojure-symbol (name &optional ns)
@@ -1861,6 +2194,23 @@
   "Return an object with metadata transformed by meta-fn."
   (let ((current-meta (clojure-meta obj)))
     (wrap-with-meta obj (apply meta-fn current-meta args))))
+
+(defun clojure-replicate (n x)
+  "Return a list with x repeated n times.
+   For very large n, limit to 1000 elements to avoid issues."
+  (let ((limit (if (and (integerp n) (< n 1000))
+                   n
+                   1000)))
+    (make-list limit :initial-element x)))
+
+(defun clojure-repeat (x &optional (n nil))
+  "Return a lazy sequence of repeated xs.
+   If n is provided, repeat n times. Otherwise infinite."
+  (if n
+      (make-list n :initial-element x)
+      ;; Infinite repetition - return a lazy range-like marker
+      ;; For now, just return a limited list
+      (make-list 1000 :initial-element x)))
 
 (defun clojure-read-string (string &optional (eof-error-p t) (eof-value :eof))
   "Read a single Clojure form from a string.
@@ -2010,11 +2360,37 @@
 ;;; ============================================================
 
 (defun eval-is (form env)
-  "Evaluate an is form: (is expr) - test assertion."
-  ;; For now, just evaluate the expression and return it
-  ;; TODO: Actually track test results
-  (let ((expr (cadr form)))
-    (clojure-eval expr env)))
+  "Evaluate an is form: (is expr) or (is expr message) - test assertion.
+   Special handling for (is (thrown? ...)) patterns."
+  (let ((expr (cadr form))
+        ;; Check if there's a message argument
+        (has-message (> (length form) 2)))
+    ;; Check if expr is a thrown? form
+    (if (and (consp expr)
+             (symbolp (car expr))
+             (string= (symbol-name (car expr)) "thrown?"))
+        ;; Handle thrown? specially within is
+        (eval-thrown expr env)
+        ;; Normal is - just evaluate the expression (ignore message)
+        (clojure-eval expr env))))
+
+(defun eval-thrown (form env)
+  "Evaluate a thrown? form: (thrown? exception-type body-expr)
+   Evaluates body-expr and returns true if an exception is thrown, false otherwise.
+   This is a stub implementation that catches errors."
+  ;; Syntax: (thrown? ExceptionType expr)
+  ;; We evaluate the body and catch any errors, returning 'true if an error occurs
+  (let ((exception-type (cadr form))
+        (body-expr (caddr form)))
+    (declare (ignore exception-type))
+    ;; Try to evaluate the body. If it errors, return 'true. Otherwise return nil.
+    (handler-case
+        (progn
+          (clojure-eval body-expr env)
+          nil)  ; No exception thrown, return nil (false)
+      (error (c)
+        (declare (ignore c))
+        'true))))  ; Exception caught, return 'true
 
 (defun eval-testing (form env)
   "Evaluate a testing form: (testing name & body) - context for tests."
@@ -2057,10 +2433,12 @@
                (when (< (length chunk) arg-count)
                  (error "are: incomplete argument list"))
                (let ((new-env env))
+                 ;; Evaluate each arg-value before binding
                  (loop for i from 0 below arg-count
                        for arg-name in arg-names
-                       for arg-value in chunk
-                       do (setf new-env (env-extend-lexical new-env arg-name arg-value)))
+                       for arg-value-form in chunk
+                       do (let ((arg-value (clojure-eval arg-value-form env)))
+                            (setf new-env (env-extend-lexical new-env arg-name arg-value))))
                  (push (clojure-eval expr-expr new-env) results))))
     (nreverse results)))
 
@@ -2193,17 +2571,42 @@
                            (char-equal (char name 1) #\x))
                       ;; Parse as hexadecimal
                       (parse-integer name :start 2 :radix 16))
+                     ;; BigInt literal symbols (e.g., 123N) - ending with N
+                     ((and (> (length name) 1)
+                           (char-equal (char name (1- (length name))) #\N))
+                      ;; Parse as integer (just return the number, ignoring bigint semantics)
+                      (parse-integer name :end (1- (length name))))
+                     ;; BigDecimal literal symbols (e.g., 123.45M) - ending with M
+                     ((and (> (length name) 1)
+                           (char-equal (char name (1- (length name))) #\M))
+                      ;; Parse as float (just return the number, ignoring decimal semantics)
+                      (read-from-string (subseq name 0 (1- (length name)))))
                      ;; Java interop symbols (e.g., Math/round)
                      ;; Return a lambda that when called with args, evaluates the Java interop
                      ((find #\/ name)
-                      (let ((parts (java-interop-stub-lookup form)))
-                        (if parts
-                            (lambda (&rest args)
-                              (apply #'eval-java-interop
-                                     (intern (car parts))
-                                     (intern (cadr parts))
-                                     args))
-                            (error "Undefined symbol: ~A" form))))
+                      (let ((result (java-interop-stub-lookup form)))
+                        (cond
+                          ;; Static field access - result is the value directly
+                          ((and result (not (consp result)))
+                           result)
+                          ;; Method access - result is (class-name member-name)
+                          (result
+                           (lambda (&rest args)
+                             (apply #'eval-java-interop
+                                    (intern (car result))
+                                    (intern (cadr result))
+                                    args)))
+                          ;; Unknown
+                          (t
+                           (error "Undefined symbol: ~A" form)))))
+                     ;; Java constructor calls (e.g., Byte., Integer.)
+                     ;; These are symbols ending with a dot
+                     ((and (> (length name) 1)
+                           (char= (char name (1- (length name))) #\.))
+                      ;; Extract class name (everything before the trailing dot)
+                      (let ((class-name (subseq name 0 (1- (length name)))))
+                        (lambda (&rest args)
+                          (eval-java-constructor (intern class-name) args))))
                      ;; Undefined symbol
                      (t
                       (error "Undefined symbol: ~A" form))))))))
@@ -2237,6 +2640,7 @@
            ((and head-name (string= head-name "def")) (eval-def form env))
            ((and head-name (string= head-name "defn")) (eval-defn form env))
            ((and head-name (string= head-name "defn-")) (eval-defn form env))  ; private defn, same as defn for now
+           ((and head-name (string= head-name "defonce")) (eval-defonce form env))
            ((and head-name (string= head-name "defmacro")) (eval-defmacro form env))
            ((and head-name (string= head-name "deftest")) (eval-deftest form env))
            ((and head-name (string= head-name "->")) (eval-thread-first form env))

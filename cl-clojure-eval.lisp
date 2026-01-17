@@ -1196,6 +1196,17 @@
            ((string= head-name "import") (eval-import form env))
            ((string= head-name "set!") (eval-set-bang form env))
            ((string= head-name "declare") (eval-declare form env))
+           ((string= head-name "case")
+            ;; Case form: evaluate expr, then compare against each clause
+            (let* ((expr-expr (cadr form))
+                   (clauses (cddr form))
+                   (expr-value (clojure-eval expr-expr env)))
+              (loop for (test result) on clauses by (function cddr)
+                    when (null test)
+                      do (return-from clojure-eval (clojure-eval result env))
+                    when (equal expr-value (clojure-eval test env))
+                      do (return-from clojure-eval (clojure-eval result env))
+                    finally (return-from clojure-eval nil))))
 
            ;; Function application
            (t

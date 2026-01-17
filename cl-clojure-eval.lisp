@@ -33,14 +33,19 @@
 (defun make-root-env ()
   "Create the root environment with core bindings."
   (let ((env (make-env)))
-    ;; Initialize with nil as a special value
-    (setf (gethash '[user nil] (env-vars env)) (make-var :name 'nil :value nil))
+    ;; Initialize with nil, true, and false as special values (use string keys for consistency)
+    (setf (gethash (cons "user" "nil") (env-vars env)) (make-var :name 'nil :value nil))
+    (setf (gethash (cons "user" "true") (env-vars env)) (make-var :name 'true :value t))
+    (setf (gethash (cons "user" "false") (env-vars env)) (make-var :name 'false :value 'false))
     env))
 
 (defun env-get-var (env name &optional (ns '*current-ns*))
   "Get a var from the environment. Returns NIL if not found."
   (let* ((ns-name (if (eq ns '*current-ns*) *current-ns* ns))
-         (key (if (listp name) name (list ns-name name))))
+         ;; Normalize symbols to lowercase strings for consistent hash keys
+         ;; because Clojure's :preserve case mode creates different symbols
+         (key (cons (string-downcase (symbol-name ns-name))
+                    (string-downcase (symbol-name name)))))
     (or (gethash key (env-vars env))
         (when (env-parent env)
           (env-get-var (env-parent env) name ns)))))
@@ -48,7 +53,9 @@
 (defun env-intern-var (env name &optional (ns '*current-ns*))
   "Intern a new var in the environment or return existing one."
   (let* ((ns-name (if (eq ns '*current-ns*) *current-ns* ns))
-         (key (list ns-name name))
+         ;; Normalize symbols to lowercase strings for consistent hash keys
+         (key (cons (string-downcase (symbol-name ns-name))
+                    (string-downcase (symbol-name name))))
          (vars (env-vars env))
          (existing (gethash key vars)))
     (if existing
@@ -321,15 +328,13 @@
 
 (defun clojure-conj (coll &rest xs)
   "Conjoin elements to collection. For lists, adds to front."
-  (if (null xs)
-      coll
-      (if (listp coll)
-          (append (reverse xs) coll)
-          ;; For vectors, add to end
-          (if (vectorp coll)
-              (coerce (append (coerce coll 'list) xs) 'vector)
-              ;; For other collections, just append
-              (append (coerce coll 'list) xs)))))
+  (declare (notinline arrayp))  ; Avoid type inference issues
+  (cond
+    ((null xs) coll)
+    ((listp coll) (append (reverse xs) coll))
+    ((vectorp coll) (coerce (append (coerce coll 'list) xs) 'vector))
+    ((arrayp coll) (coerce (append (coerce coll 'list) xs) 'vector))
+    (t (append (coerce coll 'list) xs))))
 
 (defun clojure-first (seq)
   "Return first element of sequence."
@@ -439,17 +444,17 @@
        (let ((head (car form))
              (rest-form (cdr form)))
          (cond
-           ;; Special forms
-           (eq head 'if) (eval-if form env)
-           (eq head 'do) (eval-do form env)
-           (eq head 'quote) (eval-quote form env)
-           (eq head 'var) (eval-var-quote form env)
-           (eq head 'def) (eval-def form env)
-           (eq head 'defn) (eval-defn form env)
-           (eq head 'fn) (eval-fn form env)
-           (eq head 'fn*) (eval-fn form env)
-           (eq head 'let) (eval-let form env)
-           (eq head 'loop) (eval-loop form env)
+           ;; Special forms - compare by symbol name (lowercase for Clojure compatibility)
+           ((and (symbolp head) (string-equal (symbol-name head) "if")) (eval-if form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "do")) (eval-do form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "quote")) (eval-quote form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "var")) (eval-var-quote form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "def")) (eval-def form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "defn")) (eval-defn form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "fn")) (eval-fn form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "fn*")) (eval-fn form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "let")) (eval-let form env))
+           ((and (symbolp head) (string-equal (symbol-name head) "loop")) (eval-loop form env))
 
            ;; Function application
            (t
@@ -528,8 +533,9 @@
   "Evaluate a Clojure string and return the result."
   (unless *current-env*
     (init-eval-system))
-  (cl-clojure-syntax:enable-clojure-syntax)
-  (let* ((form (cl-clojure-syntax:read-clojure-string string)))
+  ;; Use dynamic binding for readtable so we don't affect global state
+  (let* ((*readtable* (cl-clojure-syntax:ensure-clojure-readtable))
+         (form (cl-clojure-syntax:read-clojure-string string)))
     (clojure-eval form *current-env*)))
 
 (defun eval-file (path)

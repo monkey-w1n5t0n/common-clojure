@@ -269,30 +269,32 @@
 (defun parse-suffixed-number (symbol)
   "Parse a symbol that might be a Clojure suffixed number literal.
    Handles N suffix (bigint) and M suffix (decimal).
-   Returns the parsed number, or the original symbol if not a suffixed number."
-  (when (symbolp symbol)
-    (let ((name (symbol-name symbol)))
-      ;; Check for N suffix (bigint)
-      ;; Pattern: digits followed by N
-      (when (and (> (length name) 1)
-                 (char= (char name (1- (length name))) #\N)
-                 (every #'(lambda (c) (or (digit-char-p c) (char= c #\-)))
-                       (subseq name 0 (1- (length name)))))
-        ;; Parse as integer
-        (let ((num-str (subseq name 0 (1- (length name)))))
-          (return-from parse-suffixed-number
-            (parse-integer num-str))))
-      ;; Check for M suffix (decimal)
-      ;; Pattern: digits.digits followed by M
-      (when (and (> (length name) 2)
-                 (char= (char name (1- (length name))) #\M)
-                 (find #\. name))
-        ;; Parse as float (Common Lisp doesn't have BigDecimal, so we use float)
-        (let ((num-str (subseq name 0 (1- (length name)))))
-          (return-from parse-suffixed-number
-            (read-from-string num-str))))
-      ;; Not a suffixed number
-      symbol)))
+   Returns the parsed number, or the original form if not a suffixed number."
+  (if (not (symbolp symbol))
+      ;; Return non-symbols unchanged (e.g., lists, vectors, numbers)
+      symbol
+      (let ((name (symbol-name symbol)))
+        ;; Check for N suffix (bigint)
+        ;; Pattern: digits followed by N
+        (when (and (> (length name) 1)
+                   (char= (char name (1- (length name))) #\N)
+                   (every #'(lambda (c) (or (digit-char-p c) (char= c #\-)))
+                         (subseq name 0 (1- (length name)))))
+          ;; Parse as integer
+          (let ((num-str (subseq name 0 (1- (length name)))))
+            (return-from parse-suffixed-number
+              (parse-integer num-str))))
+        ;; Check for M suffix (decimal)
+        ;; Pattern: digits.digits followed by M
+        (when (and (> (length name) 2)
+                   (char= (char name (1- (length name))) #\M)
+                   (find #\. name))
+          ;; Parse as float (Common Lisp doesn't have BigDecimal, so we use float)
+          (let ((num-str (subseq name 0 (1- (length name)))))
+            (return-from parse-suffixed-number
+              (read-from-string num-str))))
+        ;; Not a suffixed number
+        symbol)))
 
 ;;; Quote, syntax-quote, and unquote readers
 

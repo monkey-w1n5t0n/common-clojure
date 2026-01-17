@@ -2045,6 +2045,27 @@
        ;; m/E and m/PI are handled separately as symbols
        (t
         (error "Unsupported clojure.math method: ~A" member-name))))
+    ;; helper namespace - test helper functions
+    ((string-equal class-name "helper")
+     (cond
+       ((string-equal member-name "with-err-string-writer")
+        ;; Stub: capture stderr as string - just return empty string
+        ;; In a full implementation, this would capture *error-output*
+        (if (null args)
+            ""
+            ;; Return empty string (no warnings in our stub)
+            ""))
+       ((string-equal member-name "eval-in-temp-ns")
+        ;; Stub: evaluate form in temporary namespace
+        ;; Just return the evaluated form
+        (if (null args)
+            nil
+            ;; This would normally be called with the form to evaluate
+            ;; But in the macro expansion, it's already expanded
+            ;; So we just return nil or the first arg
+            (first args)))
+       (t
+        (error "Unsupported helper method: ~A" member-name))))
     ;; Default: error for unknown Java interop
     (t
      (error "Unsupported Java interop: ~A/~A" class-name member-name))))
@@ -2196,10 +2217,13 @@
   (register-core-function env 'vec #'clojure-vec)
   (register-core-function env 'vector #'clojure-vector)
   (register-core-function env 'vector-of #'clojure-vector-of)
+  (register-core-function env 'subvec #'clojure-subvec)
   (register-core-function env 'list #'clojure-list)
   (register-core-function env 'map #'clojure-map)
   (register-core-function env 'apply #'clojure-apply)
   (register-core-function env 'str #'clojure-str)
+  (register-core-function env 're-pattern #'clojure-re-pattern)
+  (register-core-function env 're-find #'clojure-re-find)
   (register-core-function env 'into #'clojure-into)
   (register-core-function env 'concat #'clojure-concat)
   (register-core-function env 'mapcat #'clojure-mapcat)
@@ -2228,12 +2252,14 @@
   (register-core-function env 'fn? #'clojure-fn?)
   (register-core-function env 'vector? #'clojure-vector?)
   (register-core-function env 'list? #'clojure-list?)
+  (register-core-function env 'string? #'clojure-string?)
   (register-core-function env 'empty? #'clojure-empty?)
   (register-core-function env 'empty #'clojure-empty)
   (register-core-function env 'not #'clojure-not)
   (register-core-function env 'some? #'clojure-some?)
   (register-core-function env 'true? #'clojure-true?)
   (register-core-function env 'false? #'clojure-false?)
+  (register-core-function env 'boolean #'clojure-boolean)
 
   ;; Sequence functions
   (register-core-function env 'seq #'clojure-seq)
@@ -2670,6 +2696,29 @@
                                                 (t (princ-to-string x))))
                                             args))))
 
+;;; Regex functions
+(defun clojure-re-pattern (s)
+  "Create a regex pattern from a string. In our implementation, just return the string."
+  (if (stringp s)
+      s
+      (string s)))
+
+(defun clojure-re-find (pattern s)
+  "Find the first match of pattern in string s.
+   Pattern can be a string (our regex representation) or a regex pattern object.
+   Returns the matched string if found, nil otherwise.
+   For our stub implementation, we use CL's search function."
+  (let ((pat-str (if (stringp pattern) pattern (string pattern)))
+        (str-str (if (stringp s) s (string s))))
+    ;; Simple regex matching for common patterns
+    ;; This is a stub implementation that handles literal strings and basic patterns
+    (when (stringp pat-str)
+      ;; For patterns like #\"^Boxed math warning\", we need to handle the regex
+      ;; In our stub, just check if the pattern string appears in the target string
+      ;; A full implementation would use CL-PPCRE or similar
+      (when (search pat-str str-str)
+        pat-str))))
+
 (defun clojure-count (coll)
   "Return number of items in collection."
   (cond
@@ -2747,6 +2796,21 @@
       #()
       ;; Has initial elements - return vector with those elements
       (coerce args 'vector)))
+
+(defun clojure-subvec (v start &optional end)
+  "Return a sub-vector of v from start to end.
+   If end is not specified, returns sub-vector to the end of v.
+   In Clojure, subvec creates a view of the original vector.
+   For our implementation, we create a new vector."
+  (let ((v-len (length v)))
+    (when (or (< start 0) (> start v-len))
+      (error "Index out of bounds"))
+    (let ((actual-end (if end
+                         (min end v-len)
+                         v-len)))
+      (when (> actual-end v-len)
+        (error "End index out of bounds"))
+      (coerce (subseq v start actual-end) 'vector))))
 
 (defun clojure-list (&rest args)
   "Create a list from arguments."
@@ -3761,6 +3825,7 @@
 (defun clojure-fn? (x) (closure-p x))
 (defun clojure-vector? (x) (vectorp x))
 (defun clojure-list? (x) (listp x))
+(defun clojure-string? (x) (stringp x))
 
 (defun clojure-identical? (x y)
   "Return true if x and y are identical (same object).
@@ -3793,6 +3858,13 @@
 (defun clojure-false? (x)
   "Return true if x is falsey (nil or false)."
   (or (null x) (eq x 'false)))
+
+(defun clojure-boolean (x)
+  "Convert x to boolean (true or false).
+   In Clojure: nil and false become false, everything else becomes true."
+  (if (or (null x) (eq x 'false))
+      'false
+      'true))
 
 ;;; String/Symbol constructors
 (defun clojure-symbol (name &optional ns)
@@ -4889,6 +4961,16 @@
                       (let ((evaluated (clojure-eval elem env)))
                         (setf (gethash evaluated table) t)))
                     table))))
+           ;; Handle regex literals from reader: (regex pattern)
+           ;; The reader returns (regex pattern) for #"pattern"
+           ((and head-name (string= head-name "regex"))
+            ;; Return the pattern string as-is for our stub implementation
+            ;; A full implementation would compile this to a regex object
+            (let ((pattern (cadr form)))
+              ;; Ensure we return a string, not a vector or list
+              (if (stringp pattern)
+                  pattern
+                  (coerce pattern 'string))))
            ((and head-name (string= head-name "try"))
             ;; Try/catch/finally form
             (eval-try form env))

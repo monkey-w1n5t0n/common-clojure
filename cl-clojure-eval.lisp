@@ -137,6 +137,33 @@
           ;; Return evaluation of last
           (clojure-eval last-expr env)))))
 
+(defun eval-and (form env)
+  "Evaluate an and form: (and expr*) - returns nil if any expr is falsey, else last value."
+  (let ((forms (cdr form)))
+    (if (null forms)
+        ;; No arguments - return true
+        'true
+        ;; Evaluate forms until one is falsey
+        (let ((result 'true))
+          (dolist (expr forms)
+            (setf result (clojure-eval expr env))
+            (when (falsey? result)
+              (return-from eval-and nil)))
+          result))))
+
+(defun eval-or (form env)
+  "Evaluate an or form: (or expr*) - returns first truthy value, or nil if all falsey."
+  (let ((forms (cdr form)))
+    (if (null forms)
+        ;; No arguments - return nil
+        nil
+        ;; Evaluate forms until one is truthy
+        (block nil
+          (dolist (expr forms)
+            (let ((result (clojure-eval expr env)))
+              (when (truthy? result)
+                (return-from nil result))))))))
+
 (defun eval-quote (form env)
   "Evaluate a quote form: (quote expr) - returns expr unevaluated."
   (declare (ignore env))
@@ -374,6 +401,8 @@
   (register-core-function env 'number? #'clojure-number?)
   (register-core-function env 'fn? #'clojure-fn?)
   (register-core-function env 'vector? #'clojure-vector?)
+  (register-core-function env 'not #'clojure-not)
+  (register-core-function env 'some? #'clojure-some?)
 
   ;; Sequence functions
   (register-core-function env 'seq #'clojure-seq)
@@ -570,6 +599,16 @@
 (defun clojure-number? (x) (numberp x))
 (defun clojure-fn? (x) (closure-p x))
 (defun clojure-vector? (x) (vectorp x))
+(defun clojure-not (x)
+  "Return true if x is falsey (nil or false)."
+  (if (or (null x) (eq x 'false))
+      'true
+      nil))
+(defun clojure-some? (x)
+  "Return true if x is not nil."
+  (if (null x)
+      nil
+      'true))
 
 ;;; ============================================================
 ;;; Test Helper Special Forms (from clojure.test)
@@ -654,6 +693,8 @@
            ;; Special forms - compare lowercase symbol names to handle package differences
            ((string= head-name "if") (eval-if form env))
            ((string= head-name "do") (eval-do form env))
+           ((string= head-name "and") (eval-and form env))
+           ((string= head-name "or") (eval-or form env))
            ((string= head-name "quote") (eval-quote form env))
            ((string= head-name "syntax-quote") (eval-syntax-quote form env))
            ((string= head-name "unquote") (eval-unquote form env))

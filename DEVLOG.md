@@ -764,3 +764,71 @@ The "junk in string Float/NaN" error had multiple causes:
    c) Implement letfn without updating closure environments after creation
 4. Continue implementing more core functions as tests require them
 
+---
+
+### Iteration 14 - 2025-01-17
+
+**Focus:** Fix letfn circular reference and make closures callable via CL funcall
+
+**Changes Made:**
+
+1. **Added `letfn-table` slot to closure and env structs** - cl-clojure-eval.lisp:954-963, 21-25
+   - Closures now have a `letfn-table` slot for shared mutual recursion lookup
+   - Environments now have a `letfn-table` slot for indirect closure lookup
+   - This avoids circular references: closures don't directly contain envs that contain the closures
+
+2. **Implemented `wrap-closure-for-call` function** - cl-clojure-eval.lisp:966-971
+   - Wraps closures in lambdas so they can be called via CL's `funcall`
+   - This allows closures to be passed to CL functions like `every`, `some`, etc.
+
+3. **Updated `env-get-lexical` to wrap closures** - cl-clojure-eval.lisp:82-112
+   - Closures retrieved from the environment are now wrapped in lambdas
+   - Both regular bindings and letfn-table lookups return wrapped closures
+   - The lambda wrapper calls `apply-function` with the original closure
+
+4. **Updated `eval-letfn` to use hash table approach** - cl-clojure-eval.lisp:412-470
+   - Creates a shared hash table (`letfn-table`) for all letfn-bound functions
+   - Each closure has a reference to the shared table (not a circular env reference)
+   - The letfn body is evaluated in an env with `letfn-table` set
+   - `env-get-lexical` checks the `letfn-table` for function lookups
+
+5. **Fixed `extract-param-names` to handle cross-package symbols** - cl-clojure-eval.lisp:392-410
+   - Changed from `(eq (car elem) 'with-meta)` to comparing symbol names
+   - The reader creates `with-meta` symbols in `cl-clojure-syntax` package
+   - `extract-param-names` is in `cl-clojure-eval` package
+   - Using `string=` on symbol names avoids package mismatch issues
+
+6. **Fixed `isNaN` Java interop classification** - cl-clojure-eval.lisp:982-998
+   - Removed `isNaN` from the `static-fields` list
+   - `isNaN` is a METHOD, not a static FIELD
+   - It should return a lambda that calls with arguments, not evaluate immediately
+   - This fixes "Float/isNaN requires an argument" error
+
+**Root Cause Analysis:**
+
+The letfn circular reference was caused by storing environments that contained the closures themselves. When SBCL tried to print these structures (e.g., in error messages), it went into infinite recursion.
+
+The solution was to use an indirection: closures share a hash table (`letfn-table`) that maps function names to closures. When a closure needs to call another letfn function, it looks it up in the table via the environment chain, avoiding circular references.
+
+The "is not a string designator" error was caused by `eq` comparison failing between `with-meta` symbols from different packages. The reader creates symbols in `cl-clojure-syntax`, but the comparison was against symbols in `cl-clojure-eval`.
+
+**Errors Fixed:**
+- Control stack overflow / circular reference - FIXED ✅ (hash table approach)
+- "(WITH-META ...) is not a string designator" - FIXED ✅ (symbol name comparison)
+- "Float/isNaN requires an argument" - FIXED ✅ (removed isNaN from static fields)
+- Closures not callable via CL funcall - FIXED ✅ (wrapper lambda approach)
+
+**Test Results:**
+- Parse: 60 ok, 8 errors
+- Eval: 5 ok, 63 errors
+- The "numbers" test now progresses past letfn and fails on "Undefined symbol: defspec"
+- letfn mutual recursion now works correctly!
+
+**Next Steps:**
+1. Implement `mapcat` function (needed by metadata test)
+2. Implement `re-find` and regex support
+3. Add more core functions as tests require them
+4. Fix remaining parse errors (8 files have parse issues)
+
+---
+

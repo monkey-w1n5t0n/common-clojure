@@ -22,7 +22,8 @@
   "An evaluation environment - holds vars, lexical bindings, and parent env."
   (vars (make-hash-table :test 'equal))    ; global vars by [ns name]
   (bindings nil)                           ; lexical bindings (alist)
-  (parent nil))                            ; parent environment for nesting
+  (parent nil)                             ; parent environment for nesting
+  (letfn-table nil))                       ; hash table for letfn mutual recursion (avoid circular refs)
 
 (defparameter *current-env* nil
   "The current evaluation environment.")
@@ -79,7 +80,10 @@
     var))
 
 (defun env-get-lexical (env name)
-  "Get a lexical binding from the environment."
+  "Get a lexical binding from the environment.
+   Checks regular bindings first, then letfn-table (for mutual recursion),
+   then parent env.
+   Closures are wrapped in lambdas so they can be called via CL funcall/apply."
   ;; For lexical bindings, use string comparison for symbol names
   ;; to handle symbols from different packages
   ;; We manually search because assoc's :key would need to handle both
@@ -91,14 +95,22 @@
                  ((string= name-string (string (caar bindings)))
                   (car bindings))
                  (t (search-bindings (cdr bindings))))))
+      ;; First, check regular bindings
       (let ((binding (search-bindings (env-bindings env))))
         (if binding
-            (cdr binding)
-            (progn
-              ;; DEBUG: Print when not found in current env
-              ;; (format t "~&DEBUG: env-get-lexical: ~A not found in env, checking parent~%" name)
-              (when (env-parent env)
-                (env-get-lexical (env-parent env) name))))))))
+            (wrap-closure-for-call (cdr binding))
+            ;; Second, check letfn-table (for letfn mutual recursion)
+            (let ((letfn-table (env-letfn-table env)))
+              (if (and letfn-table (hash-table-p letfn-table))
+                  (let ((value (gethash name-string letfn-table)))
+                    (if value
+                        (wrap-closure-for-call value)
+                        ;; Finally, check parent env
+                        (when (env-parent env)
+                          (env-get-lexical (env-parent env) name))))
+                  ;; No letfn-table, check parent directly
+                  (when (env-parent env)
+                    (env-get-lexical (env-parent env) name)))))))))
 
 (defun env-push-bindings (env bindings)
   "Create a new env frame with additional lexical bindings."
@@ -388,9 +400,11 @@
               do (setf (aref result i)
                        (cond
                          ;; WITH-META form - extract the name
+                         ;; Check by symbol name because reader creates symbols in cl-clojure-syntax package
                          ((and (listp elem)
                                (>= (length elem) 2)
-                               (eq (car elem) 'with-meta))
+                               (symbolp (car elem))
+                               (string= (symbol-name (car elem)) "WITH-META"))
                           (cadr elem))
                          ;; Regular symbol or other
                          (t elem)))
@@ -401,18 +415,33 @@
   "Evaluate a letfn form: (letfn [(fname [params] body+) ...] body+)
    letfn defines local recursive functions that can call each other.
    The key difference from let is that all function names are visible
-   within all the function bodies, allowing mutual recursion."
+   within all the function bodies, allowing mutual recursion.
+
+   Implementation: We use a shared letfn-table (hash table) to avoid circular references.
+   1. Create closures with the original env as their base env
+   2. Create a shared hash table mapping function names to closures
+   3. Set each closure's letfn-table slot to the shared table
+   4. Create a new env with letfn-table set for evaluating the body
+   This way closures can call each other without creating circular references
+   in the environment structure."
   (let* ((bindings (cadr form))
          (body (cddr form))
-         (new-env env))
+         (fn-names nil)
+         (fn-defs nil))
     ;; Convert vector bindings to list for iteration
     (let ((bindings-list (if (vectorp bindings)
                              (coerce bindings 'list)
                              bindings)))
-      ;; First pass: Create stub closures for each function name
-      (let ((fn-names nil))
-        (dolist (fn-def bindings-list)
-          ;; fn-def is (fname [params] body...)
+      ;; First pass: Collect function names and definitions
+      (dolist (fn-def bindings-list)
+        (let ((fn-name (car fn-def)))
+          (push fn-name fn-names)
+          (push fn-def fn-defs)))
+      ;; Second pass: Create closures with original env and build letfn-table
+      (let ((closures nil)
+            (letfn-table (make-hash-table :test 'equal)))
+        ;; Create closures and populate letfn-table
+        (dolist (fn-def (reverse fn-defs))
           (let* ((fn-name (car fn-def))
                  (fn-params-raw (cadr fn-def))
                  ;; Extract param names from potentially metadata-wrapped params
@@ -420,26 +449,27 @@
                                (extract-param-names fn-params-raw)
                                fn-params-raw))
                  (fn-body (cddr fn-def))
-                 ;; Create a stub closure that will be updated later
-                 (stub-closure (make-closure :params fn-params
-                                             :body fn-body
-                                             :env env
-                                             :name fn-name)))
-            ;; Bind the name to the stub closure in new-env
-            (setf new-env (env-extend-lexical new-env fn-name stub-closure))
-            (push fn-name fn-names)))
-        ;; Second pass: Update each closure with the environment that contains all function names
-        (dolist (fn-name fn-names)
-          (let ((closure (env-get-lexical new-env fn-name)))
-            (when closure
-              (setf (closure-env closure) new-env))))))
-    ;; Evaluate body in new environment
-    (if (null body)
-        nil
-        (let ((last-expr (car (last body))))
-          (dolist (expr (butlast body))
-            (clojure-eval expr new-env))
-          (clojure-eval last-expr new-env)))))
+                 ;; Create closure with original env
+                 (closure (make-closure :params fn-params
+                                        :body fn-body
+                                        :env env
+                                        :name fn-name
+                                        :letfn-table letfn-table)))
+            (push (cons fn-name closure) closures)
+            ;; Add to letfn-table using string key (for case-insensitive lookup)
+            (setf (gethash (string fn-name) letfn-table) closure)))
+        ;; Create a new env with letfn-table set for evaluating the body
+        (let ((letfn-env (make-env :vars (env-vars env)
+                                   :bindings (env-bindings env)
+                                   :parent (env-parent env)
+                                   :letfn-table letfn-table)))
+          ;; Evaluate body in letfn-env
+          (if (null body)
+              nil
+              (let ((last-expr (car (last body))))
+                (dolist (expr (butlast body))
+                  (clojure-eval expr letfn-env))
+                (clojure-eval last-expr letfn-env))))))))
 
 (defun eval-for (form env)
   "Evaluate a for form: (for [seq-exprs body-expr) - list comprehension.
@@ -932,7 +962,17 @@
   body
   env
   (name nil)
-  (macro-p nil))  ; true if this is a macro
+  (macro-p nil)  ; true if this is a macro
+  (letfn-table nil))  ; hash table for letfn mutual recursion (shared across closures)
+
+;; Make closures callable via funcall by wrapping them in a lambda
+;; This allows closures to be used directly as function objects in CL functions
+(defun wrap-closure-for-call (closure)
+  "Wrap a closure in a lambda so it can be called via funcall/apply."
+  (if (closure-p closure)
+      (lambda (&rest args)
+        (apply-function closure args))
+      closure))
 
 ;;; ============================================================
 ;;; Java Interop Stubs
@@ -948,8 +988,9 @@
              (class-name (subseq name 0 slash-pos))
              (member-name (subseq name (1+ slash-pos))))
         ;; Check if this is a static field access (no args needed)
-        ;; These are: MAX_VALUE, MIN_VALUE, TYPE, NaN, POSITIVE_INFINITY, NEGATIVE_INFINITY, isNaN
-        (let ((static-fields '("MAX_VALUE" "MIN_VALUE" "TYPE" "NaN" "POSITIVE_INFINITY" "NEGATIVE_INFINITY" "isNaN")))
+        ;; These are: MAX_VALUE, MIN_VALUE, TYPE, NaN, POSITIVE_INFINITY, NEGATIVE_INFINITY
+        ;; Note: isNaN is a METHOD, not a static field, so it's NOT in this list
+        (let ((static-fields '("MAX_VALUE" "MIN_VALUE" "TYPE" "NaN" "POSITIVE_INFINITY" "NEGATIVE_INFINITY")))
           (if (and (member member-name static-fields :test #'string-equal)
                    (member class-name '("Byte" "Short" "Integer" "Long" "Float" "Double" "Character" "Boolean") :test #'string-equal))
               ;; For static fields, evaluate and return the value directly
@@ -2915,8 +2956,17 @@
        (let* ((params (closure-params actual-fn))
               (body (closure-body actual-fn))
               (fn-env (closure-env actual-fn))
+              (letfn-table (closure-letfn-table actual-fn))
               ;; Create new environment with bindings
-              (new-env fn-env))
+              ;; If letfn-table exists, wrap it in a special env structure
+              (new-env (if letfn-table
+                          (make-env :vars (env-vars fn-env)
+                                   :bindings (env-bindings fn-env)
+                                   :parent (make-env :vars (env-vars fn-env)
+                                                    :bindings nil
+                                                    :letfn-table letfn-table
+                                                    :parent (env-parent fn-env)))
+                          fn-env)))
          ;; Bind parameters to arguments
          (cond
            ;; Vector parameters - fixed arity or with & rest params

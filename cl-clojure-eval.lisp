@@ -178,6 +178,11 @@
           ;; Return evaluation of last
           (clojure-eval last-expr env)))))
 
+(defun eval-comment (form env)
+  "Evaluate a comment form: (comment expr*) - ignores all expressions, returns nil."
+  (declare (ignore form env))
+  nil)
+
 (defun eval-and (form env)
   "Evaluate an and form: (and expr*) - returns nil if any expr is falsey, else last value."
   (let ((forms (cdr form)))
@@ -2168,6 +2173,8 @@
   ;; Comparison functions
   (register-core-function env '= #'clojure=)
   (register-core-function env '== #'clojure=)
+  (register-core-function env 'not= #'clojure-not=)
+  (register-core-function env 'identical? #'clojure-identical?)
   (register-core-function env '< #'clojure<)
   (register-core-function env '> #'clojure>)
   (register-core-function env '<= #'clojure<=)
@@ -2182,6 +2189,8 @@
   (register-core-function env 'first #'clojure-first)
   (register-core-function env 'second #'clojure-second)
   (register-core-function env 'rest #'clojure-rest)
+  (register-core-function env 'next #'clojure-next)
+  (register-core-function env 'nth #'clojure-nth)
   (register-core-function env 'count #'clojure-count)
   (register-core-function env 'vec #'clojure-vec)
   (register-core-function env 'vector #'clojure-vector)
@@ -2217,6 +2226,9 @@
   (register-core-function env 'decimal? #'clojure-decimal?)
   (register-core-function env 'fn? #'clojure-fn?)
   (register-core-function env 'vector? #'clojure-vector?)
+  (register-core-function env 'list? #'clojure-list?)
+  (register-core-function env 'empty? #'clojure-empty?)
+  (register-core-function env 'empty #'clojure-empty)
   (register-core-function env 'not #'clojure-not)
   (register-core-function env 'some? #'clojure-some?)
   (register-core-function env 'true? #'clojure-true?)
@@ -2227,6 +2239,7 @@
   (register-core-function env 'identity #'clojure-identity)
   (register-core-function env 'last #'clojure-last)
   (register-core-function env 'reverse #'clojure-reverse)
+  (register-core-function env 'rseq #'clojure-rseq)
   (register-core-function env 'reduce #'clojure-reduce)
   ;; Macro expansion functions
   (register-core-function env 'macroexpand-1 #'clojure-macroexpand-1)
@@ -2438,6 +2451,10 @@
         (every (lambda (x) (equal (car processed-args) x))
                (cdr processed-args)))))
 
+(defun clojure-not= (&rest args)
+  "True if any args are not equal (negation of =)."
+  (not (apply #'clojure= args)))
+
 (defun clojure< (x &rest args)
   "True if arguments are in strictly increasing order.
    Returns false (not nil) if any comparison involves NaN."
@@ -2582,6 +2599,58 @@
     ((consp seq) (cadr seq))
     (t nil)))
 
+(defun clojure-next (seq)
+  "Return next item in sequence, or nil if sequence is empty.
+   Similar to rest, but returns nil instead of () for empty sequences."
+  (cond
+    ((null seq) nil)
+    ((lazy-range-p seq)
+     (let ((start (lazy-range-start seq))
+           (end (lazy-range-end seq))
+           (step (lazy-range-step seq)))
+       (let ((new-start (+ start step)))
+         (if (and end (>= new-start end))
+             nil
+             (make-lazy-range :start new-start :end end :step step :current new-start)))))
+    ((vectorp seq)
+     (if (> (length seq) 1)
+         (coerce (subseq seq 1) 'list)
+         nil))
+    ((and (consp seq) (null (cdr seq))) nil)
+    (t (let ((rest (cdr seq)))
+         (if (null rest) nil rest)))))
+
+(defun clojure-nth (coll index &optional not-found)
+  "Return element at index. Returns not-found if index out of bounds.
+   Defaults to nil if not-found not provided."
+  (cond
+    ((null coll)
+     (if (null not-found) (error "Index out of bounds") not-found))
+    ((vectorp coll)
+     (if (and (>= index 0) (< index (length coll)))
+         (aref coll index)
+         (if (null not-found) (error "Index out of bounds") not-found)))
+    ((lazy-range-p coll)
+     (let ((start (lazy-range-start coll))
+           (end (lazy-range-end coll))
+           (step (lazy-range-step coll)))
+       (let ((value (+ start (* index step))))
+         (if (and end (>= value end))
+             (if (null not-found) (error "Index out of bounds") not-found)
+             value))))
+    ((stringp coll)
+     (if (and (>= index 0) (< index (length coll)))
+         (aref coll index)
+         (if (null not-found) (error "Index out of bounds") not-found)))
+    ((listp coll)
+     (if (and (>= index 0))
+         (let ((result (nthcdr index coll)))
+           (if (and result (consp result))
+               (car result)
+               (if (null not-found) (error "Index out of bounds") not-found)))
+         (if (null not-found) (error "Index out of bounds") not-found)))
+    (t (if (null not-found) (error "Index out of bounds") not-found))))
+
 (defun clojure-str (&rest args)
   "Convert arguments to string and concatenate. With no args, returns empty string."
   (if (null args)
@@ -2612,6 +2681,32 @@
     ((vectorp coll) (length coll))
     ((stringp coll) (length coll))
     (t 0)))
+
+(defun clojure-empty? (coll)
+  "Return true if collection is empty."
+  (cond
+    ((null coll) t)
+    ((lazy-range-p coll)
+     (let ((start (lazy-range-start coll))
+           (end (lazy-range-end coll)))
+       (or (and end (>= start end))
+           (= start end))))
+    ((listp coll) (null coll))
+    ((vectorp coll) (= (length coll) 0))
+    ((stringp coll) (= (length coll) 0))
+    ((hash-table-p coll) (= (hash-table-count coll) 0))
+    (t t)))
+
+(defun clojure-empty (coll)
+  "Return an empty collection of the same type as coll."
+  (cond
+    ((null coll) '())
+    ((listp coll) '())
+    ((vectorp coll) #())
+    ((stringp coll) "")
+    ((hash-table-p coll) (make-hash-table :test (hash-table-test coll)))
+    ((lazy-range-p coll) '())
+    (t '())))
 
 (defun clojure-vec (coll)
   "Create a vector from collection.
@@ -3660,6 +3755,23 @@
   (and (numberp x) (floatp x)))
 (defun clojure-fn? (x) (closure-p x))
 (defun clojure-vector? (x) (vectorp x))
+(defun clojure-list? (x) (listp x))
+
+(defun clojure-identical? (x y)
+  "Return true if x and y are identical (same object).
+   For numbers and characters, uses eql.
+   For other values, uses eq."
+  (or (eq x y)
+      (and (numberp x) (numberp y) (eql x y))
+      (and (characterp x) (characterp y) (eql x y))))
+
+(defun clojure-rseq (vect)
+  "Return a sequence of the items in vect in reverse order.
+   For non-vectors, just call reverse."
+  (if (vectorp vect)
+      (coerce (reverse vect) 'list)
+      (clojure-reverse vect)))
+
 (defun clojure-not (x)
   "Return true if x is falsey (nil or false)."
   (if (or (null x) (eq x 'false))
@@ -4502,6 +4614,9 @@
 
       ;; Symbol - look up in environment
       (symbol
+       ;; Check if this is the comment marker (from #_ reader macro)
+       (when (eq form (get-comment-marker))
+         (return-from clojure-eval nil))
        ;; Handle Clojure's nil, true, false as self-evaluating
        (cond
          ((string= (symbol-name form) "nil") nil)
@@ -4590,6 +4705,10 @@
 
       ;; List - evaluate as function call or special form
       (cons
+       ;; Check if this form is a comment marker (from #_ reader macro)
+       ;; Comment markers should be skipped and return nil
+       (when (eq form (get-comment-marker))
+         (return-from clojure-eval nil))
        ;; First, unwrap with-meta from head if present (e.g., ^:once fn*)
        (let* ((raw-head (car form))
               (rest-form (cdr form))
@@ -4635,6 +4754,7 @@
            ;; Only check if head is a symbol (head-name is not nil)
            ((and head-name (string= head-name "if")) (eval-if form env))
            ((and head-name (string= head-name "do")) (eval-do form env))
+           ((and head-name (string= head-name "comment")) (eval-comment form env))
            ((and head-name (string= head-name "and")) (eval-and form env))
            ((and head-name (string= head-name "or")) (eval-or form env))
            ((and head-name (string= head-name "when")) (eval-clojure-when form env))
@@ -4842,12 +4962,14 @@
                       (read-sequence str s)
                       str)))
          (preprocessed (cl-clojure-syntax:preprocess-clojure-dots content))
-         (results nil))
+         (results nil)
+         (comment-marker (get-comment-marker)))
     (with-input-from-string (stream preprocessed)
       (let ((*readtable* (cl-clojure-syntax:ensure-clojure-readtable)))
         (loop for form = (cl-clojure-syntax:read-clojure stream nil :eof)
               until (eq form :eof)
-              do (push (clojure-eval form *current-env*) results))))
+              unless (eq form comment-marker)
+                do (push (clojure-eval form *current-env*) results))))
     (nreverse results)))
 
 (defun reset-env ()

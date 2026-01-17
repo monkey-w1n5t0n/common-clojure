@@ -6,7 +6,8 @@
            #:ensure-clojure-readtable
            #:read-clojure
            #:read-clojure-string
-           #:preprocess-clojure-dots))
+           #:preprocess-clojure-dots
+           #:get-comment-marker))
 
 (defpackage #:cl-clojure-eval
   (:use #:cl)
@@ -16,7 +17,8 @@
                 #:ensure-clojure-readtable
                 #:read-clojure
                 #:read-clojure-string
-                #:preprocess-clojure-dots)
+                #:preprocess-clojure-dots
+                #:get-comment-marker)
   (:export #:clojure-eval
            #:eval-string
            #:eval-file

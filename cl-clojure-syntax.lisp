@@ -189,6 +189,10 @@
 (defvar *comment-marker* (make-symbol "COMMENT-MARKER")
   "Special marker used to indicate a commented form that should be filtered out.")
 
+(defun get-comment-marker ()
+  "Return the comment marker symbol."
+  *comment-marker*)
+
 (defun read-comment (stream sub-char num)
   "Read a Clojure comment: #_form
    This reads and discards the next form.

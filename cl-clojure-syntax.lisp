@@ -48,8 +48,10 @@
     (set-macro-character #\{ #'read-map nil *clojure-readtable*)
     (set-macro-character #\} #'right-delimiter-reader nil *clojure-readtable*)
 
-    ;; , - comma is whitespace in Clojure (unlike Common Lisp)
-    (set-macro-character #\, #'read-whitespace-char nil *clojure-readtable*)
+    ;; , - comma for unquote (not whitespace in Clojure's quasiquote context)
+    ;; Note: In regular code comma is whitespace, but in backquote context it's unquote
+    ;; We set it to our unquote handler to support syntax-quote
+    (set-macro-character #\, #'read-clojure-unquote nil *clojure-readtable*)
 
     ;; ::foo - auto-resolved keyword
     (set-macro-character #\: #'read-colon-dispatch nil *clojure-readtable*)
@@ -79,7 +81,8 @@
     (set-dispatch-macro-character #\# #\' #'read-var-quote *clojure-readtable*)
 
     ;; `form - syntax-quote
-    (set-macro-character #\` #'read-syntax-quote *clojure-readtable*)
+    ;; We need to set this to non-terminating T to override CL's quasiquote
+    (set-macro-character #\` #'read-syntax-quote t *clojure-readtable*)
 
     ;; ~form - unquote (and ~@form for unquote-splicing)
     (set-macro-character #\~ #'read-tilde-dispatch *clojure-readtable*)
@@ -315,7 +318,21 @@
    Returns (syntax-quote form).
    In a full implementation, this would resolve symbols and handle unquote."
   (declare (ignore char))
+  ;; We use our custom backquote reader, but need to set comma handler too
   (list 'syntax-quote (read stream t nil t)))
+
+(defun read-clojure-unquote (stream char)
+  "Read Clojure unquote: ,form or ,@form
+   Returns (unquote form) or (unquote-splicing form)."
+  (declare (ignore char))
+  (let ((next-char (peek-char nil stream nil nil)))
+    (if (eql next-char #\@)
+        ;; Consume the @ and read the form for unquote-splicing
+        (progn
+          (read-char stream)  ; consume the @
+          (list 'unquote-splicing (read stream t nil t)))
+        ;; Regular unquote
+        (list 'unquote (read stream t nil t)))))
 
 (defun read-tilde-dispatch (stream char)
   "Dispatch for ~ character. If followed by @, it's unquote-splicing. Otherwise unquote."
@@ -572,13 +589,40 @@
                        (parse-suffixed-number form))))
     processed))
 
+;;; Convert CL's quasiquote to Clojure's syntax-quote format
+(defun convert-cl-quasiquote (form)
+  "Convert Common Lisp's quasiquote forms to Clojure's syntax-quote format.
+   CL uses QUASIQUOTE with internal COMMA structures. We convert these to
+   syntax-quote, unquote, and unquote-splicing."
+  (typecase form
+    ;; Handle SBCL's COMMA structure (for unquote and unquote-splicing)
+    ;; SB-IMPL::COMMA has :EXPR and :KIND (0 = unquote, 1 = unquote-splicing)
+    ((satisfies sb-impl::comma-p)
+     (let ((kind (sb-impl::comma-kind form))
+           (expr (sb-impl::comma-expr form)))
+       (if (= kind 1)
+           `(unquote-splicing ,expr)
+           `(unquote ,expr))))
+    ;; Handle QUASIQUOTE
+    (cons
+     (if (eq (car form) 'quasiquote)
+         ;; Convert quasiquote contents to our format
+         `(syntax-quote ,(mapcar #'convert-cl-quasiquote (cdr form)))
+         ;; Recursively process list elements
+         (mapcar #'convert-cl-quasiquote form)))
+    ;; Handle vectors
+    (vector
+     (coerce (mapcar #'convert-cl-quasiquote (coerce form 'list)) 'vector))
+    ;; Everything else is self-evaluating
+    (t form)))
+
 (defun read-clojure-string (string &optional (eof-error-p t) (eof-value :eof))
   "Read a Clojure form from a string, with preprocessing for dot tokens.
    This is the main entry point for reading Clojure source code."
   (let ((preprocessed (preprocess-clojure-dots string)))
     (with-input-from-string (stream preprocessed)
       (let ((*readtable* (ensure-clojure-readtable)))
-        (read-clojure stream eof-error-p eof-value)))))
+        (convert-cl-quasiquote (read-clojure stream eof-error-p eof-value))))))
 
 (defun disable-clojure-syntax ()
   "Disable Clojure syntax, restoring default Common Lisp readtable."

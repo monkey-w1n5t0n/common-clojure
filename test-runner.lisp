@@ -3,9 +3,10 @@
 ;;;; Clojure Test Runner for Common Lisp
 ;;;; This attempts to load and run Clojure test files, reporting what works and what doesn't
 
-(require 'asdf)
-(load "cl-clojure.asd")
-(asdf:load-system :cl-clojure)
+;; Load directly without ASDF for faster startup
+(load "package.lisp")
+(load "cl-clojure-syntax.lisp")
+(load "cl-clojure-eval.lisp")
 
 (defpackage #:clojure-test-runner
   (:use #:cl #:cl-clojure-syntax #:cl-clojure-eval))

@@ -220,13 +220,26 @@
 
 (defun eval-def (form env)
   "Evaluate a def form: (def name expr?) - create/intern a var."
-  (let* ((name (cadr form))
-         (value-expr (caddr form))
+  ;; Handle metadata on the name: (def ^:dynamic name expr)
+  (let* ((second (cadr form))
+         (has-metadata (and (consp second) (eq (car second) 'with-meta)))
+         (name (if has-metadata (cadr second) second))
+         (value-expr (if has-metadata
+                        (caddr form)
+                        (caddr form)))
          (value (if value-expr
                    (clojure-eval value-expr env)
                    nil)))
     (env-set-var env name value)
     name))
+
+(defun eval-declare (form env)
+  "Evaluate a declare form: (declared name+) - forward declare vars."
+  ;; declare creates vars without values (for forward declarations)
+  (let* ((names (cdr form)))
+    (dolist (name names)
+      (env-intern-var env name))
+    nil))
 
 (defun eval-fn (form env)
   "Evaluate a fn form: (fn name? [args] body+) - returns a closure."
@@ -603,6 +616,10 @@
   (register-core-function env 'eval #'clojure-eval-fn)
   (register-core-function env 'take #'clojure-take)
 
+  ;; String/Symbol functions
+  (register-core-function env 'symbol #'clojure-symbol)
+  (register-core-function env 'atom #'clojure-atom)
+
   env)
 
 ;;; Arithmetic implementations
@@ -963,6 +980,26 @@
       nil
       'true))
 
+;;; String/Symbol constructors
+(defun clojure-symbol (name &optional ns)
+  "Create a symbol from a string or string+namespace."
+  (if ns
+      (let ((ns-str (if (stringp ns) ns (string ns)))
+            (name-str (if (stringp name) name (string name))))
+        (intern (concatenate 'string ns-str "/" name-str)))
+      (if (stringp name)
+          (intern name)
+          (intern (string name)))))
+
+(defun clojure-atom (value)
+  "Create an atom (a mutable reference). Returns a mutable container.
+   For now, atoms are just cons cells with the value in the car."
+  (let ((atom-container (list value)))
+    ;; Store metadata on the first element to mark this as an atom
+    ;; We need to store it on a symbol, not the list itself
+    (setf (get 'atom-marker t) t)
+    atom-container))
+
 ;;; ============================================================
 ;;; Test Helper Special Forms (from clojure.test)
 ;;; ============================================================
@@ -1050,6 +1087,7 @@
            ((string= head-name "or") (eval-or form env))
            ((string= head-name "quote") (eval-quote form env))
            ((string= head-name "syntax-quote") (eval-syntax-quote form env))
+           ((string= head-name "quasiquote") (eval-syntax-quote form env))  ; CL's QUASIQUOTE
            ((string= head-name "unquote") (eval-unquote form env))
            ((string= head-name "unquote-splicing") (eval-unquote-splicing form env))
            ((string= head-name "var") (eval-var-quote form env))
@@ -1068,6 +1106,7 @@
           ((string= head-name "ns") (eval-ns form env))
            ((string= head-name "import") (eval-import form env))
            ((string= head-name "set!") (eval-set-bang form env))
+           ((string= head-name "declare") (eval-declare form env))
 
            ;; Function application
            (t

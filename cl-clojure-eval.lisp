@@ -1580,6 +1580,7 @@
 (defun ensure-callable (fn-arg)
   "Ensure fn-arg is callable by CL funcall/apply.
    If it's a closure, wrap it. If it's a keyword, wrap it as a function.
+   If it's a var, get its value and ensure that's callable.
    If it's nil, return a function that returns nil (identity for nil).
    Otherwise return as-is."
   (cond
@@ -1587,6 +1588,13 @@
      ;; Return a function that returns nil when called
      ;; This handles cases where a function evaluates to nil
      (lambda (&rest args) (declare (ignore args)) nil))
+    ((var-p fn-arg)
+     ;; When a Var is used as a function, get its value and ensure that's callable
+     ;; This handles the case of #'foo being used in apply
+     (let ((var-value (var-value fn-arg)))
+       (if var-value
+           (ensure-callable var-value)
+           (error "Cannot call nil Var: ~A" (var-name fn-arg)))))
     ((closure-p fn-arg)
      (wrap-closure-for-call fn-arg))
     ((keywordp fn-arg)
@@ -4961,10 +4969,13 @@
     (setf (car atom-obj) new-value)
     (vector old-value new-value)))
 
-(defun clojure-deref (ref)
+(defun clojure-deref (ref &optional timeout-ms timeout-val)
   "Dereference a ref (atom, delay, future, etc.), returning its value.
    For atoms, the value is in the car of the cons cell.
-   For delays, we need to force evaluation and return the cached value."
+   For delays, we need to force evaluation and return the cached value.
+   If timeout-ms and timeout-val are provided, return timeout-val if ref
+   is not dereferenceable within timeout-ms (stub: always returns ref value)."
+  (declare (ignore timeout-ms timeout-val))
   (typecase ref
     (delay
      ;; For delays, force evaluation and return the value

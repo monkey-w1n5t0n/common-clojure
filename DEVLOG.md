@@ -3445,3 +3445,62 @@ The streams test had "invalid number of arguments: 2" because `stream-reduce!` w
 2. Implement more Java interop stubs (LongStream/rangeClosed, etc.)
 3. Continue implementing more core functions as tests require them
 4. Fix remaining test failures
+
+---
+
+### Iteration 57 - 2026-01-18
+
+**Focus:** Fix vars test "invalid number of arguments: 3" error
+
+**Changes Made:**
+
+1. **Added VAR handling in `ensure-callable`** - cl-clojure-eval.lisp:1591-1597
+   - When a Var struct is passed to `ensure-callable`, extract its value
+   - Recursively call `ensure-callable` on the var's value
+   - This handles the case where `#'foo` is used as a function (e.g., in `apply`)
+   - Error message if var's value is nil: "Cannot call nil Var"
+
+2. **Updated `clojure-deref` to support 3-arg arity** - cl-clojure-eval.lisp:4972-4990
+   - Changed from `(ref)` to `(ref &optional timeout-ms timeout-val)`
+   - Supports `(deref ref)`, `(deref ref timeout-ms)`, and `(deref ref timeout-ms timeout-val)`
+   - The timeout parameters are ignored in the stub (always returns ref value)
+   - This is needed for `(deref (future ...) 1000 :timeout)` pattern in vars test
+
+**Root Cause Analysis:**
+
+The vars test had TWO issues:
+
+1. **VAR not callable** - When `#'sample` is evaluated, it returns a VAR struct. When `apply` calls `ensure-callable` on this VAR, it failed with "not of type (OR FUNCTION SYMBOL)" because `ensure-callable` didn't handle VAR structs.
+
+2. **deref arity** - The test calls `(deref (future ...) 1000 :timeout)` with 3 arguments, but `clojure-deref` only accepted 1 argument.
+
+**Errors Fixed:**
+- VAR structs now dereference to their value when used as functions - FIXED ✅
+- `deref` now supports timeout and timeout-val arguments - FIXED ✅
+- vars test now passes - FIXED ✅
+
+**Test Results:**
+- Parse: 94 ok, 8 errors ✅
+- Eval: **54 ok, 48 errors** (up from 53 ok, 49 errors)
+- vars test is now `ok` ✅
+- Progress: +1 test passing
+
+**Technical Details:**
+
+The VAR fix required understanding that in Clojure:
+- `#'foo` is reader syntax for `(var foo)`
+- `(var foo)` returns a Var object
+- When a Var is used where a function is expected, its value should be used
+- `ensure-callable` is the function that prepares values for `funcall`/`apply`
+
+The deref fix was straightforward arity matching. In Clojure:
+- `(deref ref)` - deref immediately
+- `(deref ref timeout-ms timeout-val)` - deref with timeout
+- For the stub, we ignore the timeout and always return the ref value
+
+**Next Steps:**
+1. Look at other failing tests and pick one to fix
+2. Continue implementing Java interop stubs as needed
+3. Continue implementing more core functions as tests require them
+4. Fix remaining test failures
+

@@ -2639,6 +2639,7 @@
   (register-core-function env 'butlast #'clojure-butlast)
   (register-core-function env 'drop #'clojure-drop)
   (register-core-function env 'drop-while #'clojure-drop-while)
+  (register-core-function env 'drop-last #'clojure-drop-last)
   (register-core-function env 'take-last #'clojure-take-last)
   (register-core-function env 'take-while #'clojure-take-while)
   (register-core-function env 'split-at #'clojure-split-at)
@@ -2667,6 +2668,7 @@
   (register-core-function env 'subseq #'clojure-subseq)
   (register-core-function env 'shuffle #'clojure-shuffle)
   (register-core-function env 'random-uuid #'clojure-random-uuid)
+  (register-core-function env 'rand-int #'clojure-rand-int)
   (register-core-function env 'uuid? #'clojure-uuid?)
   (register-core-function env 'pprint #'clojure-pprint)
   (register-core-function env 'every-pred #'clojure-every-pred)
@@ -4575,6 +4577,18 @@
                    n
                    10000)))
     (cond
+      ((lazy-range-p coll)
+       ;; For lazy ranges, create a new range starting from offset
+       (let ((start (lazy-range-start coll))
+             (end (lazy-range-end coll))
+             (step (lazy-range-step coll)))
+         (let ((new-start (+ start (* limit step))))
+           (if (and end (>= new-start end))
+               '()
+               (make-lazy-range :start new-start
+                               :end end
+                               :step step
+                               :current new-start)))))
       ((listp coll) (nthcdr limit coll))
       ((vectorp coll) (coerce (nthcdr limit (coerce coll 'list)) 'list))
       (t (nthcdr limit coll)))))
@@ -4605,6 +4619,31 @@
             (push item result)
             (return)))
       (nreverse result))))
+
+(defun clojure-drop-last (n &optional coll)
+  "Return all items of coll except the last n items.
+   If n is greater than the count of coll, returns empty list.
+   If only coll is provided (no n), drops the last 1 element.
+   Arity: (drop-last coll) or (drop-last n coll)"
+  ;; Handle both arities: (drop-last coll) and (drop-last n coll)
+  ;; If coll is nil, then n is actually coll (the single-argument case)
+  (let ((actual-n (if coll n 1))
+        (actual-coll (if coll coll n)))
+    (let* ((lst (cond
+                  ((lazy-range-p actual-coll)
+                   (lazy-range-to-list actual-coll 10000))
+                  ((vectorp actual-coll)
+                   (coerce actual-coll 'list))
+                  (t actual-coll)))
+           (len (length lst))
+           (drop-count (if (and (integerp actual-n) (< actual-n len))
+                          actual-n
+                          len)))
+      (when (consp lst)
+        (let ((result '()))
+          (loop for i from 0 below (- len drop-count)
+                do (push (nth i lst) result))
+          (nreverse result))))))
 
 (defun clojure-split-at (n coll)
   "Return [vec1 vec2] where vec1 contains the first n items of coll
@@ -4775,6 +4814,13 @@
    For SBCL, this is a stub."
   (princ-to-string (gensym "uuid-")))
 
+(defun clojure-rand-int (n)
+  "Return a random integer from 0 (inclusive) to n (exclusive).
+   For SBCL, this uses the built-in random function."
+  (if (and (integerp n) (> n 0))
+      (random n)
+      0))
+
 (defun clojure-uuid? (x)
   "Check if x is a UUID.
    For SBCL, this always returns false."
@@ -4938,8 +4984,16 @@
    If there are more keys than vals, excess keys are ignored.
    If there are more vals than keys, excess vals are ignored."
   (let ((result (make-hash-table :test 'equal))
-        (keys-list (if (vectorp keys) (coerce keys 'list) keys))
-        (vals-list (if (vectorp vals) (coerce vals 'list) vals)))
+        (keys-list (cond
+                     ((vectorp keys) (coerce keys 'list))
+                     ((lazy-range-p keys) (lazy-range-to-list keys 10000))
+                     ((listp keys) keys)
+                     (t (coerce keys 'list))))
+        (vals-list (cond
+                     ((vectorp vals) (coerce vals 'list))
+                     ((lazy-range-p vals) (lazy-range-to-list vals 10000))
+                     ((listp vals) vals)
+                     (t (coerce vals 'list)))))
     (loop while (and keys-list vals-list)
           do (setf (gethash (car keys-list) result) (car vals-list))
              (setf keys-list (cdr keys-list))
@@ -6183,7 +6237,15 @@
                 'vector))
 
       ;; Hash table - evaluate as map literal
-      (hash-table form)
+      ;; In Clojure, map values are evaluated when the map is constructed
+      (hash-table
+        ;; Evaluate all values in the hash table
+        ;; Keys (like keywords) are self-evaluating, so we only need to eval values
+        (let ((new-table (make-hash-table :test (hash-table-test form))))
+          (maphash (lambda (key value)
+                     (setf (gethash key new-table) (clojure-eval value env)))
+                   form)
+          new-table))
 
       ;; Default
       (t form))))

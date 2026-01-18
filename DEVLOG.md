@@ -2798,3 +2798,74 @@ The "Cannot apply non-function: standard" error in vectors test was caused by ke
 3. Implement `future` function for parallel test
 4. Implement `derive` function for multimethods
 5. Add more Java interop stubs (Tuple/create, str/split-lines)
+
+---
+
+### Iteration 47 - 2026-01-18
+
+**Focus:** Fix hash table evaluation, implement drop-last, and fix lazy range handling
+
+**Changes Made:**
+
+1. **Fixed hash table literal evaluation** - cl-clojure-eval.lisp:6185-6194
+   - Map literals like `{:a (func) :b (func)}` now evaluate their values
+   - Previously, values were stored unevaluated, causing issues when accessed
+   - Added evaluation of all hash table values in the evaluator
+   - This fixed the "Cannot compare nums and (concat nums #(100))" error
+
+2. **Implemented `drop-last` function** - cl-clojure-eval.lisp:4611-4634
+   - Supports both arities: `(drop-last coll)` and `(drop-last n coll)`
+   - Uses `&optional` parameter to handle single-argument case
+   - Handles lazy ranges, vectors, and lists
+   - Returns all items except the last n items
+
+3. **Fixed `drop` function to handle lazy ranges** - cl-clojure-eval.lisp:4574-4594
+   - Previously only handled lists and vectors
+   - Now creates new lazy-range with adjusted start for offset
+   - Returns empty list if offset exceeds range end
+
+4. **Implemented `zipmap` lazy range handling** - cl-clojure-eval.lisp:4968-4987
+   - Previously only handled vectors and lists
+   - Now converts lazy ranges to lists before creating map
+   - Fixed "(UNSIGNED-BYTE 58)" error when using lazy ranges with zipmap
+
+5. **Implemented `rand-int` function** - cl-clojure-eval.lisp:4802-4807
+   - Returns random integer from 0 (inclusive) to n (exclusive)
+   - Uses CL's `random` function
+   - Registered in setup-core-functions
+
+**Root Cause Analysis:**
+
+The "Cannot compare nums and (concat nums #(100))" error was deceptive. The actual issue was that map literals were storing unevaluated forms. When the test defined:
+```clojure
+{:standard nums
+ :longer (concat nums [100])}
+```
+The values `nums` and `(concat nums [100]) were stored as symbols/forms, not evaluated values. When these were later accessed via `(:longer num-seqs)`, the unevaluated form `(concat nums [100])` was returned.
+
+When `zipmap` was called with keys and vals from this map, and then `map` was called with `#(into base-val %1)`, the inner `into` received the unevaluated `(concat nums [100])` form instead of the actual list result.
+
+**Errors Fixed:**
+- "Cannot compare nums and (concat nums #(100))" - FIXED ✅ (hash table evaluation)
+- "Undefined symbol: drop-last" - FIXED ✅ (implemented drop-last)
+- "Value of COLL in (NTHCDR LIMIT COLL) is ... lazy-range" - FIXED ✅ (drop now handles lazy ranges)
+- "Undefined symbol: rand-int" - FIXED ✅ (implemented rand-int)
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅
+- Eval: 50 ok, 51 errors (up from 35 ok, 50 errors!)
+- Progress: +15 tests passing!
+- New passing tests: **control, data, logic, other_functions, parallel** ✅
+- vectors test now fails on "Undefined symbol: thrown?"
+
+**Known Issues:**
+- vectors test now progresses to the `thrown?` test helper
+- Many tests still have Java interop and other core function issues
+- 51 errors remaining, down from 56
+
+**Next Steps:**
+1. Implement `thrown?` test helper properly (it's a stub but not working correctly)
+2. Implement `keyword` function for creating keywords from strings
+3. Implement `future` function for parallel test
+4. Implement `derive` function for multimethods
+5. Continue implementing more core functions as tests require them

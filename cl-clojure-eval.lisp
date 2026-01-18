@@ -3481,6 +3481,8 @@
   (register-core-function env 'read-string #'clojure-read-string)
   (register-core-function env 'println #'clojure-println)
   (register-core-function env 'prn #'clojure-prn)
+  (register-core-function env 'pr-str #'clojure-pr-str)
+  (register-core-function env 'print-str #'clojure-print-str)
   (register-core-function env 'constantly #'clojure-constantly)
   (register-core-function env 'complement #'clojure-complement)
   (register-core-function env 'comp #'clojure-comp)
@@ -4687,10 +4689,19 @@
    - (into-array type coll) - creates typed array (type is ignored for SBCL)"
   (declare (ignore type))
   ;; Handle both arities: (into-array coll) and (into-array type coll)
-  ;; If aseq is a type keyword (like :int-type), the actual sequence must be in type
-  (let ((actual-seq (if (and (keywordp aseq) type)
-                       type  ;; (into-array :int-type coll) - use type arg as seq
-                       aseq)))  ;; Normal case: aseq is the sequence
+  ;; If aseq is a type keyword (like :int-type) or a Java class symbol (like String),
+  ;; and type is provided, then type is the actual sequence and aseq is the type.
+  (let ((actual-seq (cond
+                      ;; Two-argument form with keyword type: (into-array :int-type coll)
+                      ((and (keywordp aseq) type)
+                       type)
+                      ;; Two-argument form with symbol type: (into-array String coll)
+                      ;; aseq is a Java class symbol, type is the collection
+                      ((and (symbolp aseq) type)
+                       type)
+                      ;; Single-argument form: aseq is the sequence
+                      (t
+                       aseq))))
     (let ((seq-to-convert (cond
                             ((lazy-range-p actual-seq)
                              (lazy-range-to-list actual-seq (if (lazy-range-end actual-seq)
@@ -7161,6 +7172,84 @@
   (terpri)
   nil)
 
+(defun string-prefix-p (prefix string)
+  "Check if STRING starts with PREFIX."
+  (and (<= (length prefix) (length string))
+       (string= prefix string :end1 (length prefix) :end2 (length prefix))))
+
+(defun clojure-pr-str (&rest args)
+  "Convert arguments to string using prin1 (readable form), then concatenate.
+   With no args, returns empty string."
+  (if (null args)
+      ""
+      (apply #'concatenate 'string
+             (mapcar (lambda (x)
+                      (let ((s (make-string-output-stream)))
+                        (prin1 x s)
+                        (get-output-stream-string s)))
+                    args))))
+
+(defun clojure-print-str (&rest args)
+  "Convert arguments to string using princ (human-readable form), then concatenate.
+   With no args, returns empty string."
+  (if (null args)
+      ""
+      (apply #'concatenate 'string
+             (mapcar (lambda (x)
+                      (cond
+                        ;; Array type representation: (array-class descriptor)
+                        ;; Convert to human-readable form like "long/1", "String/2"
+                        ((and (consp x) (eq (car x) 'array-class))
+                         (let ((descriptor (cadr x)))
+                           ;; Parse the descriptor to get type name and dimension
+                           (cond
+                             ;; Primitive types
+                             ((string= descriptor "[Z") "boolean/1")
+                             ((string= descriptor "[B") "byte/1")
+                             ((string= descriptor "[C") "char/1")
+                             ((string= descriptor "[S") "short/1")
+                             ((string= descriptor "[I") "int/1")
+                             ((string= descriptor "[F") "float/1")
+                             ((string= descriptor "[J") "long/1")
+                             ((string= descriptor "[D") "double/1")
+                             ;; Multi-dimensional primitive arrays
+                             ((string-prefix-p "[[" descriptor)
+                              (let* ((bracket-count (loop for i from 0 below (length descriptor)
+                                                         while (char= (char descriptor i) #\[)
+                                                         count i))
+                                     (remaining (subseq descriptor bracket-count))
+                                     (base-type (cond
+                                                   ((string= remaining "Z") "boolean")
+                                                   ((string= remaining "B") "byte")
+                                                   ((string= remaining "C") "char")
+                                                   ((string= remaining "S") "short")
+                                                   ((string= remaining "I") "int")
+                                                   ((string= remaining "F") "float")
+                                                   ((string= remaining "J") "long")
+                                                   ((string= remaining "D") "double")))
+                                (format nil "~a/~a" base-type bracket-count)))
+                             ;; Object arrays: [Ljava.lang.String;
+                             ((and (char= (char descriptor 0) #\[)
+                                   (char= (char descriptor 1) #\L))
+                              (let* ((bracket-count (loop for i from 0 below (length descriptor)
+                                                         while (char= (char descriptor i) #\[)
+                                                         count i))
+                                     (class-name (subseq descriptor (1+ bracket-count) ;; skip L
+                                                       (1- (length descriptor)))) ;; skip ;
+                                     ;; Extract simple class name
+                                     (simple-name (if (find #\. class-name)
+                                                     (subseq class-name (1+ (position #\. class-name :from-end t)))
+                                                     class-name)))
+                                (format nil "~a/~a" simple-name bracket-count)))
+                             ;; Fallback - just print the descriptor
+                             (t descriptor)))
+                        ;; Default case: use princ
+                        (t
+                         (let ((s (make-string-output-stream)))
+                           (princ x s)
+                           (get-output-stream-string s)))))
+                    args))))))
+
 ;;; Map/Hash operations
 (defun clojure-get (map key &optional default)
   "Get the value for key in map, returning default if not found."
@@ -8010,6 +8099,12 @@
                            (if (string-equal member-part "E")
                                (coerce (exp 1.0d0) 'double-float)
                                (coerce pi 'double-float)))
+                          ;; Array type symbols (e.g., String/1, boolean/2, Object/3)
+                          ;; These represent array types in Clojure - member-part is a dimension number
+                          ((let ((dimension (parse-integer member-part :junk-allowed t)))
+                             (and dimension (plusp dimension)))
+                           ;; Use resolve to handle array type symbols
+                           (clojure-resolve form))
                           ;; General Java interop - use stub lookup
                           (t
                            (let ((result (java-interop-stub-lookup form)))

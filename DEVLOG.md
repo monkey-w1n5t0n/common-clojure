@@ -5061,3 +5061,55 @@ The issue appears to be related to how symbols like `String`, `Object`, etc. are
 3. Investigate if Java class imports are creating symbols that end up in destructuring contexts
 4. Consider adding type hints handling in destructuring code
 
+---
+
+## Iteration 86 - 2026-01-18
+
+**Focus:** Fix array type symbol evaluation and into-array type parameter handling
+
+**Changes Made:**
+
+1. **Fixed array type symbol evaluation (e.g., `String/1`)** - cl-clojure-eval.lisp:8013-8053
+   - Added check for array type symbols before Java interop in symbol evaluation
+   - When a symbol contains `/` and the part after `/` is a number (e.g., `1`, `2`), it's an array type symbol
+   - Call `clojure-resolve` to handle array type symbols properly
+   - This fixes "Undefined symbol: String/1" error because `String/1` was being treated as Java interop
+   - Array type symbols like `String/1`, `boolean/1`, etc. now evaluate to `(array-class "[Ljava.lang.String;")`
+
+2. **Fixed `into-array` to handle type parameter correctly** - cl-clojure-eval.lisp:2808-2823
+   - The function signature is `(into-array coll)` or `(into-array type coll)`
+   - Previously, the `&optional type` parameter was causing issues with keyword types
+   - Added logic to detect when first arg is a type keyword (like `:int-type`) and swap args
+   - Added symbol type handling: when `aseq` is a symbol (like `String`), it's the type
+   - This fixes ":INT-TYPE is not of type SEQUENCE when binding SEQUENCE" error
+
+3. **Implemented `string-prefix-p` utility function** - cl-clojure-eval.lisp:7226-7227
+   - Checks if STRING starts with PREFIX (needed for `clojure-print-str`)
+
+4. **Implemented `clojure-print-str` function** - cl-clojure-eval.lisp:7187-7247
+   - Converts arguments to string using `princ` (human-readable form), then concatenate
+   - Handles array type representation: `(array-class descriptor)` → `"long/1"`, `"String/2"`, etc.
+   - Supports single and multi-dimensional arrays
+   - Returns strings for regular values using `princ-to-string`
+   - Also implemented `clojure-pr-str` for readable (quoted) string output
+   - Registered both in setup-core-functions
+
+**Errors Fixed:**
+- "Undefined symbol: String/1" - FIXED ✅ (array type symbols now use resolve)
+- "String is not of type SEQUENCE when binding SEQUENCE" - FIXED ✅ (into-array type handling)
+
+**Test Results:**
+- Parse: 93 ok, 9 errors
+- Eval: 64 ok, 38 errors (same count, but different errors)
+- array_symbols test now fails on "invalid number of arguments: 1" (progress!)
+- clearing test fails with "JAVA.LANG.OBJECT is not of type SEQUENCE" (different issue)
+
+**Known Issues:**
+- array_symbols test: "invalid number of arguments: 1" - new error, needs investigation
+- clearing test: "JAVA.LANG.OBJECT is not of type SEQUENCE" - needs investigation
+- Many tests still have Java interop and other errors
+
+**Next Steps:**
+1. Debug "invalid number of arguments: 1" error in array_symbols test
+2. Fix "JAVA.LANG.OBJECT is not of type SEQUENCE" error in clearing test
+3. Fix remaining test failures

@@ -3172,3 +3172,84 @@ The `eval-dot-dot` fix attempt caused a mysterious "end of file" error at byte p
 2. Implement more core functions as tests require them
 3. Find a safer way to fix the `eval-dot-dot` warning
 4. Continue with test-driven development approach
+
+---
+
+### Iteration 53 - 2026-01-18
+
+**Focus:** Add hash table sequence handling throughout the codebase
+
+**Changes Made:**
+
+1. **Added hash table handling to `clojure-seq`** - cl-clojure-eval.lisp:3550-3572
+   - Hash tables are converted to lists of key-value vectors
+   - This matches Clojure's behavior where `(seq map)` returns `[k v]` pairs
+   - Previously, `coerce` was called on hash tables which fails
+
+2. **Added hash table handling to `clojure-into`** - cl-clojure-eval.lisp:3607-3636
+   - Converts hash tables to lists before appending
+   - Prevents `coerce` errors on hash tables
+
+3. **Added hash table handling to `clojure-concat`** - cl-clojure-eval.lisp:3638-3674
+   - Converts hash tables to lists before concatenating
+   - Prevents `coerce` errors on hash tables
+
+4. **Added hash table handling to `clojure-map`** - cl-clojure-eval.lisp:3446-3512
+   - Single collection: converts hash table to list of key-value vectors, then maps
+   - Multiple collections: added hash table case with hash-table-count for length
+
+5. **Added hash table handling to `clojure-mapv`** - cl-clojure-eval.lisp:3513-3588
+   - Similar to clojure-map, but returns vector instead of list
+   - Handles hash tables in both single and multiple collection cases
+
+6. **Added hash table handling to `clojure-mapcat`** - cl-clojure-eval.lisp:3676-3728
+   - Converts hash table items to lists before concatenating
+   - Handles both single and multiple collection cases
+
+7. **Added hash table handling to `clojure-reduce`** - cl-clojure-eval.lisp:4328-4389
+   - Converts hash tables to lists of key-value vectors before reduction
+   - Handles both 2-arg and 3-arg forms
+
+8. **Added hash table handling to `clojure-filter`** - cl-clojure-eval.lisp:4589-4618
+   - Converts hash tables to list of key-value vectors before filtering
+
+9. **Added hash table handling to `clojure-remove`** - cl-clojure-eval.lisp:4619-4665
+   - Converts hash tables to list of key-value vectors before removing
+
+10. **Added hash table handling to `clojure-first`** - cl-clojure-eval.lisp:3182-3201
+    - Converts hash tables to list of key-value vectors, then returns first
+
+11. **Added hash table handling to `clojure-next`** - cl-clojure-eval.lisp:3240-3282
+    - Converts hash tables to list of key-value vectors, then returns next
+
+12. **Added hash table handling to `clojure-rest`** - cl-clojure-eval.lisp:3199-3231
+    - Converts hash tables to list of key-value vectors, then returns rest
+
+13. **Added hash table handling to `clojure-sequence`** - cl-clojure-eval.lisp:5374-5397
+    - Converts hash tables to lists of key-value vectors
+
+**Root Cause Analysis:**
+
+Many functions in the codebase were using `(coerce coll 'list)` or `coerce coll 'list)` as a fallback for handling collections. However, Common Lisp's `coerce` function cannot convert hash tables to lists - it signals a TYPE-ERROR.
+
+The fix was to add explicit `hash-table-p` checks before attempting coercion. When a hash table is encountered, we iterate over it with `maphash`, collecting key-value pairs as vectors, and return the resulting list.
+
+**Test Results:**
+- Parse: 94 ok, 8 errors ✅
+- Eval: 53 ok, 49 errors (no change)
+- The code is now more robust for hash table handling
+- vectors test still has hash table type error, but the issue is elsewhere
+
+**Known Issues:**
+- vectors test: "The value #<HASH-TABLE :TEST EQUAL :COUNT 4> is not of type SEQUENCE"
+  - This error persists despite the hash table handling additions
+  - The error occurs in a `loop` or `destructuring-bind` that expects a sequence
+  - Need to trace the exact source of this error
+- try_catch test: "The value |nil| is not of type LIST"
+- vars test: "The value #<FUNCTION ...> is not of type REAL"
+
+**Next Steps:**
+1. Trace the vectors test hash table error to find its exact source
+2. Fix the try_catch nil type error
+3. Fix the vars test function type error
+4. Continue implementing more core functions as tests require them

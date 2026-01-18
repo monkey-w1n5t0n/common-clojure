@@ -3193,6 +3193,14 @@
      (if (> (length seq) 0)
          (aref seq 0)
          nil))
+    ((hash-table-p seq)
+     ;; For hash tables, convert to list of key-value vectors and return first
+     (let ((result '()))
+       (maphash (lambda (k v)
+                  (push (vector k v) result))
+                seq)
+       (let ((lst (nreverse result)))
+         (if (null lst) nil (car lst)))))
     ((and (consp seq) (null (car seq))) nil)
     (t (car seq))))
 
@@ -3212,6 +3220,16 @@
      (if (> (length seq) 1)
          (coerce (subseq seq 1) 'list)
          '()))
+    ((hash-table-p seq)
+     ;; For hash tables, convert to list of key-value vectors and return rest
+     (let ((result '()))
+       (maphash (lambda (k v)
+                  (push (vector k v) result))
+                seq)
+       (let ((lst (nreverse result)))
+         (if (and (consp lst) (null (cdr lst)))
+             '()
+             (cdr lst)))))
     ((and (consp seq) (null (cdr seq))) '())
     (t (cdr seq))))
 
@@ -3244,6 +3262,17 @@
      (if (> (length seq) 1)
          (coerce (subseq seq 1) 'list)
          nil))
+    ((hash-table-p seq)
+     ;; For hash tables, convert to list of key-value vectors and return next
+     (let ((result '()))
+       (maphash (lambda (k v)
+                  (push (vector k v) result))
+                seq)
+       (let ((lst (nreverse result)))
+         (if (or (null lst)
+                 (and (consp lst) (null (cdr lst))))
+             nil
+             (cdr lst)))))
     ((and (consp seq) (null (cdr seq))) nil)
     (t (let ((rest (cdr seq)))
          (if (null rest) nil rest)))))
@@ -3438,23 +3467,39 @@
                        collect (funcall callable-fn i)))))
           ((listp coll)
            (mapcar callable-fn coll))
+          ((hash-table-p coll)
+           ;; Convert hash table to list of key-value vectors and map over them
+           (let ((result '()))
+             (maphash (lambda (k v)
+                        (push (vector k v) result))
+                      coll)
+             (mapcar callable-fn (nreverse result))))
+          ((vectorp coll)
+           (mapcar callable-fn (coerce coll 'list)))
+          ((stringp coll)
+           (mapcar callable-fn (coerce coll 'list)))
           (t
            ;; Convert to list and map
            (mapcar callable-fn (coerce coll 'list))))
         ;; Multiple collections - map in parallel
         (let* ((all-colls (cons coll colls))
-               (min-length (apply #'min (mapcar (lambda (c)
-                                                  (cond
-                                                    ((null c) 0)
-                                                    ((lazy-range-p c)
-                                                     (if (lazy-range-end c)
-                                                         (ceiling (/ (- (lazy-range-end c)
-                                                                        (lazy-range-start c))
-                                                                     (lazy-range-step c)))
-                                                         1000))
-                                                    ((listp c) (length c))
-                                                    (t (length (coerce c 'list)))))
-                                                all-colls))))
+               ;; Helper function to get length of a collection
+               (coll-length (lambda (c)
+                              (cond
+                                ((null c) 0)
+                                ((lazy-range-p c)
+                                 (if (lazy-range-end c)
+                                     (ceiling (/ (- (lazy-range-end c)
+                                                    (lazy-range-start c))
+                                                 (lazy-range-step c)))
+                                     1000))
+                                ((listp c) (length c))
+                                ((hash-table-p c)
+                                 (hash-table-count c))
+                                ((vectorp c) (length c))
+                                ((stringp c) (length c))
+                                (t (length (coerce c 'list))))))
+               (min-length (apply #'min (mapcar coll-length all-colls))))
           ;; Convert all to lists
           (let ((coll-lists (mapcar (lambda (c)
                                       (cond
@@ -3464,6 +3509,17 @@
                                                                    most-positive-fixnum
                                                                    10000)))
                                         ((listp c) c)
+                                        ((hash-table-p c)
+                                         ;; Convert hash table to list of key-value vectors
+                                         (let ((result '()))
+                                           (maphash (lambda (k v)
+                                                      (push (vector k v) result))
+                                                    c)
+                                           (nreverse result)))
+                                        ((vectorp c)
+                                         (coerce c 'list))
+                                        ((stringp c)
+                                         (coerce c 'list))
                                         (t (coerce c 'list))))
                                   all-colls)))
             ;; Map function across elements at each position
@@ -3496,23 +3552,39 @@
                        finally (return (coerce result 'vector))))))
           ((listp coll)
            (coerce (mapcar callable-fn coll) 'vector))
+          ((hash-table-p coll)
+           ;; Convert hash table to list of key-value vectors and map over them
+           (let ((result '()))
+             (maphash (lambda (k v)
+                        (push (vector k v) result))
+                      coll)
+             (coerce (mapcar callable-fn (nreverse result)) 'vector)))
+          ((vectorp coll)
+           (coerce (mapcar callable-fn (coerce coll 'list)) 'vector))
+          ((stringp coll)
+           (coerce (mapcar callable-fn (coerce coll 'list)) 'vector))
           (t
            ;; Convert to list and map
            (coerce (mapcar callable-fn (coerce coll 'list)) 'vector)))
         ;; Multiple collections - map in parallel
         (let* ((all-colls (cons coll colls))
-               (min-length (apply #'min (mapcar (lambda (c)
-                                                  (cond
-                                                    ((null c) 0)
-                                                    ((lazy-range-p c)
-                                                     (if (lazy-range-end c)
-                                                         (ceiling (/ (- (lazy-range-end c)
-                                                                        (lazy-range-start c))
-                                                                     (lazy-range-step c)))
-                                                         1000))
-                                                    ((listp c) (length c))
-                                                    (t (length (coerce c 'list)))))
-                                                all-colls))))
+               ;; Helper function to get length of a collection
+               (coll-length (lambda (c)
+                              (cond
+                                ((null c) 0)
+                                ((lazy-range-p c)
+                                 (if (lazy-range-end c)
+                                     (ceiling (/ (- (lazy-range-end c)
+                                                    (lazy-range-start c))
+                                                 (lazy-range-step c)))
+                                     1000))
+                                ((listp c) (length c))
+                                ((hash-table-p c)
+                                 (hash-table-count c))
+                                ((vectorp c) (length c))
+                                ((stringp c) (length c))
+                                (t (length (coerce c 'list))))))
+               (min-length (apply #'min (mapcar coll-length all-colls))))
           ;; Convert all to lists
           (let ((coll-lists (mapcar (lambda (c)
                                       (cond
@@ -3522,6 +3594,17 @@
                                                                    most-positive-fixnum
                                                                    10000)))
                                         ((listp c) c)
+                                        ((hash-table-p c)
+                                         ;; Convert hash table to list of key-value vectors
+                                         (let ((result '()))
+                                           (maphash (lambda (k v)
+                                                      (push (vector k v) result))
+                                                    c)
+                                           (nreverse result)))
+                                        ((vectorp c)
+                                         (coerce c 'list))
+                                        ((stringp c)
+                                         (coerce c 'list))
                                         (t (coerce c 'list))))
                                   all-colls)))
             ;; Map function across elements at each position
@@ -3553,6 +3636,21 @@
     (cond
       ((lazy-range-p coll) coll)
       ((listp coll) coll)
+      ;; For hash tables (maps), convert to list of key-value vectors
+      ;; Clojure's (seq map) returns a sequence of MapEntry objects
+      ((hash-table-p coll)
+       (let ((result '()))
+         (maphash (lambda (k v)
+                    (push (vector k v) result))
+                  coll)
+         (nreverse result)))
+      ;; For vectors, convert to list
+      ((vectorp coll)
+       (coerce coll 'list))
+      ;; For strings, convert to list of characters
+      ((stringp coll)
+       (coerce coll 'list))
+      ;; For other types, try to coerce to list
       (t (coerce coll 'list)))))
 
 (defun clojure-into (to from)
@@ -3566,6 +3664,17 @@
                                                    most-positive-fixnum
                                                    10000)))
                     ((listp from) from)
+                    ((hash-table-p from)
+                     ;; Convert hash table to list of key-value vectors
+                     (let ((result '()))
+                       (maphash (lambda (k v)
+                                  (push (vector k v) result))
+                                from)
+                       (nreverse result)))
+                    ((vectorp from)
+                     (coerce from 'list))
+                    ((stringp from)
+                     (coerce from 'list))
                     (t (coerce from 'list)))))
     (cond
       ;; If to is a vector, build a new vector
@@ -3592,6 +3701,17 @@
                                                          most-positive-fixnum
                                                          10000)))
                            ((listp coll) coll)
+                           ((hash-table-p coll)
+                            ;; Convert hash table to list of key-value vectors
+                            (let ((ht-result '()))
+                              (maphash (lambda (k v)
+                                         (push (vector k v) ht-result))
+                                       coll)
+                              (nreverse ht-result)))
+                           ((vectorp coll)
+                            (coerce coll 'list))
+                           ((stringp coll)
+                            (coerce coll 'list))
                            (t (coerce coll 'list)))))
           (setf result (append coll-list result)))))
     result))
@@ -3612,6 +3732,17 @@
                                                                 most-positive-fixnum
                                                                 10000)))
                                  ((listp item) item)
+                                 ((hash-table-p item)
+                                  ;; Convert hash table to list of key-value vectors
+                                  (let ((ht-result '()))
+                                    (maphash (lambda (k v)
+                                               (push (vector k v) ht-result))
+                                             item)
+                                    (nreverse ht-result)))
+                                 ((vectorp item)
+                                  (coerce item 'list))
+                                 ((stringp item)
+                                  (coerce item 'list))
                                  (t (coerce item 'list)))))
                 (setf result (append item-list result)))))
           result))
@@ -3626,6 +3757,17 @@
                                                                 most-positive-fixnum
                                                                 10000)))
                                  ((listp item) item)
+                                 ((hash-table-p item)
+                                  ;; Convert hash table to list of key-value vectors
+                                  (let ((ht-result '()))
+                                    (maphash (lambda (k v)
+                                               (push (vector k v) ht-result))
+                                             item)
+                                    (nreverse ht-result)))
+                                 ((vectorp item)
+                                  (coerce item 'list))
+                                 ((stringp item)
+                                  (coerce item 'list))
                                  (t (coerce item 'list)))))
                 (setf result (append item-list result)))))
           result))))
@@ -4276,8 +4418,18 @@
                                                                   most-positive-fixnum
                                                                   10000)))
                                    ((vectorp coll) (coerce coll 'list))
-                                   (t coll))))
-                  (reduce callable-f (cdr coll-list) :initial-value (funcall callable-f init (car coll-list)))))
+                                   ((hash-table-p coll)
+                                    ;; Convert hash table to list of key-value vectors
+                                    (let ((result '()))
+                                      (maphash (lambda (k v)
+                                                 (push (vector k v) result))
+                                               coll)
+                                      (nreverse result)))
+                                   ((listp coll) coll)
+                                   (t (coerce coll 'list)))))
+                  (if (null coll-list)
+                      init
+                      (reduce callable-f (cdr coll-list) :initial-value (funcall callable-f init (car coll-list))))))
             ;; 2-argument form: (reduce f coll)
             (if (null init)
                 (error "Cannot reduce empty collection")
@@ -4287,8 +4439,18 @@
                                                                   most-positive-fixnum
                                                                   10000)))
                                    ((vectorp init) (coerce init 'list))
-                                   (t init))))
-                  (reduce callable-f (cdr coll-list) :initial-value (car coll-list))))))))
+                                   ((hash-table-p init)
+                                    ;; Convert hash table to list of key-value vectors
+                                    (let ((result '()))
+                                      (maphash (lambda (k v)
+                                                 (push (vector k v) result))
+                                               init)
+                                      (nreverse result)))
+                                   ((listp init) init)
+                                   (t (coerce init 'list)))))
+                  (if (null coll-list)
+                      (error "Cannot reduce empty collection")
+                      (reduce callable-f (cdr coll-list) :initial-value (car coll-list)))))))))
 
 (defun clojure-eval-fn (form)
   "Evaluate a Clojure form at runtime. This is the eval function available to Clojure code."
@@ -4448,6 +4610,19 @@
        (loop for item in coll
              when (funcall callable-pred item)
              collect item))
+      ((hash-table-p coll)
+       ;; For hash tables, iterate over key-value vectors
+       (let ((result '()))
+         (maphash (lambda (k v)
+                    (when (funcall callable-pred (vector k v))
+                      (push (vector k v) result)))
+                  coll)
+         (nreverse result)))
+      ((vectorp coll)
+       (let ((coll-list (coerce coll 'list)))
+         (loop for item in coll-list
+               when (funcall callable-pred item)
+               collect item)))
       (t
        (let ((coll-list (coerce coll 'list)))
          (loop for item in coll-list
@@ -4477,6 +4652,19 @@
        (loop for item in coll
              unless (funcall callable-pred item)
              collect item))
+      ((hash-table-p coll)
+       ;; For hash tables, iterate over key-value vectors
+       (let ((result '()))
+         (maphash (lambda (k v)
+                    (unless (funcall callable-pred (vector k v))
+                      (push (vector k v) result)))
+                  coll)
+         (nreverse result)))
+      ((vectorp coll)
+       (let ((coll-list (coerce coll 'list)))
+         (loop for item in coll-list
+               unless (funcall callable-pred item)
+               collect item)))
       (t
        (let ((coll-list (coerce coll 'list)))
          (loop for item in coll-list
@@ -5336,10 +5524,18 @@
 
 (defun clojure-sequence (coll)
   "Return a sequence from coll. For lists, just return coll.
-   For vectors, convert to list."
-  (if (vectorp coll)
-      (coerce coll 'list)
-      coll))
+   For vectors and hash tables, convert to list."
+  (cond
+    ((vectorp coll)
+     (coerce coll 'list))
+    ((hash-table-p coll)
+     ;; Convert hash table to list of key-value vectors
+     (let ((result '()))
+       (maphash (lambda (k v)
+                  (push (vector k v) result))
+                coll)
+       (nreverse result)))
+    (t coll)))
 
 (defun clojure-eval-in-temp-ns (form &rest opts)
   "Evaluate a form in a temporary namespace.

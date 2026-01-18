@@ -1172,6 +1172,33 @@
       (dolist (expr body result)
         (setf result (clojure-eval expr env))))))
 
+(defun eval-with-redefs (form env)
+  "Evaluate a with-redefs form: (with-redefs redefs & body+).
+   Temporarily redefine vars, execute body, then restore original values.
+   For SBCL, this is a stub that just evaluates the body forms without actually redefining."
+  (let* ((redefs (cadr form))
+         (body (cddr form)))
+    (declare (ignore redefs))
+    ;; Just evaluate body forms and return the last result
+    (if (null body)
+        nil
+        (let ((last-expr (car (last body))))
+          (dolist (expr (butlast body))
+            (clojure-eval expr env))
+          (clojure-eval last-expr env)))))
+
+(defun eval-with-redefs-fn (form env)
+  "Evaluate a with-redefs-fn form: (with-redefs-fn redefs fn & more-args?).
+   Takes a redefs map and a function, calls the function with redefs in place.
+   In Clojure, with-redefs-fn returns a function that, when called, applies redefs.
+   For SBCL, this is a stub that just calls the function directly."
+  (let* ((redefs (cadr form))
+         (fn-expr (caddr form))
+         (fn-value (clojure-eval fn-expr env)))
+    (declare (ignore redefs))
+    ;; Call the function (should take no args for the basic case)
+    (funcall (ensure-callable fn-value))))
+
 (defun eval-deftest (form env)
   "Evaluate a deftest form: (deftest name body+) - define a test."
   ;; For now, deftest just evaluates the body to check for errors
@@ -5149,13 +5176,16 @@
 
 (defun clojure-with-redefs (redefs &rest body)
   "Temporarily redefine vars, execute body, then restore original values.
-   For SBCL, this is a stub that just evaluates the body forms."
+   For SBCL, this is a stub that just evaluates the body forms.
+   Body forms need to be evaluated in the current environment."
   (declare (ignore redefs))
-  ;; Just evaluate body forms and return the last result
-  (let ((result nil))
-    (dolist (expr body result)
-      ;; For stub purposes, just use the expression as-is
-      (setf result expr))))
+  ;; Get the current environment from the dynamic binding or use a global one
+  ;; Since this is called via apply-function, we need to eval in the right context
+  ;; For stub purposes, return the last body form as-is (it will be evaluated by the caller)
+  ;; Note: This is a simplified stub that doesn't actually perform var redefinition
+  (if (null body)
+      nil
+      (car (last body))))
 
 (defun clojure-thrown-with-msg? (class regex-body body)
   "Test helper that checks if an exception of class with message matching regex is thrown.
@@ -5401,11 +5431,23 @@
   (declare (ignore s body))
   nil)
 
-(defun clojure-stream-reduce! (f init stream)
+(defun clojure-stream-reduce! (f init-or-stream &optional stream)
   "Reduce a stream (Java interop).
-   For SBCL, this is a stub that returns init."
-  (declare (ignore f stream))
-  init)
+   For SBCL, this is a stub.
+   2-arg arity: (stream-reduce! f stream) - returns stream (or first element if it's a collection)
+   3-arg arity: (stream-reduce! f init stream) - returns init"
+  (declare (ignore f))
+  (if stream
+      ;; 3-arg case: (stream-reduce! f init stream)
+      ;; Return init as the stub result
+      init-or-stream
+      ;; 2-arg case: (stream-reduce! f stream)
+      ;; Return the stream as-is (or first element if it's a vector)
+      (if (vectorp init-or-stream)
+          (if (> (length init-or-stream) 0)
+              (aref init-or-stream 0)
+              nil)
+          init-or-stream)))
 
 (defun clojure-line-seq (rdr)
   "Return a lazy sequence of lines from a reader.
@@ -6875,6 +6917,8 @@
            ((and head-name (string= head-name "binding")) (eval-binding form env))
            ((and head-name (string= head-name "with-local-vars")) (eval-with-local-vars form env))
            ((and head-name (string= head-name "with-precision")) (eval-with-precision form env))
+           ((and head-name (string= head-name "with-redefs")) (eval-with-redefs form env))
+           ((and head-name (string= head-name "with-redefs-fn")) (eval-with-redefs-fn form env))
            ((and head-name (string= head-name "new"))
             ;; Java constructor call: (new Classname args...)
             ;; For SBCL, this is a stub that returns nil

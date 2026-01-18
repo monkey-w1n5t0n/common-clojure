@@ -7238,17 +7238,33 @@
   (declare (ignore test body))
   nil)
 
-(defun clojure-resolve (sym-or-str)
+(defun clojure-resolve (&optional ns-or-sym env-or-sym &rest args)
   "Resolve a symbol or string to its value or a class.
+   Arity 1: (resolve sym-or-str) - resolve in current namespace
+   Arity 2: (ns-resolve ns sym) - resolve in specific namespace
+   Arity 3: (ns-resolve ns env sym) - resolve with environment (env ignored in stub)
    For array type symbols like 'long/1, 'String/1, returns a class object.
-   For other symbols, looks them up in the current namespace.
+   For other symbols, looks them up in the namespace.
    This is a stub implementation for SBCL."
-  (let ((sym (if (stringp sym-or-str)
-                 (intern sym-or-str)
-                 sym-or-str)))
+  ;; Handle multiple arities
+  ;; - (resolve sym-or-str) - ns-or-sym is the symbol
+  ;; - (ns-resolve ns sym) - ns-or-sym is ns, env-or-sym is sym
+  ;; - (ns-resolve ns env sym) - ns-or-sym is ns, env-or-sym is env, (car args) is sym
+  (let* ((has-env (and env-or-sym (not (null args))))
+         (actual-sym (cond
+                       ;; No args
+                       ((null ns-or-sym) nil)
+                       ;; Three arguments: sym is the third arg
+                       (has-env (car args))
+                       ;; Two arguments: env-or-sym is the symbol
+                       (env-or-sym env-or-sym)
+                       ;; Single argument: ns-or-sym is the symbol
+                       (t (if (stringp ns-or-sym)
+                             (intern ns-or-sym)
+                             ns-or-sym)))))
     ;; Check if this is an array type symbol (contains /)
-    (when (symbolp sym)
-      (let ((name (symbol-name sym)))
+    (when (symbolp actual-sym)
+      (let ((name (symbol-name actual-sym)))
         (when (find #\/ name)
           (let* ((slash-pos (position #\/ name))
                  (type-name (subseq name 0 slash-pos))

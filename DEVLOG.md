@@ -5416,3 +5416,40 @@ invalid number of arguments: 2
 2. Fix "Cannot apply non-function: 1" error in for test
 3. Fix "invalid number of arguments: 1" error in array_symbols test
 4. Fix "invalid number of arguments: 0" errors (java_interop, other_functions, repl)
+
+---
+
+### Iteration 92 - 2026-01-18
+
+**Focus:** Fix ns-resolve arity handling
+
+**Changes Made:**
+
+1. **Updated `clojure-resolve` function** - cl-clojure-eval.lisp:7241-7264
+   - Changed from single-arity `(sym-or-str)` to multi-arity `(&optional ns-or-sym env-or-sym &rest args)`
+   - Now supports 3 arities:
+     - `(resolve sym-or-str)` - resolve in current namespace
+     - `(ns-resolve ns sym)` - resolve in specific namespace
+     - `(ns-resolve ns env sym)` - resolve with environment (env ignored in stub)
+   - This allows the ns_libs test to call `(ns-resolve 'clojure.core 'first)` without arity errors
+
+**Errors Fixed:**
+- "invalid number of arguments: 2" in ns_libs test - FIXED ✅
+
+**Test Results:**
+- Parse: 68 ok, 0 errors ✅
+- Eval: 66 ok, 32 errors (staying at same pass rate)
+- The ns_libs error changed from "invalid number of arguments: 2" to "Invalid argument to require"
+
+**Remaining Issues:**
+- ns_libs: "Invalid argument to require" - test expects (require) and (require :foo) to throw, which they do
+- for: "Cannot apply non-function: 1" - needs investigation
+- array_symbols: "invalid number of arguments: 1"
+- Several tests have "invalid number of arguments: 0" errors
+
+**Next Steps:**
+1. Investigate the ns_libs test more carefully - the test expects exceptions for (require) and (require :foo)
+2. Fix "Cannot apply non-function: 1" error in for test
+3. Fix "invalid number of arguments: 1" error in array_symbols test
+4. Fix "invalid number of arguments: 0" errors
+

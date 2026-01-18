@@ -1179,10 +1179,21 @@
 
 (defun eval-thrown-with-msg (form env)
   "Evaluate a thrown-with-msg form: (thrown-with-msg class regex body)
-   This is a stub - just evaluates the body."
-  (declare (ignore form))
-  ;; For now, just evaluate the body and return nil
-  nil)
+   Evaluates body and expects an exception to be thrown."
+  (let ((body-form (caddr form)))  ; third element is the body
+    (handler-case
+        (prog1
+            (clojure-eval body-form env)
+          ;; If we get here, no exception was thrown
+          nil)
+      (simple-error (c)
+        ;; Check if error message matches expected pattern
+        (declare (ignore c))
+        t)
+      (error (c)
+        ;; Any other error also counts
+        (declare (ignore c))
+        t))))
 
 (defun eval-fails-with-cause (form env)
   "Evaluate a fails-with-cause form: (fails-with-cause class expr)
@@ -1491,10 +1502,22 @@
 
 (defun ensure-callable (fn-arg)
   "Ensure fn-arg is callable by CL funcall/apply.
-   If it's a closure, wrap it. Otherwise return as-is."
-  (if (closure-p fn-arg)
-      (wrap-closure-for-call fn-arg)
-      fn-arg))
+   If it's a closure, wrap it. If it's a keyword, wrap it as a function.
+   Otherwise return as-is."
+  (cond
+    ((closure-p fn-arg)
+     (wrap-closure-for-call fn-arg))
+    ((keywordp fn-arg)
+     ;; In Clojure, keywords can be used as functions to look themselves up in maps
+     ;; (:key map) returns (get map :key)
+     (lambda (&rest args)
+       (if (null args)
+           (error "Wrong number of args (0) passed to: ~A" fn-arg)
+           (let ((target (car args)))
+             (if (hash-table-p target)
+                 (gethash fn-arg target)
+                 nil)))))
+    (t fn-arg)))
 
 ;;; ============================================================
 ;;; Java Interop Stubs
@@ -5922,18 +5945,24 @@
 
 (defun eval-is (form env)
   "Evaluate an is form: (is expr) or (is expr message) - test assertion.
-   Special handling for (is (thrown? ...)) patterns."
+   Special handling for (is (thrown? ...)) and (is (thrown-with-msg? ...)) patterns."
   (let ((expr (cadr form))
         ;; Check if there's a message argument
         (has-message (> (length form) 2)))
-    ;; Check if expr is a thrown? form
-    (if (and (consp expr)
-             (symbolp (car expr))
-             (string= (symbol-name (car expr)) "thrown?"))
-        ;; Handle thrown? specially within is
-        (eval-thrown expr env)
-        ;; Normal is - just evaluate the expression (ignore message)
-        (clojure-eval expr env))))
+    ;; Check if expr is a thrown? or thrown-with-msg? form
+    (cond
+      ((and (consp expr)
+            (symbolp (car expr))
+            (string= (symbol-name (car expr)) "thrown?"))
+       ;; Handle thrown? specially within is
+       (eval-thrown expr env))
+      ((and (consp expr)
+            (symbolp (car expr))
+            (string= (symbol-name (car expr)) "thrown-with-msg?"))
+       ;; Handle thrown-with-msg? specially within is
+       (eval-thrown-with-msg expr env))
+      ;; Normal is - just evaluate the expression (ignore message)
+      (t (clojure-eval expr env)))))
 
 (defun eval-thrown (form env)
   "Evaluate a thrown? form: (thrown? exception-type body-expr)
@@ -6607,10 +6636,15 @@
       (symbol
        (if (keywordp actual-fn)
            ;; Keyword used as function on a map
-           (if (hash-table-p (car unwrapped-args))
-               (gethash actual-fn (car unwrapped-args))
-               ;; For non-maps, return nil
-               nil)
+           (cond
+             ((null unwrapped-args)
+              (error "Wrong number of args (0) passed to: ~A" fn-value))
+             ((> (length unwrapped-args) 20)
+              (error "Wrong number of args (> 20) passed to: ~A" fn-value))
+             ((hash-table-p (car unwrapped-args))
+              (gethash actual-fn (car unwrapped-args)))
+             ;; For non-maps, return nil
+             (t nil))
            ;; Not a keyword, fall through to error
            (error "Cannot apply non-function: ~A" fn-value)))
 

@@ -3440,6 +3440,8 @@
   (register-core-function env 'thrown-with-cause-msg? #'clojure-thrown-with-cause-msg?)
   (register-core-function env 'fails-with-cause? #'clojure-fails-with-cause?)
   (register-core-function env 'platform-newlines #'clojure-platform-newlines)
+  (register-core-function env 'should-print-err-message #'clojure-should-print-err-message)
+  (register-core-function env 'should-not-reflect #'clojure-should-not-reflect)
   (register-core-function env 'ab #'clojure-ab)
   (register-core-function env 'flatten #'clojure-flatten)
   (register-core-function env 'merge #'clojure-merge)
@@ -4501,9 +4503,10 @@
 
 (defun clojure-int (x)
   "Convert to an integer. Stub for SBCL."
-  (if (integerp x)
-      x
-      (truncate x)))
+  (cond
+    ((integerp x) x)
+    ((characterp x) (char-code x))  ; Convert character to its code point
+    (t (truncate x))))
 
 (defun clojure-long (x) (clojure-int x))
 (defun clojure-float (x) (coerce x 'single-float))
@@ -5710,6 +5713,21 @@
   "Test helper that returns the string with platform-appropriate newlines.
    For Linux (where SBCL runs), newlines are already \\n, so return s unchanged."
   s)
+
+(defun clojure-should-print-err-message (regex-or-msg body)
+  "Test helper that checks if an error message matching regex is printed.
+   For SBCL, this is a stub that just evaluates body and returns nil."
+  (declare (ignore regex-or-msg))
+  ;; Just evaluate body and return nil (stub)
+  body
+  nil)
+
+(defun clojure-should-not-reflect (body)
+  "Test helper that checks that body does not use reflection.
+   For SBCL, this is a stub that just evaluates body and returns nil."
+  ;; Just evaluate body and return nil (stub)
+  body
+  nil)
 
 (defun clojure-name (x)
   "Return the name of a symbol, string, or keyword."

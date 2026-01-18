@@ -624,13 +624,15 @@
          ;; Format: (fn name docstring [params] body) or (fn docstring [params] body)
          (first-is-string (and (not (null rest-form))
                                (stringp (car rest-form))))
+         ;; Use typep with simple-vector to distinguish from strings (which are also vectors in CL)
          (second-is-vector (and first-is-string
                                (not (null (cdr rest-form)))
-                               (vectorp (cadr rest-form))))
+                               (typep (cadr rest-form) 'simple-vector)))
          (has-docstring (and first-is-string second-is-vector))
          (rest-after-doc (if has-docstring (cdr rest-form) rest-form))
+         ;; has-name is for named functions: (fn name [params] body)
          (has-name (and (not (null rest-after-doc))
-                        (not (vectorp (car rest-after-doc)))))
+                        (not (typep (car rest-after-doc) 'simple-vector))))
          (name (if has-name (car rest-after-doc) nil))
          (params (if has-name (cadr rest-after-doc) (car rest-after-doc)))
          (body (if has-name (cddr rest-after-doc) (cdr rest-after-doc))))
@@ -645,16 +647,28 @@
     result))
 
 (defun eval-defmacro (form env)
-  "Evaluate a defmacro form: (defmacro name [args] body+) - def a macro."
+  "Evaluate a defmacro form: (defmacro name [args] body+) - def a macro.
+   Handles optional docstring: (defmacro name docstring [args] body+)."
   ;; defmacro creates a macro function - similar to defn but marked as macro
   (let* ((name (cadr form))
          ;; Create the macro closure with macro-p flag set
          (rest-form (cddr form))
-         (has-name (and (not (null rest-form))
-                        (not (vectorp (car rest-form)))))
-         (macro-name (if has-name (car rest-form) nil))
-         (params (if has-name (cadr rest-form) (car rest-form)))
-         (body (if has-name (cddr rest-form) (cdr rest-form)))
+         ;; Check if there's a docstring (string followed by vector)
+         ;; Format: (defmacro name docstring [params] body) or (defmacro name [params] body)
+         (first-is-string (and (not (null rest-form))
+                               (stringp (car rest-form))))
+         (second-is-vector (and first-is-string
+                               (not (null (cdr rest-form)))
+                               (typep (cadr rest-form) 'simple-vector)))
+         (has-docstring (and first-is-string second-is-vector))
+         (rest-after-doc (if has-docstring (cdr rest-form) rest-form))
+         ;; has-name is for multi-arity macros: (defmacro name arity-name [params] body)
+         ;; We use simple-vector-p instead of vectorp to distinguish from strings (which are also vectors in CL)
+         (has-name (and (not (null rest-after-doc))
+                        (not (typep (car rest-after-doc) 'simple-vector))))
+         (macro-name (if has-name (car rest-after-doc) nil))
+         (params (if has-name (cadr rest-after-doc) (car rest-after-doc)))
+         (body (if has-name (cddr rest-after-doc) (cdr rest-after-doc)))
          (macro (make-closure :params params :body body :env env :name macro-name :macro-p t)))
     ;; Store the macro in the environment
     (env-set-var env name macro)

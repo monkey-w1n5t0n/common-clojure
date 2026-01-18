@@ -5453,3 +5453,38 @@ invalid number of arguments: 2
 3. Fix "invalid number of arguments: 1" error in array_symbols test
 4. Fix "invalid number of arguments: 0" errors
 
+
+### Iteration 93 - 2026-01-18
+
+**Focus:** Fix vectorp check that was confusing strings (docstrings) with parameter vectors
+
+**Problem Discovered:**
+In Common Lisp, strings ARE vectors (arrays of characters). The `vectorp` function returns T for strings.
+This caused `eval-defmacro` and `eval-fn` to misidentify docstrings as parameter vectors when checking for
+function names with arities.
+
+Example buggy behavior:
+```lisp
+(defmacro call-ns 
+  "Call ns with a unique namespace name. Return the result of calling ns"
+  []  `(ns a#))
+```
+
+The old code did `(not (vectorp (car rest-form)))` to check if the first element of rest-form is a name.
+But since strings are vectors, this check would be T for the docstring, causing `has-name` to be NIL
+when it should detect that the docstring is present and skip it.
+
+**Changes Made:**
+1. **Fixed `eval-defmacro`** - cl-clojure-eval.lisp:647-673
+   - Added docstring detection: check if first element is string and second is simple-vector
+   - Changed `vectorp` to `typep ... 'simple-vector` to distinguish strings from vectors
+   - Rest-after-doc skips the docstring when present
+
+2. **Fixed `eval-fn`** - cl-clojure-eval.lisp:618-639
+   - Same fix as eval-defmacro for handling docstrings
+
+**Next Steps:**
+- Investigate "invalid number of arguments: 0" error in repl, java_interop, other_functions tests
+- Investigate "Cannot apply non-function: 1" error in for test  
+- Investigate "invalid number of arguments: 1" error in array_symbols test
+

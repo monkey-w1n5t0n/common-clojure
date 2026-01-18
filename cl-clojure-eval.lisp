@@ -6925,20 +6925,42 @@
   (declare (ignore agent args))
   nil)
 
-(defun clojure-sequence (coll)
-  "Return a sequence from coll. For lists, just return coll.
+(defun clojure-sequence (xform-or-coll &optional coll)
+  "Return a sequence from coll, or apply transducer xform to coll.
+   Two arities:
+   - (sequence coll) - returns a sequence from the collection
+   - (sequence xform coll) - applies transducer xform to coll and returns the result
+
+   For lists, just return coll (or apply xform).
    For vectors and hash tables, convert to list."
-  (cond
-    ((vectorp coll)
-     (coerce coll 'list))
-    ((hash-table-p coll)
-     ;; Convert hash table to list of [key value] vectors
-     (let ((result '()))
-       (maphash (lambda (k v)
-                  (push (vector k v) result))
-                coll)
-       (nreverse result)))
-    (t coll)))
+  (if coll
+      ;; Two-argument form: (sequence xform coll)
+      ;; xform-or-coll is a transducer (function), coll is the collection
+      (let ((xform xform-or-coll))
+        (cond
+          ((vectorp coll)
+           (funcall xform (coerce coll 'list)))
+          ((hash-table-p coll)
+           ;; Convert hash table to list of [key value] vectors, then apply xform
+           (let ((result '()))
+             (maphash (lambda (k v)
+                        (push (vector k v) result))
+                      coll)
+             (funcall xform (nreverse result))))
+          (t (funcall xform coll))))
+    ;; One-argument form: (sequence coll)
+    (let ((coll xform-or-coll))
+      (cond
+        ((vectorp coll)
+         (coerce coll 'list))
+        ((hash-table-p coll)
+         ;; Convert hash table to list of [key value] vectors
+         (let ((result '()))
+           (maphash (lambda (k v)
+                      (push (vector k v) result))
+                    coll)
+           (nreverse result)))
+        (t coll)))))
 
 (defun clojure-eval-in-temp-ns (form &rest opts)
   "Evaluate a form in a temporary namespace.

@@ -5256,3 +5256,53 @@ This error occurred because the `cond` form wasn't properly closed before the `a
 2. Fix "Cannot apply non-function: 1" error in for test
 3. Fix "invalid number of arguments: 1" error in array_symbols test
 4. Fix SEQUENCE type errors in clearing and other tests
+
+---
+
+## Iteration 89 - 2026-01-18
+
+**Focus:** Fix `sequence` function arity error
+
+**Problem:**
+The `clojure-sequence` function only accepted 1 argument `(coll)`, but Clojure's `sequence` function has two arities:
+1. `(sequence coll)` - returns a sequence from the collection
+2. `(sequence xform coll)` - applies a transducer `xform` to `coll` and returns the result
+
+The test was calling `(sequence (map identity) #(-3 :a "7th"))` with 2 arguments, causing:
+```
+invalid number of arguments: 2
+```
+
+**Investigation:**
+- Traced the error to form #6721 in data_structures.clj
+- The problematic form was `(sequence (map identity) #(-3 :a "7th"))`
+- `clojure-sequence` at line 6928 only had `(coll)` parameter
+
+**Changes Made:**
+
+1. **Fixed `clojure-sequence` to support 2-arity** - cl-clojure-eval.lisp:6928-6963
+   - Changed signature from `(coll)` to `(xform-or-coll &optional coll)`
+   - When `coll` is provided (2-argument form):
+     - `xform-or-coll` is the transducer function
+     - Apply `xform` to the sequence derived from `coll`
+   - When `coll` is not provided (1-argument form):
+     - Original behavior: convert collection to sequence
+
+**Test Results:**
+- Parse: 93 ok, 9 errors
+- Eval: 64 ok, 38 errors
+- "invalid number of arguments: 2" error in data_structures FIXED ✅
+- New error in data_structures: "Undefined symbol: ->Rec" (record constructor, requires Java interop)
+
+**Known Issues:**
+- data_structures test: "Undefined symbol: ->Rec" - requires record/Java interop
+- for test: "Cannot apply non-function: 1" - needs investigation
+- array_symbols test: "invalid number of arguments: 1"
+- ns_libs test: "invalid number of arguments: 2"
+- SEQUENCE type errors in clearing and other tests
+
+**Next Steps:**
+1. Investigate "invalid number of arguments: 2" error in ns_libs test (different from data_structures)
+2. Fix "Cannot apply non-function: 1" error in for test
+3. Fix "invalid number of arguments: 1" error in array_symbols test
+4. Fix "invalid number of arguments: 0" errors (java_interop, other_functions, repl)

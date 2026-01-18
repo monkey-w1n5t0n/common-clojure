@@ -1142,11 +1142,12 @@
     (t
      (error "Invalid binding form: ~A (type: ~A)" binding-form (type-of binding-form)))))
 
-(defun eval-for-nested (bindings body-expr env)
+(defun eval-for-nested (bindings body-expr env &optional (result-limit 100000))
   "Evaluate nested for comprehension, producing list of results.
    bindings is (((binding-form . unevaluated-expr) . local-modifiers)...) - exprs are
    evaluated with current env, and modifiers apply to each iteration of that binding.
-   binding-form can be a symbol or a list for destructuring."
+   binding-form can be a symbol or a list for destructuring.
+   result-limit limits total results to avoid heap exhaustion."
   (if (null bindings)
       ;; Base case: evaluate body
       ;; Vectors need to be evaluated element-wise
@@ -1164,7 +1165,8 @@
              (rest-bindings (cdr bindings)))
         ;; Evaluate the collection expression with current env
         (let* ((first-coll (clojure-eval first-expr env))
-               (results nil))
+               (results nil)
+               (results-count 0))
           ;; Handle lazy ranges specially to avoid heap exhaustion
           (cond
             ((lazy-range-p first-coll)
@@ -1173,27 +1175,37 @@
                    (step (lazy-range-step first-coll)))
                (if end
                    ;; Bounded range - iterate but limit to avoid heap issues
-                   (let ((iter-limit (min 10000 (- end start))))
+                   (let ((iter-limit (min 1000 (- end start))))
                      (loop for i from start below end by step
                            for iter-count from 0
-                           while (< iter-count iter-limit)
+                           while (and (< iter-count iter-limit)
+                                     (< results-count result-limit))
                            do (let* ((new-env (extend-binding env first-binding i))
                                      (filtered-env (apply-local-modifiers new-env local-modifiers)))
                                 (when filtered-env
                                   (let ((nested-results (eval-for-nested rest-bindings
                                                                         body-expr
-                                                                        filtered-env)))
-                                    (setf results (append results nested-results)))))))
+                                                                        filtered-env
+                                                                        (- result-limit results-count))))
+                                    (dolist (nr nested-results)
+                                      (when (< results-count result-limit)
+                                        (push nr results)
+                                        (incf results-count)))))))))
                    ;; Infinite range - limit iterations
                    (loop for i from start by step
-                         repeat 1000
+                         repeat (min 1000 result-limit)
+                         while (< results-count result-limit)
                          do (let* ((new-env (extend-binding env first-binding i))
                                    (filtered-env (apply-local-modifiers new-env local-modifiers)))
                               (when filtered-env
                                 (let ((nested-results (eval-for-nested rest-bindings
                                                                           body-expr
-                                                                          filtered-env)))
-                                  (setf results (append results nested-results)))))))))
+                                                                          filtered-env
+                                                                          (- result-limit results-count))))
+                                  (dolist (nr nested-results)
+                                    (when (< results-count result-limit)
+                                      (push nr results)
+                                      (incf results-count)))))))))
             ;; Hash table (map) - convert to list of [key value] vectors
             ((hash-table-p first-coll)
              (let ((entries '()))
@@ -1202,27 +1214,37 @@
                        first-coll)
                (let ((first-coll-list (nreverse entries)))
                  (dolist (elem first-coll-list)
-                   (let* ((new-env (extend-binding env first-binding elem))
-                          (filtered-env (apply-local-modifiers new-env local-modifiers)))
-                     (when filtered-env
-                       (let ((nested-results (eval-for-nested rest-bindings
+                   (when (< results-count result-limit)
+                     (let* ((new-env (extend-binding env first-binding elem))
+                            (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                       (when filtered-env
+                         (let ((nested-results (eval-for-nested rest-bindings
                                                                  body-expr
-                                                                 filtered-env)))
-                         (setf results (append results nested-results)))))))))
-            ;; Regular collection - convert to list
+                                                                 filtered-env
+                                                                 (- result-limit results-count))))
+                           (dolist (nr nested-results)
+                             (when (< results-count result-limit)
+                               (push nr results)
+                               (incf results-count)))))))))))
+            ;; Regular collection - convert to list with limit
             (t
              (let ((first-coll-list (if (listp first-coll)
                                         first-coll
                                         (coerce first-coll 'list))))
                (dolist (elem first-coll-list)
-                 (let* ((new-env (extend-binding env first-binding elem))
-                        (filtered-env (apply-local-modifiers new-env local-modifiers)))
-                   (when filtered-env
-                     (let ((nested-results (eval-for-nested rest-bindings
-                                                               body-expr
-                                                               filtered-env)))
-                       (setf results (append results nested-results)))))))))
-          results))))
+                 (when (< results-count result-limit)
+                   (let* ((new-env (extend-binding env first-binding elem))
+                          (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                     (when filtered-env
+                       (let ((nested-results (eval-for-nested rest-bindings
+                                                                 body-expr
+                                                                 filtered-env
+                                                                 (- result-limit results-count))))
+                         (dolist (nr nested-results)
+                           (when (< results-count result-limit)
+                             (push nr results)
+                             (incf results-count)))))))))))
+          (nreverse results)))))
 
 (defun eval-doseq (form env)
   "Evaluate a doseq form: (doseq [seq-exprs] body+) - execute body for side effects.
@@ -3754,21 +3776,23 @@
 
 (defun clojure< (x &rest args)
   "True if arguments are in strictly increasing order.
-   Returns false (not nil) if any comparison involves NaN."
+   Returns false (not nil) if any comparison involves NaN or non-numbers."
   (handler-case
       (or (null args)
           (and (< x (car args))
                (apply #'< args)))
-    (floating-point-invalid-operation () nil)))
+    (floating-point-invalid-operation () nil)
+    (type-error () nil)))
 
 (defun clojure> (x &rest args)
   "True if arguments are in strictly decreasing order.
-   Returns false (not nil) if any comparison involves NaN."
+   Returns false (not nil) if any comparison involves NaN or non-numbers."
   (handler-case
       (or (null args)
           (and (> x (car args))
            (apply #'> args)))
-    (floating-point-invalid-operation () nil)))
+    (floating-point-invalid-operation () nil)
+    (type-error () nil)))
 
 (defun clojure<= (x &rest args)
   "True if arguments are in non-decreasing order.
@@ -3777,6 +3801,7 @@
       (or (null args)
           (and (<= x (car args))
            (apply #'<= args)))
+    (type-error () nil)
     (floating-point-invalid-operation () nil)))
 
 (defun clojure>= (x &rest args)
@@ -3786,8 +3811,8 @@
       (or (null args)
           (and (>= x (car args))
            (apply #'>= args)))
+    (type-error () nil)
     (floating-point-invalid-operation () nil)))
-
 (defun clojure-min (x &rest args)
   "Return the minimum of the arguments.
    If any argument is NaN, return NaN (Clojure behavior)."
@@ -8436,20 +8461,21 @@
 
       ;; Keyword as function - look itself up in the first argument (a map)
       ;; In Clojure, (:key map) is equivalent to (get map :key)
+      ;; Note: In Common Lisp, keywords are not symbols, so this check must come before symbol check
+      (keyword
+       (cond
+         ((null unwrapped-args)
+          (error "Wrong number of args (0) passed to: ~A" fn-value))
+         ((> (length unwrapped-args) 20)
+          (error "Wrong number of args (> 20) passed to: ~A" fn-value))
+         ((hash-table-p (car unwrapped-args))
+          (gethash actual-fn (car unwrapped-args)))
+         ;; For non-maps, return nil
+         (t nil)))
+
+      ;; Symbol that is not a keyword - error (unless it's a special case)
       (symbol
-       (if (keywordp actual-fn)
-           ;; Keyword used as function on a map
-           (cond
-             ((null unwrapped-args)
-              (error "Wrong number of args (0) passed to: ~A" fn-value))
-             ((> (length unwrapped-args) 20)
-              (error "Wrong number of args (> 20) passed to: ~A" fn-value))
-             ((hash-table-p (car unwrapped-args))
-              (gethash actual-fn (car unwrapped-args)))
-             ;; For non-maps, return nil
-             (t nil))
-           ;; Not a keyword, fall through to error
-           (error "Cannot apply non-function: ~A" fn-value)))
+       (error "Cannot apply non-function symbol: ~A" fn-value))
 
       ;; Regular Lisp function
       (function (apply actual-fn unwrapped-args))

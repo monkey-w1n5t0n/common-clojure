@@ -7,6 +7,7 @@
 (load "package.lisp")
 (load "cl-clojure-syntax.lisp")
 (load "cl-clojure-eval.lisp")
+(load "cl-clojure-transducers.lisp")
 
 (defpackage #:clojure-test-runner
   (:use #:cl #:cl-clojure-syntax #:cl-clojure-eval))

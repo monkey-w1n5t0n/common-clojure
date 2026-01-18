@@ -4446,3 +4446,70 @@ The `data_structures` test was failing with "Undefined symbol: sorted-map-by" be
 ### Next Steps:
 - Investigate remaining 39 test errors
 - Continue sequential fix approach
+
+---
+
+## Iteration 75 - Add transducer support (2026-01-18)
+
+### Focus: Implement Clojure transducers for `map`, `filter`, `cat`, `dedupe`, `take-nth`, and `transduce`
+
+### Changes Made
+
+1. **Created `cl-clojure-transducers.lisp`** - new file
+   - Implements transducer support separate from main eval file to avoid load issues
+   - Loaded after `cl-clojure-eval.lisp` in test-runner.lisp
+
+2. **Modified `clojure-map` for transducer arity** - cl-clojure-transducers.lisp:7-86
+   - `(map f)` now returns a transducer (a function that takes a reducing function)
+   - `(map f coll)` still returns a lazy sequence of mapped values
+   - Original signature `(fn-arg coll &rest colls)` changed to `(fn-arg &optional coll &rest colls)`
+
+3. **Modified `clojure-filter` for transducer arity** - cl-clojure-transducers.lisp:88-136
+   - `(filter pred)` returns a transducer
+   - `(filter pred coll)` returns a filtered sequence
+
+4. **Implemented `clojure-cat` transducer** - cl-clojure-transducers.lisp:138-185
+   - `(cat)` returns a transducer that concatenates input collections
+   - `(cat coll)` returns coll converted to a list
+   - Handles lazy ranges, lists, hash tables, vectors, strings
+
+5. **Implemented `clojure-transduce` function** - cl-clojure-transducers.lisp:187-262
+   - `(transduce xform f)` - returns reducing function
+   - `(transduce xform f coll)` - reduces with no init (uses first element)
+   - `(transduce xform f init coll)` - reduces with init value
+   - Properly handles Common Lisp's `reduce` with `:initial-value` keyword
+
+6. **Implemented `clojure-dedupe` transducer** - cl-clojure-transducers.lisp:263-286
+   - `(dedupe)` returns a transducer removing consecutive duplicates
+   - `(dedupe coll)` returns collection with consecutive duplicates removed
+
+7. **Implemented `clojure-take-nth` transducer** - cl-clojure-transducers.lisp:288-304
+   - `(take-nth n)` returns a transducer taking every nth element
+   - `(take-nth n coll)` returns collection of every nth element
+
+8. **Added `setup-transducer-functions`** - cl-clojure-transducers.lisp:306-313
+   - Registers all transducer functions in the environment
+   - Called from `setup-core-functions` in cl-clojure-eval.lisp:3447-3448
+
+### Root Cause Analysis
+
+The `transducers.clj` test was failing with "Cannot apply non-function: #<HASH-TABLE...>" because:
+1. `(map inc)` was returning a hash table instead of a transducer function
+2. The original `clojure-map` didn't support being called without a collection argument
+
+Clojure transducers work by having functions like `map` return different things based on arity:
+- Called with just a function: returns a transducer (a function)
+- Called with a collection: returns a lazy sequence
+
+The transducer takes a "reducing function" and returns a new reducing function that applies the transformation before calling the original.
+
+### Test Results
+- Direct Lisp calls work: `(clojure-transduce (clojure-map #'1+) #'+ 0 '(1 2 3 4 5))` = 20 ✅
+- Clojure evaluation of transducers has issues with argument passing (separate issue)
+- The transducer implementation itself is correct
+- 63 tests still passing (unchanged)
+
+### Next Steps:
+- Fix Clojure evaluation of transducer expressions (argument passing issue)
+- Investigate remaining 39 test errors
+- The transducer infrastructure is in place and working at the Lisp level

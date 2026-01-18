@@ -3444,6 +3444,9 @@
   (register-core-function env 'zipmap #'clojure-zipmap)
   (register-core-function env 'reduce-kv #'clojure-reduce-kv)
 
+  ;; Transducer functions (loaded from cl-clojure-transducers.lisp)
+  (setup-transducer-functions env)
+
   ;; Agent functions
   (register-core-function env 'send #'clojure-send)
   (register-core-function env 'send-off #'clojure-send)

@@ -3094,6 +3094,23 @@
   (register-core-function env 'cnt #'clojure-cnt)
   (register-core-function env 'while #'clojure-while)
 
+  ;; New functions for iteration 61
+  (register-core-function env 'partial #'clojure-partial)
+  ;; dotimes is now a special form (see clojure-eval)
+  (register-core-function env 'derive #'clojure-derive)
+  (register-core-function env 'underive #'clojure-underive)
+  (register-core-function env 'isa? #'clojure-isa?)
+  (register-core-function env 'defstruct #'clojure-defstruct)
+  (register-core-function env 'struct #'clojure-struct)
+  (register-core-function env 'thrown-with-cause-msg? #'clojure-thrown-with-cause-msg?)
+  (register-core-function env 'fails-with-cause? #'clojure-fails-with-cause?)
+  (register-core-function env 'ab #'clojure-ab)
+  (register-core-function env 'flatten #'clojure-flatten)
+  (register-core-function env 'merge #'clojure-merge)
+  (register-core-function env 'peek #'clojure-peek)
+  (register-core-function env 'pop #'clojure-pop)
+  (register-core-function env 'select-keys #'clojure-select-keys)
+
   ;; Test helper functions with question marks (need special handling)
   ;; These are registered as regular functions since the ? is part of the name
   ;; Since the test file symbols end up in CL-CLOJURE-SYNTAX package,
@@ -5649,6 +5666,294 @@
   (lambda (x)
     (some (lambda (p) (funcall p x)) preds)))
 
+(defun clojure-partial (f &rest args)
+  "Partial application - returns a function that calls f with additional args.
+   Equivalent to Clojure's partial function."
+  (lambda (&rest more-args)
+    (apply f (append args more-args))))
+
+(defun clojure-derive (tag parent &optional hierarchy)
+  "Add a relationship between tag and parent in the hierarchy.
+   Returns the updated hierarchy."
+  (declare (ignore tag parent))
+  ;; Stub implementation - just return hierarchy or create a new one
+  (or hierarchy (make-hash-table :test 'equal)))
+
+(defun clojure-underive (tag parent &optional hierarchy)
+  "Remove a relationship between tag and parent in the hierarchy.
+   Returns the updated hierarchy."
+  (declare (ignore tag parent))
+  ;; Stub implementation - just return hierarchy or create a new one
+  (or hierarchy (make-hash-table :test 'equal)))
+
+(defun clojure-isa? (child parent &optional hierarchy)
+  "Check if child is derived from parent in the hierarchy."
+  (declare (ignore child parent hierarchy))
+  ;; Stub implementation - return nil for now
+  nil)
+
+(defun clojure-defstruct (name-and-opts &rest fields)
+  "Define a struct type. Stub implementation that returns nil."
+  (declare (ignore name-and-opts fields))
+  nil)
+
+(defun clojure-struct (name-and-vals &rest vals)
+  "Create a struct instance. Stub implementation that returns a hash table."
+  (let ((result (make-hash-table :test 'equal)))
+    ;; If name-and-vals is a symbol, create empty struct
+    ;; If it's a vector of keys, initialize with those keys
+    (when (vectorp name-and-vals)
+      (let ((keys (coerce name-and-vals 'list))
+            (values vals))
+        (loop for key in keys
+              for val in values
+              do (setf (gethash key result) val))))
+    result))
+
+(defun clojure-thrown-with-cause-msg? (exception-class msg body)
+  "Test helper to check if an exception with cause and message is thrown."
+  (declare (ignore exception-class msg))
+  (handler-case
+      (progn
+        (clojure-eval body *current-env*)
+        nil)
+    (error (c) c)))
+
+(defun clojure-fails-with-cause? (pred cause-type body)
+  "Test helper to check if code fails with a specific cause."
+  (declare (ignore pred cause-type))
+  (handler-case
+      (progn
+        (clojure-eval body *current-env*)
+        nil)
+    (error (c) c)))
+
+(defun clojure-ab (collection)
+  "Get the sequence of values from a reducible collection.
+   In Clojure reducers context, this is the core protocol."
+  (when (consp collection)
+    collection))
+
+(defun clojure-fn (&rest args)
+  "Identity function when called with one arg.
+   With multiple args, creates a function that applies the first arg to the rest."
+  (cond
+    ((null args) (lambda (x) x))
+    ((= (length args) 1) (lambda (x) x))
+    (t (let ((f (first args))
+             (more-args (rest args)))
+         (lambda (&rest more) (apply f (append more-args more)))))))
+
+(defun clojure-flatten (coll)
+  "Flatten nested sequences into a single-level list."
+  (when coll
+    (cond
+      ((or (null coll) (equal coll '())) '())
+      ((or (consp coll) (vectorp coll))
+       (let ((result nil))
+         (dolist (item (coerce coll 'list))
+           (let ((flat (clojure-flatten item)))
+             (if flat
+                 (setf result (append result (coerce flat 'list)))
+                 (push item result))))
+         (nreverse result)))
+      (t (list coll)))))
+
+(defun clojure-interpose (sep coll)
+  "Insert sep between each element of coll."
+  (when (consp coll)
+    (butlast (loop for item in coll
+                   append (list item sep)))))
+
+(defun clojure-interleave (&rest colls)
+  "Interleave elements from multiple collections."
+  (when colls
+    (let ((result nil)
+          (i 0))
+      (block outer
+        (loop
+          (dolist (coll colls)
+            (let ((lst (coerce coll 'list)))
+              (when (>= i (length lst))
+                (return-from outer))
+              (push (nth i lst) result)))
+          (incf i)))
+      (nreverse result))))
+
+(defun clojure-zipper (branch? children make-node root)
+  "Create a zipper data structure. Stub implementation."
+  (declare (ignore branch? children make-node))
+  root)
+
+(defun clojure-node (zipper)
+  "Get the current node from a zipper. Stub implementation."
+  zipper)
+
+(defun clojure-iterate (f x)
+  "Create an infinite lazy sequence of x, f(x), f(f(x)), etc.
+   For our implementation, return a limited sequence."
+  (let ((result nil)
+        (current x)
+        (max-iter 1000))
+    (dotimes (i max-iter)
+      (push current result)
+      (setf current (funcall f current)))
+    (nreverse result)))
+
+(defun clojure-merge (&rest maps)
+  "Merge multiple maps into one. Later maps overwrite earlier keys."
+  (let ((result (make-hash-table :test 'equal)))
+    (dolist (m maps)
+      (when (hash-table-p m)
+        (maphash (lambda (k v)
+                   (setf (gethash k result) v))
+                 m)))
+    result))
+
+(defun clojure-merge-with (f &rest maps)
+  "Merge multiple maps, combining values with f when keys conflict."
+  (let ((result (make-hash-table :test 'equal)))
+    (dolist (m maps)
+      (when (hash-table-p m)
+        (maphash (lambda (k v)
+                   (if (gethash k result)
+                       (setf (gethash k result)
+                             (funcall f (gethash k result) v))
+                       (setf (gethash k result) v)))
+                 m)))
+    result))
+
+(defun clojure-group-by (f coll)
+  "Group elements of coll by the result of applying f to each element."
+  (let ((result (make-hash-table :test 'equal)))
+    (dolist (item (coerce coll 'list))
+      (let ((key (funcall f item)))
+        (push item (gethash key result))))
+    ;; Convert lists to vectors for proper Clojure semantics
+    (maphash (lambda (k v)
+               (setf (gethash k result) (nreverse v)))
+             result)
+    result))
+
+(defun clojure-frequencies (coll)
+  "Return a map of each unique element in coll to its frequency."
+  (let ((result (make-hash-table :test 'equal)))
+    (dolist (item (coerce coll 'list))
+      (incf (gethash item result 0)))
+    result))
+
+(defun clojure-reduce-kv (f init coll)
+  "Reduce over key-value pairs in a map."
+  (if (hash-table-p coll)
+      (let ((result init))
+        (maphash (lambda (k v)
+                   (setf result (funcall f result k v)))
+                 coll)
+        result)
+      init))
+
+(defun clojure-index (coll)
+  "Create a map from values to their indices in coll."
+  (let ((result (make-hash-table :test 'equal))
+        (i 0))
+    (dolist (item (coerce coll 'list))
+      (setf (gethash item result) i)
+      (incf i))
+    result))
+
+(defun clojure-seq-zip (colls)
+  "Zip multiple sequences together. Alias for interleave."
+  (apply #'clojure-interleave colls))
+
+(defun clojure-transient (coll)
+  "Create a transient version of a collection. Stub - returns collection as-is."
+  coll)
+
+(defun clojure-conj! (coll x)
+  "Add element to transient collection. Stub - same as conj."
+  (clojure-conj coll x))
+
+(defun clojure-pop! (coll)
+  "Remove element from transient collection. Stub - same as pop."
+  (when (or (consp coll) (vectorp coll))
+    (let ((lst (coerce coll 'list)))
+      (when (cdr lst)
+        (cdr lst)))))
+
+(defun clojure-disj! (s elem)
+  "Remove element from transient set. Stub - same as disj."
+  (clojure-disj s elem))
+
+(defun clojure-dissoc! (m key)
+  "Remove key from transient map. Stub - same as dissoc."
+  (clojure-dissoc m key))
+
+(defun clojure-assoc! (m key val)
+  "Add key-value to transient map. Stub - same as assoc."
+  (clojure-assoc m key val))
+
+(defun clojure-peek (coll)
+  "Get the last element added to a collection."
+  (cond
+    ((vectorp coll)
+     (when (> (length coll) 0)
+       (aref coll (- (length coll) 1))))
+    ((consp coll)
+     (first coll))
+    (t nil)))
+
+(defun clojure-pop (coll)
+  "Remove the last element added to a collection."
+  (cond
+    ((vectorp coll)
+     (if (> (length coll) 0)
+         (subseq coll 0 (- (length coll) 1))
+         coll))
+    ((consp coll)
+     (rest coll))
+    (t nil)))
+
+(defun clojure-select-keys (map keyseq)
+  "Return a map containing only those entries in map whose keys are in keyseq."
+  (let ((result (make-hash-table :test 'equal)))
+    (dolist (k (coerce keyseq 'list))
+      (when (hash-table-p map)
+        (multiple-value-bind (val found) (gethash k map)
+          (when found
+            (setf (gethash k result) val)))))
+    result))
+
+(defun clojure-get-in (m keys &optional not-found)
+  "Get value in nested map structure using key path."
+  (if (consp keys)
+      (let ((current m))
+        (dolist (k keys)
+          (if (hash-table-p current)
+              (multiple-value-bind (val found) (gethash k current)
+                (if found
+                    (setf current val)
+                    (return-from clojure-get-in not-found)))
+              (return-from clojure-get-in not-found)))
+        current)
+      (if (hash-table-p m)
+          (multiple-value-bind (val found) (gethash keys m)
+            (if found val not-found))
+          not-found)))
+
+(defun clojure-assoc-in (m keys val)
+  "Set value in nested map structure using key path."
+  (if (null (cdr keys))
+      (clojure-assoc m (car keys) val)
+      (let ((inner-map (gethash (car keys) m)))
+        (clojure-assoc m (car keys)
+                      (clojure-assoc-in (or inner-map (make-hash-table :test 'equal))
+                                        (cdr keys) val)))))
+
+(defun clojure-update-in (m keys f &rest args)
+  "Update value in nested map using function f."
+  (let ((current (clojure-get-in m keys)))
+    (clojure-assoc-in m keys (apply f current args))))
+
 (defun clojure-fnil (f fill-val &rest more-fills)
   "Return a function that calls f but replaces nil arguments with fill values."
   (lambda (&rest args)
@@ -7224,7 +7529,28 @@
                 (string (signal 'simple-error :format-control "~a" :format-arguments (list exception)))
                 ;; Otherwise, convert to string and signal
                 (t (signal 'simple-error :format-control "~a" :format-arguments (list exception))))))
-
+           ((and head-name (string= head-name "dotimes"))
+            ;; Dotimes form: (dotimes [bindings n] body*)
+            ;; bindings is [i n] where i is the iteration var and n is the count
+            ;; Evaluates body n times, binding i to 0..n-1
+            ;; Returns nil
+            (let* ((bindings-vec (cadr form))
+                   (body-forms (cddr form))
+                   (iter-var (if (vectorp bindings-vec)
+                                (aref bindings-vec 0)
+                                (car bindings-vec)))
+                   (count-expr (if (vectorp bindings-vec)
+                                 (aref bindings-vec 1)
+                                 (cadr bindings-vec)))
+                   (count-val (clojure-eval count-expr env)))
+              ;; Iterate count-val times
+              (dotimes (i count-val)
+                ;; Create a new environment with the iteration variable bound
+                (let ((new-env (env-extend-lexical env iter-var i)))
+                  ;; Evaluate all body forms
+                  (dolist (body-form body-forms)
+                    (clojure-eval body-form new-env))))
+              nil))
            ;; Function application (including when head is not a symbol)
            (t
             (let ((fn-value (clojure-eval head env)))

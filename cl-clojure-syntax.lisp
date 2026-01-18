@@ -423,9 +423,9 @@
 
 (defun generate-arg-names (arg-count has-rest)
   "Generate argument name list based on count and rest flag.
-   Returns: [] for no args, [gen__#] for one arg, etc."
+   Returns: #() for no args, #[gen__#] for one arg, etc."
   (if (and (= arg-count 0) (not has-rest))
-      '()
+      (vector)  ; Return empty vector for no args
       (let ((args '()))
         ;; Generate numbered args
         (loop for i from 1 to arg-count

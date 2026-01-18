@@ -1147,6 +1147,31 @@
         (dolist (expr body result)
           (setf result (clojure-eval expr new-env)))))))
 
+(defun eval-with-precision (form env)
+  "Evaluate a with-precision form: (with-precision precision & more body+).
+   Sets the precision and rounding mode for BigDecimal arithmetic.
+   For SBCL, this is a stub that just evaluates the body."
+  (let* ((args (cdr form))
+         ;; Parse: precision [:rounding mode] body+
+         (precision (car args))
+         (rest-args (cdr args))
+         ;; Check if :rounding keyword is present
+         ;; The second element could be :rounding (a keyword) or the start of body
+         (second-arg (car rest-args))
+         (has-rounding (and second-arg
+                           (keywordp second-arg)
+                           (string= (symbol-name second-arg) "rounding")))
+         ;; Skip :rounding mode if present (2 elements: :rounding and the mode)
+         (body-start (if has-rounding
+                        (cddr rest-args)  ; Skip (:rounding mode)
+                        rest-args))
+         (body body-start))
+    ;; For SBCL, we don't have true BigDecimal precision control
+    ;; Just evaluate the body forms and return the last result
+    (let ((result nil))
+      (dolist (expr body result)
+        (setf result (clojure-eval expr env))))))
+
 (defun eval-deftest (form env)
   "Evaluate a deftest form: (deftest name body+) - define a test."
   ;; For now, deftest just evaluates the body to check for errors
@@ -2484,6 +2509,17 @@
         (coerce args 'vector))
        (t
         (error "Unsupported gen method: ~A" member-name))))
+    ;; clojure.main namespace functions
+    ((string-equal class-name "clojure.main")
+     (cond
+       ((string-equal member-name "with-bindings")
+        ;; Stub: just execute the first argument (a function)
+        ;; In Clojure, this executes with thread-local bindings
+        (if (null args)
+            nil
+            (first args)))
+       (t
+        (error "Unsupported clojure.main method: ~A" member-name))))
     ;; Default: error for unknown Java interop
     (t
      (error "Unsupported Java interop: ~A/~A" class-name member-name))))
@@ -2556,12 +2592,28 @@
            nil
            (let ((val (first args)))
              (not (null val)))))
+      ;; MathContext constructor - for BigDecimal precision
+      ((string-equal name "java.math.MathContext")
+       ;; Return the precision value as a stub
+       (if (null args)
+           34  ; default precision in Java
+           (first args)))
       ;; MapEntry constructor - creates a map entry [key val]
       ((string-equal name "clojure.lang.MapEntry")
        ;; Return a vector [key val] to represent the MapEntry
        (if (>= (length args) 2)
            (vector (first args) (second args))
            (vector nil nil)))
+      ;; Thread constructor - creates a new thread
+      ((string-equal name "Thread")
+       ;; For SBCL, just return nil as a stub
+       nil)
+      ;; Exception constructor - creates an exception
+      ((string-equal name "Exception")
+       ;; For SBCL, just return the message as a stub
+       (if (null args)
+           :exception
+           (first args)))
       ;; Default: error for unknown constructors
       (t
        (error "Unsupported Java constructor: ~A" class-name)))))
@@ -2834,6 +2886,10 @@
 
   ;; Additional core functions
   (register-core-function env 'agent #'clojure-agent)
+  (register-core-function env 'promise #'clojure-promise)
+  (register-core-function env 'deliver #'clojure-deliver)
+  (register-core-function env 'with-redefs-fn #'clojure-with-redefs-fn)
+  (register-core-function env 'with-redefs #'clojure-with-redefs)
   (register-core-function env 'name #'clojure-name)
   (register-core-function env 'butlast #'clojure-butlast)
   (register-core-function env 'drop #'clojure-drop)
@@ -5068,6 +5124,39 @@
 
 ;;; Test helper stub functions (from clojure.test-helper)
 
+(defun clojure-promise (&rest args)
+  "Create a promise (a placeholder for a value that will be delivered later).
+   For SBCL, this is a stub that returns an atom-like cons cell."
+  (declare (ignore args))
+  ;; Return a cons cell that holds the promised value
+  (cons nil nil))
+
+(defun clojure-deliver (promise val &rest args)
+  "Deliver a value to a promise, fulfilling it.
+   For SBCL, this is a stub that sets the value in the cons cell."
+  (declare (ignore args))
+  ;; Set the car of the cons cell to the value
+  (setf (car promise) val)
+  promise)
+
+(defun clojure-with-redefs-fn (redefs fn)
+  "Temporarily redefine vars, execute fn, then restore original values.
+   For SBCL, this is a stub that just calls the function."
+  (declare (ignore redefs))
+  ;; Just call the function without actually redefining anything
+  ;; Use ensure-callable to handle closures properly
+  (funcall (ensure-callable fn)))
+
+(defun clojure-with-redefs (redefs &rest body)
+  "Temporarily redefine vars, execute body, then restore original values.
+   For SBCL, this is a stub that just evaluates the body forms."
+  (declare (ignore redefs))
+  ;; Just evaluate body forms and return the last result
+  (let ((result nil))
+    (dolist (expr body result)
+      ;; For stub purposes, just use the expression as-is
+      (setf result expr))))
+
 (defun clojure-thrown-with-msg? (class regex-body body)
   "Test helper that checks if an exception of class with message matching regex is thrown.
    For SBCL, this is a stub that just evaluates body and returns nil."
@@ -6719,6 +6808,10 @@
                    (if (vectorp target)
                        (clojure-reverse target)
                        target))
+                  ;; .start is a Thread method - stub that does nothing
+                  ((string= method-name "start")
+                   ;; For stub purposes, just return nil
+                   nil)
                   ;; Default: return target (stub for unknown methods)
                   (t target)))))
 
@@ -6781,6 +6874,7 @@
            ((and head-name (string= head-name "declare")) (eval-declare form env))
            ((and head-name (string= head-name "binding")) (eval-binding form env))
            ((and head-name (string= head-name "with-local-vars")) (eval-with-local-vars form env))
+           ((and head-name (string= head-name "with-precision")) (eval-with-precision form env))
            ((and head-name (string= head-name "new"))
             ;; Java constructor call: (new Classname args...)
             ;; For SBCL, this is a stub that returns nil
@@ -6924,7 +7018,10 @@
          (cond
            ;; Vector parameters - fixed arity or with & rest params
            ((vectorp params)
-            (let* ((amp-pos (position (intern "&") params))
+            (let* ((amp-pos (loop for i from 0 below (length params)
+                                  when (and (symbolp (aref params i))
+                                           (string= (symbol-name (aref params i)) "&"))
+                                  return i))
                    (fixed-count (if amp-pos amp-pos (length params))))
               ;; Bind fixed params - use extend-binding to handle destructuring
               (loop for i from 0 below fixed-count

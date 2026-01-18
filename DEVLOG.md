@@ -3307,3 +3307,78 @@ The fix was to add explicit `hash-table-p` checks before attempting coercion. Wh
 2. Trace the vectors test hash table error to find its exact source
 3. Implement `with-precision` for vars test
 4. Continue implementing more core functions as tests require them
+
+---
+
+### Iteration 55 - 2026-01-18
+
+**Focus:** Implement with-precision, Java constructor stubs, and test helpers
+
+**Changes Made:**
+
+1. **Implemented `with-precision` special form** - cl-clojure-eval.lisp:1150-1173, 6784
+   - Handles precision and optional rounding mode (`:rounding`)
+   - For SBCL, this is a stub that just evaluates the body (no BigDecimal precision control)
+   - Syntax: `(with-precision precision [:rounding mode] body+)`
+
+2. **Added `java.math.MathContext` constructor stub** - cl-clojure-eval.lisp:2584-2589
+   - Returns the precision value as a stub
+   - Used by `test-settable-math-context` in vars test
+
+3. **Added `clojure.main/with-bindings` stub** - cl-clojure-eval.lisp:2512-2525
+   - Stub implementation that just executes the function body
+   - Used by `test-settable-math-context`
+
+4. **Implemented test helper stubs** - cl-clojure-eval.lisp:5113-5143, 2879-2882
+   - `promise` - returns a cons cell for holding values
+   - `deliver` - sets the value in a promise
+   - `with-redefs-fn` - calls a function (stub implementation)
+   - `with-redefs` - evaluates body forms (stub implementation)
+   - All registered as core functions
+
+5. **Added Java constructor stubs** - cl-clojure-eval.lisp:2607-2616
+   - `Thread` constructor stub - returns nil
+   - `Exception` constructor stub - returns the message
+
+6. **Added `.start` method stub** - cl-clojure-eval.lisp:6810-6813
+   - Stub for Thread's `.start` method
+   - Returns nil
+
+7. **Fixed `generate-arg-names` to return empty vector** - cl-clojure-syntax.lisp:427-428
+   - Changed from returning `'()` to `(vector)` for no args
+   - Ensures `fn*` with no parameters gets a vector `#()` instead of nil
+
+8. **Fixed `&` symbol search in `apply-function`** - cl-clojure-eval.lisp:7021-7024
+   - Changed from `(position (intern "&") params)` to a loop that compares symbol names
+   - Avoids package issues with `&` symbol comparison
+
+**Errors Fixed:**
+- "Undefined symbol: with-precision" - FIXED ✅
+- "Undefined symbol: CEILING" - FIXED ✅ (with-precision now parses :rounding correctly)
+- "Unsupported Java constructor: java.math.MathContext" - FIXED ✅
+- "Unsupported Java interop: clojure.main/with-bindings" - FIXED ✅
+- "Undefined symbol: promise" - FIXED ✅
+- "Undefined symbol: deliver" - FIXED ✅
+- "Undefined symbol: with-redefs-fn" - FIXED ✅
+- "Undefined symbol: with-redefs" - FIXED ✅
+- "Unsupported Java constructor: Thread" - FIXED ✅
+- "Unsupported Java constructor: Exception" - FIXED ✅
+
+**Current Issues:**
+- vars test: "invalid number of arguments: 3"
+  - The error occurs during evaluation of the vars test file
+  - Likely related to how `with-redefs-fn` or the anonymous function `#(...)` is being called
+  - The `ensure-callable` function wraps closures for CL funcall, but something is still wrong
+  - The error type is SIMPLE-PROGRAM-ERROR, suggesting a CL function is being called with wrong args
+
+**Test Results:**
+- Parse: 94 ok, 8 errors ✅
+- Eval: 53 ok, 49 errors (no change)
+- vars test progresses through with-precision but fails on with-redefs-fn test
+
+**Next Steps:**
+1. Debug the "invalid number of arguments: 3" error in vars test
+   - Trace where the error originates (likely in funcall or apply-function)
+   - Check if the issue is with how closures are wrapped or called
+2. Continue implementing more core functions as tests require them
+3. Fix remaining test failures

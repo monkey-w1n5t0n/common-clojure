@@ -5013,3 +5013,51 @@ Also added special handling to NOT process strings as vectors (strings are vecto
 1. Continue with remaining test failures
 2. Many remaining failures are Java interop (StackTraceElement, UUID, etc.) - not solvable without Java bridge
 3. Focus on pure Clojure features that can be implemented
+
+### Iteration 85 - 2026-01-18
+
+**Focus:** Add definterface stub and investigate destructuring errors
+
+**Problem:**
+The array_symbols test was failing with `|String| is not of type SEQUENCE when binding SEQUENCE`. This error occurs during list destructuring when a symbol (like `String`) is being used as a value instead of a sequence.
+
+**Investigation:**
+- The error happens in `extend-binding` when trying to coerce a non-sequence value to a list
+- The `|String|` symbol is the escaped Common Lisp representation of the `String` symbol
+- Multiple tests show this error: array_symbols, clearing, metadata, multimethods, parse, try_catch, vectors
+- The error is NOT in the `are` macro substitution (the substitution code is correct)
+
+**Root Cause (Suspected):**
+The issue appears to be related to how symbols like `String`, `Object`, etc. are being used in destructuring contexts. These are likely coming from:
+1. Type hints like `^String` or `^Object` being incorrectly processed
+2. Java interop class references being used as values in binding contexts
+
+**Changes Made:**
+
+1. **Added `eval-definterface` stub** - cl-clojure-eval.lisp:1608-1615
+   - Returns the interface name as a symbol
+   - Prevents "Undefined symbol" errors for `definterface`
+   - Added special form dispatch at line 8197
+
+2. **Investigated `substitute-symbols` function** - cl-clojure-eval.lisp:7873-7884
+   - The `process-binding-vector` function correctly handles `let`-style bindings
+   - The `are` macro does NOT process binding vectors through `substitute-symbols`
+   - The substitution is done correctly on the expression template only
+
+**Test Results:**
+- Parse: 93 ok, 9 errors
+- Eval: 63 ok, 39 errors (same as iteration 84)
+- The definterface stub did not improve test count (error was elsewhere)
+
+**Known Issues:**
+- Destructuring error: `|String| is not of type SEQUENCE` - needs deeper investigation
+- The error is happening during evaluation, not parsing
+- The error appears to be in `extend-binding` during list destructuring
+- Multiple tests affected: array_symbols, clearing, metadata, multimethods, parse, try_catch, vectors
+
+**Next Steps:**
+1. Need to trace the exact call stack to find where `String` symbol is being used as a destructuring value
+2. Check if type hints like `^String` are being incorrectly processed
+3. Investigate if Java class imports are creating symbols that end up in destructuring contexts
+4. Consider adding type hints handling in destructuring code
+

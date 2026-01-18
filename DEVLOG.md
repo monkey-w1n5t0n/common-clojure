@@ -2951,3 +2951,57 @@ The transients test was failing due to undefined symbols for transient collectio
 4. Implement `thrown?` test helper
 5. Fix syntax-quote error in transducers
 6. Continue implementing more core functions as tests require them
+
+---
+
+### Iteration 49 - 2026-01-18
+
+**Focus:** Fix test helper functions, parameter destructuring, and Java interop constants
+
+**Changes Made:**
+
+1. **Fixed test helper function registration** - cl-clojure-eval.lisp:2797-2800
+   - `clojure-thrown-with-msg?` - Test helper for exception checking (stub)
+   - `clojure-fails-with-cause` - Test helper for cause checking (stub)
+   - `clojure-transient?` - Check if collection is transient (always returns nil)
+   - Previously these were pointing to wrong/undefined functions
+
+2. **Fixed parameter destructuring in closures** - cl-clojure-eval.lisp:6563, 6573
+   - Changed from `env-extend-lexical` to `extend-binding`
+   - This enables proper destructuring of vector parameters like `[tfunc pfunc]`
+   - Fixes issues where nested destructuring wasn't working
+
+3. **Added EMPTY constant handling** - cl-clojure-eval.lisp:1537-1545
+   - `clojure.lang.PersistentArrayMap/EMPTY` → empty hash table
+   - `clojure.lang.PersistentHashMap/EMPTY` → empty hash table
+   - `clojure.lang.PersistentHashSet/EMPTY` → empty hash table
+   - These are static fields that return empty collections
+
+**Attempted but not fully resolved:**
+
+- "The function COMMON-LISP:NIL is undefined" error in data_structures and logic tests
+  - This error occurs when `nil` is being passed to `funcall` somewhere
+  - Likely related to how `reduce` or `apply` handles empty collections or nil values
+  - Needs deeper investigation of the evaluation flow
+
+**Test Results:**
+- Parse: 94 ok, 8 errors ✅
+- Eval: 52 ok, 50 errors (no change from iteration 48)
+- Status: Structural improvements made but no new tests passing
+
+**Known Issues:**
+- data_structures: "The function COMMON-LISP:NIL is undefined"
+- logic: "The function COMMON-LISP:NIL is undefined"
+- for: "Cannot apply non-function: NIL"
+- control: "#(|a| |b|) is not a string designator"
+- keywords: "The function :|foo/bar| is undefined"
+- Many other tests have Java interop and undefined symbol errors
+
+**Next Steps:**
+1. Debug the "COMMON-LISP:NIL is undefined" error in data_structures test
+   - Trace through the `apply-actions` function and its use of `reduce`
+   - Check if `EMPTY` constant is returning correct value
+   - Verify that destructured parameters are getting correct values
+2. Fix "is not a string designator" error in control and for tests
+3. Implement keyword-as-function support (:foo/bar should be callable)
+4. Continue implementing more core functions as tests require them

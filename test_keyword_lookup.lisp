@@ -1,0 +1,16 @@
+(load "cl-clojure-syntax")
+(load "cl-clojure-eval")
+(init-eval-system)
+
+;; Test keyword lookup
+(let* ((num-seqs (make-hash-table :test 'equal))
+       (_ (setf (gethash :standard num-seqs) (clojure-range 1 100)))
+       (_ (setf (gethash :longer num-seqs) (clojure-concat (gethash :standard num-seqs) (vector 100))))
+       (int-vecs (make-hash-table :test 'equal))
+       (_ (setf (gethash :standard int-vecs) (clojure-into (clojure-vector-of :int) (gethash :standard num-seqs))))
+       (_ (setf (gethash :longer int-vecs) (clojure-into (clojure-vector-of :int) (gethash :longer num-seqs))))
+       (longer-vec (gethash :longer int-vecs)))
+  (format t "longer-vec type: ~A~%" (type-of longer-vec))
+  (format t "longer-vec: ~A~%" longer-vec)
+  (let ((result (clojure-compare (gethash :standard int-vecs) longer-vec)))
+    (format t "Result: ~A~%" result)))

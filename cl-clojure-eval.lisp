@@ -1531,13 +1531,25 @@
            ;; These are: MAX_VALUE, MIN_VALUE, TYPE, NaN, POSITIVE_INFINITY, NEGATIVE_INFINITY
            ;; Note: isNaN is a METHOD, not a static field, so it's NOT in this list
            (let ((static-fields '("MAX_VALUE" "MIN_VALUE" "TYPE" "NaN" "POSITIVE_INFINITY" "NEGATIVE_INFINITY"
-                                  "MAX_EXPONENT" "MIN_EXPONENT" "MIN_NORMAL" "SIZE" "BYTES")))
-             (if (and (member member-name static-fields :test #'string-equal)
-                      (member class-name '("Byte" "Short" "Integer" "Long" "Float" "Double" "Character" "Boolean") :test #'string-equal))
-                 ;; For static fields, evaluate and return the value directly
-                 (eval-java-interop (intern class-name) (intern member-name))
-                 ;; For methods, return the class/member list for creating a lambda
-                 (list class-name member-name)))))))))
+                                  "MAX_EXPONENT" "MIN_EXPONENT" "MIN_NORMAL" "SIZE" "BYTES" "EMPTY")))
+             (cond
+               ;; EMPTY field for Clojure collections - return empty collection
+               ((and (string-equal member-name "EMPTY")
+                     (or (string-equal class-name "clojure.lang.PersistentArrayMap")
+                         (string-equal class-name "clojure.lang.PersistentHashMap")
+                         (string-equal class-name "clojure.lang.PersistentHashSet")
+                         (string-equal class-name "PersistentArrayMap")
+                         (string-equal class-name "PersistentHashMap")
+                         (string-equal class-name "PersistentHashSet")))
+                ;; Return empty hash table as stub
+                (make-hash-table :test 'equal))
+               ;; Standard Java static fields
+               ((and (member member-name static-fields :test #'string-equal)
+                     (member class-name '("Byte" "Short" "Integer" "Long" "Float" "Double" "Character" "Boolean") :test #'string-equal))
+                ;; For static fields, evaluate and return the value directly
+                (eval-java-interop (intern class-name) (intern member-name)))
+               ;; For methods, return the class/member list for creating a lambda
+               (t (list class-name member-name))))))))))
 
 (defun eval-java-interop (class-name member-name &rest args)
   "Evaluate a Java interop call. This is a stub implementation."
@@ -2785,6 +2797,7 @@
   (register-core-function env 'function-missing #'clojure-function-missing)
   (register-core-function env 'bout #'clojure-bout)
   (register-core-function env 'transient #'clojure-transient)
+  (register-core-function env 'transient? #'clojure-transient?)
   (register-core-function env 'cnt #'clojure-cnt)
   (register-core-function env 'while #'clojure-while)
 
@@ -2796,8 +2809,8 @@
   ;; Register them in the 'clojure.test' namespace so they're accessible from test namespaces
   (let* ((fails-sym (intern "FAILS-WITH-CAUSE?"))  ; Creates in current package
          (thrown-sym (intern "THROWN-WITH-MSG?")))
-    (env-set-var env fails-sym #'clojure-thrown-with-msg 'clojure.test)
-    (env-set-var env thrown-sym #'clojure-thrown-with-msg 'clojure.test))
+    (env-set-var env fails-sym #'clojure-fails-with-cause 'clojure.test)
+    (env-set-var env thrown-sym #'clojure-thrown-with-msg? 'clojure.test))
 
   ;; Java interop stubs (Class/member notation)
   (setup-java-interop-stubs env)
@@ -4728,6 +4741,30 @@
   ;; Agents behave like atoms for our stub implementation
   (list value))
 
+;;; Test helper stub functions (from clojure.test-helper)
+
+(defun clojure-thrown-with-msg? (class regex-body body)
+  "Test helper that checks if an exception of class with message matching regex is thrown.
+   For SBCL, this is a stub that just evaluates body and returns nil."
+  (declare (ignore class regex-body))
+  ;; Just evaluate body and return nil (stub)
+  body
+  nil)
+
+(defun clojure-transient? (x)
+  "Test helper that checks if x is a transient collection.
+   For SBCL, this always returns nil since we don't have true transients."
+  (declare (ignore x))
+  nil)
+
+(defun clojure-fails-with-cause (class body)
+  "Test helper that checks if an exception with cause of class is thrown.
+   For SBCL, this is a stub that just evaluates body and returns nil."
+  (declare (ignore class))
+  ;; Just evaluate body and return nil (stub)
+  body
+  nil)
+
 (defun clojure-name (x)
   "Return the name of a symbol, string, or keyword."
   (cond
@@ -6532,20 +6569,20 @@
            ((vectorp params)
             (let* ((amp-pos (position (intern "&") params))
                    (fixed-count (if amp-pos amp-pos (length params))))
-              ;; Bind fixed params
+              ;; Bind fixed params - use extend-binding to handle destructuring
               (loop for i from 0 below fixed-count
                     for arg in unwrapped-args
-                    do (setf new-env (env-extend-lexical new-env (extract-single-param-name (aref params i)) arg)))
+                    do (setf new-env (extend-binding new-env (extract-single-param-name (aref params i)) arg)))
               ;; Handle rest param if present
               (when amp-pos
                 (let ((rest-param (aref params (1+ amp-pos)))
                       (rest-args (nthcdr fixed-count unwrapped-args)))
-                  (setf new-env (env-extend-lexical new-env (extract-single-param-name rest-param) rest-args))))))
+                  (setf new-env (extend-binding new-env (extract-single-param-name rest-param) rest-args))))))
            ;; List parameters (less common but supported)
            (t
             (loop for param in params
                   for arg in unwrapped-args
-                  do (setf new-env (env-extend-lexical new-env (extract-single-param-name param) arg)))))
+                  do (setf new-env (extend-binding new-env (extract-single-param-name param) arg)))))
 
          ;; Evaluate body
          (if (null body)

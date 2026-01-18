@@ -854,18 +854,108 @@
                    do (let ((val (clojure-eval val-expr env)))
                         (setf env (env-extend-lexical env name val)))))))))))
 
+(defun extend-map-binding (env binding-map value-map)
+  "Extend environment with map destructuring.
+   binding-map is a hash table like {:keys [a b] :or {a 1} :as m}
+   value-map is a hash table with actual values
+   Supports:
+   - :keys [k1 k2] - bind values for keywords :k1, :k2
+   - :syms [s1 s2] - bind values for symbols s1, s2
+   - :or {k default} - default values
+   - :as sym - bind entire map to sym
+
+   Note: Due to Clojure reader case sensitivity, we need to match keys by
+   lowercase symbol name since Clojure preserves case but CL uppercases."
+  (flet ((find-key (name)
+           "Find a keyword key in hash table by lowercase name comparison."
+           (loop for k being the hash-keys of binding-map
+                 when (and (keywordp k)
+                          (string-equal (symbol-name k) name))
+                   return k)))
+    (let ((new-env env))
+      ;; Get the keys to extract
+      (let ((keys-key (find-key "keys"))
+            (syms-key (find-key "syms"))
+            (or-key (find-key "or"))
+            (as-key (find-key "as")))
+        ;; Handle :keys destructuring
+        (when (and keys-key (gethash keys-key binding-map))
+          (let ((keys-spec (gethash keys-key binding-map)))
+            ;; keys-spec is like [x y] - extract :x and :y from value-map
+            ;; For namespaced keywords like :a/b, bind just b (local name)
+            (dolist (key (coerce keys-spec 'list))
+              (let* ((keyword-key (if (symbolp key)
+                                     ;; Create keyword by interning into KEYWORD package
+                                     (intern (symbol-name key) "KEYWORD")
+                                     key))
+                     (val (gethash keyword-key value-map))
+                     ;; For namespaced symbols, use local name only
+                     (bind-sym (let ((name (symbol-name key)))
+                                 (if (find #\/ name)
+                                     (let ((slash-pos (position #\/ name)))
+                                       (intern (subseq name (1+ slash-pos))))
+                                     key))))
+                (setf new-env (env-extend-lexical new-env bind-sym val))))))
+        ;; Handle :syms destructuring
+        (when (and syms-key (gethash syms-key binding-map))
+          (let ((syms-spec (gethash syms-key binding-map)))
+            ;; syms-spec is like [x y] - extract 'x and 'y from value-map
+            ;; For namespaced symbols like a/b, bind just b (local name)
+            (dolist (sym (coerce syms-spec 'list))
+              (let* ((sym-name (symbol-name sym))
+                     ;; Try to find the symbol in value map
+                     (val (gethash sym value-map))
+                     ;; For namespaced symbols, use local name only
+                     (bind-sym (if (find #\/ sym-name)
+                                     (let ((slash-pos (position #\/ sym-name)))
+                                       (intern (subseq sym-name (1+ slash-pos))))
+                                     sym)))
+                (setf new-env (env-extend-lexical new-env bind-sym val))))))
+        ;; Handle :or defaults - only set if key doesn't exist in value-map
+        (when (and or-key (gethash or-key binding-map))
+          (let ((or-spec (gethash or-key binding-map)))
+            (maphash (lambda (key default-val)
+                       (unless (gethash key value-map)
+                         (setf new-env (env-extend-lexical new-env key default-val))))
+                     or-spec)))
+        ;; Handle :as - bind entire map to symbol
+        (when (and as-key (gethash as-key binding-map))
+          (let ((as-spec (gethash as-key binding-map)))
+            (setf new-env (env-extend-lexical new-env as-spec value-map)))))
+      new-env)))
+
+(defun list-to-map (lst)
+  "Convert a flat list [k1 v1 k2 v2 ...] to a hash table.
+   This is used for keyword argument destructuring where rest values
+   are alternating keyword-value pairs."
+  (let ((map (make-hash-table :test 'equal)))
+    (loop for (key val) on lst by #'cddr
+          while key
+          do (setf (gethash key map) val))
+    map))
+
 (defun extend-binding (env binding-form value)
   "Extend environment with a binding.
    binding-form can be:
    - A symbol: bind value to that symbol
    - A vector: destructuring - bind each element of value to corresponding symbol
    - A list: destructuring - bind each element of value list to corresponding symbol
+   - A hash table: map destructuring - extract keys from map
    - Supports & for rest parameters: [a b & rest] binds first two to a,b and rest to remaining
+   - Supports & {:keys [x]} for keyword arguments: converts rest list to map and destructures
    - Supports nested destructuring: [[a b] & rest] recursively binds nested structures
    Returns the new environment."
   (cond
     ((symbolp binding-form)
      (env-extend-lexical env binding-form value))
+    ((hash-table-p binding-form)
+     ;; Map destructuring - value should be a map (hash table)
+     ;; For keyword arguments, value is a list of alternating key-value pairs
+     ;; Convert list to map first
+     (let ((value-map (if (consp value)
+                         (list-to-map value)
+                         value)))
+       (extend-map-binding env binding-form value-map)))
     ((vectorp binding-form)
      ;; Vector destructuring - same as list destructuring but for vectors
      (let* ((binding-list (coerce binding-form 'list))

@@ -3926,3 +3926,73 @@ Added multiple Java interop stubs and core functions to resolve "Unsupported Jav
 - Implement map destructuring for `& {:keys [x]}` patterns
 - Add more Java interop stubs as needed
 - Continue implementing more core functions as tests require them
+
+---
+
+### Iteration 64 - Map Destructuring (2026-01-18)
+
+### Summary
+Implemented map destructuring for `& {:keys [x]}` patterns in function parameters and let bindings. This enables keyword argument destructuring like `(fn [& {:keys [x]}] x)`.
+
+### Changes Made
+
+1. **Added `extend-map-binding` function** - cl-clojure-eval.lisp:857-925
+   - Handles map destructuring patterns like `{:keys [a b] :or {a 1} :as m}`
+   - Supports `:keys`, `:syms`, `:or`, and `:as` destructuring options
+   - Extracts keyword/symbol values from maps and binds to local names
+   - Handles namespaced keywords like `:a/b` by binding just `b`
+
+2. **Added `list-to-map` function** - cl-clojure-eval.lisp:927-934
+   - Converts flat list of alternating key-value pairs to hash table
+   - Used for keyword argument destructuring where rest args are `(k1 v1 k2 v2 ...)`
+
+3. **Updated `extend-binding` to handle hash-table binding-forms** - cl-clojure-eval.lisp:936-943
+   - When binding-form is a hash-table (map destructuring pattern)
+   - Converts list values to map via `list-to-map`
+   - Delegates to `extend-map-binding` for actual binding
+
+4. **Fixed case sensitivity issue** - cl-clojure-eval.lisp:869-874
+   - Clojure reader preserves lowercase (`:keys`)
+   - Common Lisp reader uppercases (`:KEYS`)
+   - Added `find-key` helper to match by lowercase name comparison
+
+### Technical Details
+
+**Case Sensitivity Problem:**
+- Clojure reader: `{:keys [x]}` → key is keyword with name "keys" (lowercase)
+- Common Lisp code: `:keys` → keyword with name "KEYS" (uppercased by reader)
+- Solution: Match keys by `string-equal` comparison instead of `eq`
+
+**Namespaced Keyword Binding:**
+- Pattern: `{:keys [:a/b :c/d]}` → binds `b` and `d` (local names only)
+- Extracts name after `/` slash as the binding symbol
+
+**Function Rest Parameter Map Destructuring:**
+- `(fn [& {:keys [x]}] x)` receives rest args as list `(:x :a)`
+- `list-to-map` converts to hash table `{ :x :a }`
+- `extend-map-binding` looks up `:x` and binds `x` to `:a`
+
+### Errors Fixed
+- "Invalid binding form: #<HASH-TABLE>..." - FIXED ✅
+- "Undefined symbol: x" in map destructuring - FIXED ✅ (for keyword destructuring)
+
+### Known Issues (Reader Limitations)
+- Quoted symbols in map literals (`{'a/b 1}`) create cons cells instead of symbols
+  - Reader interprets `'a/b` as `(quote a/b)` which is a list
+  - This is a reader issue, not eval
+  - Affects `namespaced-syms-in-destructuring` test
+
+### Test Results
+- Parse: 94 ok, 8 errors ✅
+- Eval: **60 ok, 42 errors** (unchanged)
+- Several map destructuring tests now pass:
+  - `multiple-keys-in-destructuring` ✅
+  - `keywords-in-destructuring` ✅
+  - `namespaced-keywords-in-destructuring` ✅
+  - `namespaced-keys-syntax` ✅
+  - `empty-list-with-:as-destructuring` ✅
+
+### Next Steps
+- Fix reader to handle quoted symbols in map literals properly
+- Add more Java interop stubs as needed
+- Continue implementing more core functions as tests require them

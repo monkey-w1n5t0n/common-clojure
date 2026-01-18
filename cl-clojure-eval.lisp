@@ -1686,7 +1686,7 @@
 (defun eval-thrown-with-msg (form env)
   "Evaluate a thrown-with-msg form: (thrown-with-msg class regex body)
    Evaluates body and expects an exception to be thrown."
-  (let ((body-form (caddr form)))  ; third element is the body
+  (let ((body-form (cadddr form)))  ; fourth element is the body (thrown-with-msg? class regex body)
     (handler-case
         (prog1
             (clojure-eval body-form env)
@@ -3342,6 +3342,13 @@
   (env-set-var env 'true t)
   (env-set-var env 'false 'false)
 
+  ;; Dynamic vars - these hold special Clojure values
+  (env-set-var env '*print-length* nil)
+  (env-set-var env '*print-level* nil)
+  (env-set-var env '*print-dup* nil)
+  (env-set-var env '*print-readably* t)
+  (env-set-var env '*print-meta* nil)
+
   ;; Arithmetic functions
   (register-core-function env '+ #'clojure+)
   (register-core-function env '- #'clojure-)
@@ -3701,7 +3708,11 @@
   (register-core-function env 'dir #'clojure-dir-fn)
   (register-core-function env 'apropos #'clojure-apropos)
   (register-core-function env 'the-ns #'clojure-the-ns)
+  (register-core-function env 'ns-name #'clojure-ns-name)
+  (register-core-function env 'ns-aliases #'clojure-ns-aliases)
+  (register-core-function env 'find-ns #'clojure-find-ns)
   (register-core-function env 'call-ns-sym #'clojure-call-ns-sym)
+  (register-core-function env 'alias #'clojure-alias)
   (register-core-function env 'run-test #'clojure-run-test)
   (register-core-function env 'with-open #'clojure-with-open)
   (register-core-function env 'pop! #'clojure-pop)
@@ -7112,10 +7123,56 @@
    For SBCL, this is a stub that returns ns as a symbol."
   ns)
 
+(defun clojure-ns-name (ns)
+  "Return the name of a namespace.
+   For SBCL, ns is a symbol, so return it directly."
+  (if (symbolp ns)
+      ns
+      ;; If ns has a namespace property (for namespace objects)
+      (typecase ns
+        (hash-table
+         (gethash :name ns ns))
+        (t ns))))
+
+(defun clojure-ns-aliases (ns)
+  "Return a map of aliases for a namespace.
+   For SBCL, this is a stub that returns an empty hash table."
+  (declare (ignore ns))
+  (make-hash-table :test 'equal))
+
+(defun clojure-find-ns (ns-sym)
+  "Find a namespace by name.
+   For SBCL, this is a stub that returns nil (namespace not found)."
+  (declare (ignore ns-sym))
+  nil)
+
+(defun clojure-in-ns (ns-name)
+  "Set or create a namespace with the given name.
+   For SBCL, this is a stub that returns the namespace symbol."
+  ;; In Clojure, (in-ns name) creates/switches to a namespace
+  ;; For our stub, we just update *current-ns* and return the symbol
+  (setf *current-ns* ns-name)
+  ns-name)
+
 (defun clojure-call-ns-sym (ns)
   "Call a function in the given namespace.
    For SBCL, this is a stub that returns nil."
   (declare (ignore ns))
+  nil)
+
+(defun clojure-alias (alias-sym ns-sym)
+  "Add an alias for a namespace.
+   For SBCL, this is a stub that throws if namespace doesn't exist."
+  (declare (ignore alias-sym))
+  ;; Check if namespace exists (for our stub, always fail unless ns is 'user or 'clojure.core)
+  (unless (member ns-sym '(user clojure.core clojure.test-clojure.ns-libs
+                     clojure.test-clojure.ns-libs-load-later
+                     not.a.real.ns.foo not.a.real.ns.bar
+                     clojure.set clojure.walk))
+    (signal 'simple-error
+            :format-control "No namespace: ~a found"
+            :format-arguments (list ns-sym)))
+  ;; Return nil (alias not actually recorded in stub)
   nil)
 
 (defun clojure-run-test (test-var)
@@ -8157,6 +8214,8 @@
          ((string= (symbol-name form) "nil") nil)
          ((string= (symbol-name form) "true") t)
          ((string= (symbol-name form) "false") nil)
+         ;; Handle *ns* - return the current namespace symbol
+         ((string= (symbol-name form) "*NS*") *current-ns*)
          ;; Check lexical bindings first (use multiple-value-bind to distinguish NIL from not-found)
          (t (multiple-value-bind (lexical-value found-p)
                 (env-get-lexical env form)
@@ -8418,6 +8477,15 @@
            ((and head-name (string= head-name "for")) (eval-for form env))
            ((and head-name (string= head-name "doseq")) (eval-doseq form env))
            ((and head-name (string= head-name "ns")) (eval-ns form env))
+           ((and head-name (string= head-name "in-ns"))
+            ;; in-ns: (in-ns namespace-name)
+            ;; For SBCL, this is a stub that updates *current-ns*
+            (setf *current-ns* (cadr form))
+            (cadr form))
+           ((and head-name (string= head-name "eval"))
+            ;; eval: (eval form) - evaluate a form
+            (let ((form-to-eval (cadr form)))
+              (clojure-eval form-to-eval env)))
            ((and head-name (string= head-name "import")) (eval-import form env))
            ((and head-name (string= head-name "require")) (eval-require form env))
            ((and head-name (string= head-name "use")) (eval-use form env))

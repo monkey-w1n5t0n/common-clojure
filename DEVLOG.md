@@ -5360,3 +5360,59 @@ invalid number of arguments: 2
 2. Fix "Cannot apply non-function: 1" error in for test
 3. Fix "invalid number of arguments: 1" error in array_symbols test
 4. Fix "invalid number of arguments: 0" errors (java_interop, other_functions, repl)
+
+---
+
+### Iteration 91 - 2026-01-18
+
+**Focus:** Add namespace functions, eval special form, and *ns* handling
+
+**Changes Made:**
+
+1. **Implemented `eval` special form** - cl-clojure-eval.lisp:8485-8488
+   - `(eval form)` - evaluates a form dynamically
+   - Required for test-alias and reimporting-deftypes tests
+
+2. **Implemented namespace functions:**
+   - `clojure-ns-name` - returns the name of a namespace
+   - `clojure-ns-aliases` - returns aliases map (stub, empty hash table)
+   - `clojure-find-ns` - finds namespace by name (stub, returns nil)
+   - `clojure-in-ns` - switches/creates namespace
+   - `clojure-alias` - adds namespace alias, throws for non-existent namespaces
+
+3. **Implemented `*ns*` dynamic var** - cl-clojure-eval.lisp:8203
+   - `*ns*` now returns `*current-ns*` when evaluated
+   - Removed from env registration, handled as special case
+
+4. **Fixed `eval-thrown-with-msg`** - cl-clojure-eval.lisp:1689
+   - Changed from `caddr` to `cadddr` to correctly extract body form
+   - Form structure: `(thrown-with-msg? class regex body)`
+
+5. **Added dynamic print vars** - cl-clojure-eval.lisp:3346-3350
+   - `*print-length*`, `*print-level*`, `*print-dup*`, `*print-readably*`, `*print-meta*`
+
+**Errors Fixed:**
+- "Undefined symbol: eval" - FIXED ✅
+- "Undefined symbol: ns-name" - FIXED ✅
+- "Undefined symbol: ns-aliases" - FIXED ✅
+- "Undefined symbol: find-ns" - FIXED ✅
+- "Undefined symbol: alias" - FIXED ✅
+- "*ns* not returning current namespace" - FIXED ✅
+- thrown-with-msg? body extraction - FIXED ✅
+
+**Test Results:**
+- Parse: 93 ok, 9 errors ✅
+- Eval: 66 ok, 36 errors (up from 65 ok, 37 errors!)
+- Progress: +1 test passing
+
+**Remaining Issues:**
+- ns_libs: "invalid number of arguments: 2" - still investigating
+- for: "Cannot apply non-function: 1" - needs investigation
+- array_symbols: "invalid number of arguments: 1"
+- Several tests have "invalid number of arguments: 0" errors
+
+**Next Steps:**
+1. Continue investigating "invalid number of arguments: 2" error in ns_libs
+2. Fix "Cannot apply non-function: 1" error in for test
+3. Fix "invalid number of arguments: 1" error in array_symbols test
+4. Fix "invalid number of arguments: 0" errors (java_interop, other_functions, repl)

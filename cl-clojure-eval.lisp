@@ -247,6 +247,78 @@
     ;; Return the test name
     name))
 
+(defun process-syntax-quote (form env)
+  "Process a syntax-quote form, expanding unquote and unquote-splicing.
+   This handles the transformation of backtick forms."
+  (typecase form
+    ;; Handle unquote - evaluate the form
+    (cons
+     (let ((head (car form)))
+       (cond
+         ;; Handle unquote-splicing - evaluate and splice
+         ((and (symbolp head) (cl:string= (symbol-name head) "UNQUOTE-SPLICING"))
+          (let ((result (clojure-eval (cadr form) env)))
+            ;; Return a marker that we'll splice in the parent
+            (list :splice result)))
+         ;; Handle unquote - evaluate and return
+         ((and (symbolp head) (cl:string= (symbol-name head) "UNQUOTE"))
+          (clojure-eval (cadr form) env))
+         ;; Handle quote - if it contains an unquote, evaluate it
+         ((and (symbolp head) (cl:string= (symbol-name head) "QUOTE"))
+          (let ((quoted-form (cadr form)))
+            (if (and (consp quoted-form)
+                     (symbolp (car quoted-form))
+                     (or (cl:string= (symbol-name (car quoted-form)) "UNQUOTE")
+                         (cl:string= (symbol-name (car quoted-form)) "UNQUOTE-SPLICING")))
+                ;; (quote (unquote x)) -> evaluate x
+                (list 'quote (clojure-eval (cadr quoted-form) env))
+                quoted-form)))
+         ;; Regular list - process elements and flatten splices
+         (t
+          (let ((processed (mapcar (lambda (x) (process-syntax-quote x env)) form)))
+            (let ((result nil))
+              (dolist (elem processed)
+                (if (and (consp elem) (eq (car elem) :splice))
+                    ;; Splice the elements
+                    (dolist (spliced-elem (cdr elem))
+                      (push spliced-elem result))
+                    (push elem result)))
+              (nreverse result)))))))
+    ;; Vector - process elements and flatten splices
+    (vector
+     (let ((processed (mapcar (lambda (x) (process-syntax-quote x env))
+                               (coerce form 'list))))
+       (let ((result nil))
+         (dolist (elem processed)
+           (if (and (consp elem) (eq (car elem) :splice))
+               (dolist (spliced-elem (cdr elem))
+                 (push spliced-elem result))
+               (push elem result)))
+         (coerce (nreverse result) 'vector))))
+    ;; Hash table - convert to (hash-map ...) form
+    ;; This is needed because hash-tables read from Clojure map literals
+    ;; need to be converted to executable forms
+    (hash-table
+     (let ((pairs nil))
+       (maphash (lambda (k v)
+                  ;; Process both key and value through process-syntax-quote
+                  (push (process-syntax-quote v env) pairs)
+                  (push k pairs))
+                form)
+       `(hash-map ,@(loop for (k v) on pairs by #'cddr
+                          collect k
+                          collect v))))
+    ;; Symbol - return as-is (will be resolved in eval)
+    (symbol form)
+    ;; Self-evaluating
+    (t form)))
+
+(defun eval-syntax-quote (form env)
+  "Evaluate a syntax-quote form: (syntax-quote expr).
+   This implements Clojure's backtick syntax quoting."
+  (let ((body (cadr form)))
+    (process-syntax-quote body env)))
+
 ;;; ============================================================
 ;;; Closure (function) representation
 ;;; ============================================================
@@ -622,12 +694,13 @@
                                                              (eval-case form env)
                                                              (if (and (symbolp head) (cl:string-equal (symbol-name head) "deftest"))
                                                                  (eval-deftest form env)
-                                                                 ;; Function application
-                                                                 (let ((fn-value (clojure-eval head env))
-                                                                       (args (mapcar #'(lambda (x) (clojure-eval x env))
-                                                                                     rest-form)))
-                                                                   (apply-function fn-value args))))))))))))))))))
-
+                                                                 (if (and (symbolp head) (cl:string-equal (symbol-name head) "syntax-quote"))
+                                                                     (eval-syntax-quote form env)
+                                                                     ;; Function application
+                                                                     (let ((fn-value (clojure-eval head env))
+                                                                           (args (mapcar #'(lambda (x) (clojure-eval x env))
+                                                                                         rest-form)))
+                                                                       (apply-function fn-value args)))))))))))))))))))
       ;; Vector - evaluate elements (for some contexts)
       (vector form)
 
@@ -703,7 +776,9 @@
     (function (apply fn-value args))
 
     ;; Error
-    (t (error "Cannot apply non-function: ~A" fn-value))))
+    (t (progn
+         ;; (format *error-output* "DEBUG: Cannot apply non-function: ~A, type=~A~%" fn-value (type-of fn-value))
+         (error "Cannot apply non-function: ~A" fn-value)))))
 
 ;;; ============================================================
 ;;; REPL and Evaluation Interface

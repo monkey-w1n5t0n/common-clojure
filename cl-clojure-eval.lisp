@@ -995,6 +995,15 @@
                    with new-env = env
                    do (setf new-env (extend-binding new-env binding-sym val))
                    finally (return new-env))))))
+    ;; Check for metadata-wrapped symbol BEFORE listp destructuring
+    ;; (with-meta sym metadata) should bind sym to value (not destructuring)
+    ((and (listp binding-form)
+          (>= (length binding-form) 2)
+          (symbolp (car binding-form))
+          (string= (symbol-name (car binding-form)) "WITH-META"))
+     ;; Metadata-wrapped symbol - bind the symbol to the value
+     (let ((actual-sym (cadr binding-form)))
+       (env-extend-lexical env actual-sym value)))
     ((listp binding-form)
      ;; Destructuring: value should be a sequence
      ;; Check for & rest parameter

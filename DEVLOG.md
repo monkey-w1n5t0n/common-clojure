@@ -4330,3 +4330,41 @@ Added all special form symbols to the global environment in `setup-core-function
 ### Next Steps:
 - Fix large integer (long) handling
 - Continue with other test failures
+
+---
+
+## Iteration 72 - Fix metadata-wrapped symbol binding in let destructuring (2026-01-18)
+
+### Focus: Fix SEQUENCE binding error for type-hinted symbols
+
+### Changes Made
+
+1. **Fixed `extend-binding` to handle metadata-wrapped symbols** - cl-clojure-eval.lisp:1000-1006
+   - Type hints like `^Object x` are read as `(with-meta x Object)` by the reader
+   - This was being treated as a destructuring pattern, causing:
+     ```
+     The value 8589934591 is not of type SEQUENCE when binding SEQUENCE
+     ```
+   - Added new cond clause BEFORE the listp case to detect `(with-meta sym metadata)`
+   - Extracts the actual symbol and binds it directly to the value
+
+### Root Cause Analysis:
+The error occurred in `control.clj` test with `(let [^Object x (Long. 8589934591)] x)`:
+1. Reader parses `^Object x` as `(with-meta x Object)`
+2. `extend-binding` treated this as a destructuring pattern (listp case)
+3. `destructuring-bind` tried to destructure the integer value 8589934591 as a sequence
+4. This failed because integers are not SEQUENCE types
+
+### Errors Fixed:
+- "The value 8589934591 is not of type SEQUENCE when binding SEQUENCE" - FIXED ✅
+- Similar errors in generated_all_fi_adapters_in_let test - FIXED ✅
+
+### Test Results:
+- Parse: 94 ok, 8 errors ✅
+- Eval: **63 ok, 39 errors** (+2 tests passing! 🎉)
+- control.clj: now passes
+- generated_all_fi_adapters_in_let.clj: now passes
+
+### Next Steps:
+- Investigate remaining 39 test errors
+- Continue sequential fix approach

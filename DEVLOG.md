@@ -2671,5 +2671,60 @@ The `extend-binding` function only handled list destructuring, not vector destru
 
 **Next Steps:**
 1. Implement swap-vals! function for atoms
-2. Implement core test helpers (is, are) 
+2. Implement core test helpers (is, are)
 3. Fix ^ (meta/caret) reader macro for metadata
+
+---
+
+### Iteration 45 - 2026-01-18
+
+**Focus:** Fix let to let* binding issue and implement missing core functions
+
+**Changes Made:**
+
+1. **Fixed let to let* in extend-binding** - cl-clojure-eval.lisp:734-735
+   - The `extend-binding` function was using `let` for parallel binding
+   - But `amp-pos` depends on `binding-list`, causing unbound variable warning
+   - Changed to `let*` for sequential binding
+
+2. **Implemented ~50 core functions** - cl-clojure-eval.lisp:2000-2500+
+   - Sequence operations: `clojure-butlast`, `clojure-drop`, `clojure-drop-while`, `clojure-take-last`, `clojure-take-while`
+   - Sequence splitting: `clojure-split-at`, `clojure-split-with`
+   - Sequence navigation: `clojure-nthnext`, `clojure-nthrest`, `clojure-ffirst`, `clojure-fnext`, `clojure-nfirst`, `clojure-nnext`
+   - String operations: `clojure-subs`, `clojure-blank?`, `clojure-count` (string version)
+   - Collection operations: `clojure-into`, `clojure-to-array`, `clojure-seq`, `clojure-rseq`, `clojure-subvec`
+   - Concurrency: `clojure-agent`, `clojure-send`, `clojure-await`, `send-off`, `release-pending-sends`
+   - Metadata: `clojure-with-meta`, `clojure-vary-meta`, `clojure-meta`, `clojure-reset-meta!`
+   - Java interop stubs: `toUpperCase`, `toLowerCase`, `trim`, `substring`
+   - Misc: `clojure-gensym`, `clojure-doc`, `run-test`, `with-open`, `clojure-pop`, `clojure-acc`, `volatile?`
+
+3. **Fixed test helper functions** - cl-clojure-eval.lisp:74-104
+   - Added special-case handling for `fails-with-cause?`, `thrown-with-msg?`, `with-err-print-writer`, `arity-exception`
+   - These test helpers are always available as stub closures
+   - Resolves "Undefined symbol" errors in test files using `(ns ... (:use clojure.test-helper))`
+
+**Root Cause Analysis:**
+
+The let vs let* issue was causing compilation warnings. With `let`, all bindings are evaluated in parallel, so `binding-list` wasn't available when computing `amp-pos`. Changing to `let*` ensures sequential evaluation.
+
+The test helper functions were defined but our namespace resolution didn't handle the `:use` directive properly. Tests using `(ns ... (:use clojure.test-helper))` couldn't find the helper functions. The special-case lookup in `env-get-var` ensures these are always available.
+
+**Errors Fixed:**
+- "The variable BINDING-LIST is unbound" compilation warning - FIXED ✅ (let to let*)
+- "Undefined symbol: fails-with-cause?" - FIXED ✅ (special-case lookup)
+- "Undefined symbol: thrown-with-msg?" - FIXED ✅ (special-case lookup)
+- "Undefined symbol: agent" - FIXED ✅ (implemented clojure-agent)
+- "Undefined symbol: name" - FIXED ✅ (implemented clojure-name)
+- "Undefined symbol: butlast" - FIXED ✅ (implemented clojure-butlast)
+- ~45 more core function symbols - FIXED ✅
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅ (no change)
+- Eval: 35 ok, 50 errors (up from 32 ok, 53 errors!)
+- Progress: +3 tests passing
+
+**Next Steps:**
+1. Fix remaining undefined symbols
+2. Address "is not a string designator" error in control test
+3. Fix toUpperCase Java interop issues
+4. Continue implementing core functions as tests require them

@@ -4642,3 +4642,77 @@ The "Undefined symbol: TAGGED-LITERAL" error occurred because:
 - Implement Java constructor interop for UUID/new (or stub it)
 - Continue investigating remaining 39 test errors
 - The tagged literal infrastructure is in place for #uuid, #inst, and custom tags
+
+---
+
+### Iteration 78 - Fix `range` function and `for` comprehension (2026-01-18)
+
+**Focus:** Fix critical bug in `range` function causing infinite ranges and verify `for` comprehension works
+
+**Problem:**
+The `for` comprehension test was failing with heap exhaustion. Investigation revealed that `(range 3)` was creating an **infinite** lazy range instead of ending at 3.
+
+**Root Cause:**
+The `clojure-range` function signature is:
+```lisp
+(defun clojure-range (&optional (start 0) end step)
+```
+
+When called `(range 3)`:
+- With `&optional (start 0) end step`, the 3 becomes `start`, not `end`
+- So we get: `start=3, end=nil, step=nil`
+
+The first condition checked was:
+```lisp
+((and (null end) (null step))
+ ;; Creates infinite range
+```
+
+This condition is true for both `(range)` and `(range 3)`, causing single-argument calls to create infinite ranges.
+
+**Solution:**
+Modified the first condition to also check that `start` is still 0 (the default):
+```lisp
+((and (null end) (null step) (eql start 0))
+ ;; Only true for (range) - infinite range
+```
+
+Now:
+- `(range)` → `:start 0 :end nil` (infinite) ✅
+- `(range 3)` → `:start 0 :end 3` (0,1,2) ✅
+- `(range 1 5)` → `:start 1 :end 5` (1,2,3,4) ✅
+
+**Verification:**
+Created test cases to verify the fix:
+```clojure
+(for [x (range 2)] x)                    ; => (0 1) ✅
+(for [x (range 2) :let [y (+ 1 x)]] [x y]); => (#(0 1) #(1 2)) ✅
+(for [x (range 3) y (range 3) :let [z (+ x y)] :when (odd? z)] [x y z])
+; => (#(0 1 1) #(1 0 1) #(1 2 3) #(2 1 3)) ✅
+```
+
+**Remaining Issue:**
+The full `for.clj` test file causes heap exhaustion due to large test cases like:
+```clojure
+(for [x (range 100000000) y (range 1000000) :while (< y x)] [x y])
+```
+
+Our implementation eagerly evaluates results (not lazy), so this generates ~10^10 combinations. A true Clojure implementation would use lazy sequences where `take 100` only forces the first 100 elements.
+
+**Location of Fix:**
+- File: cl-clojure-eval.lisp:4412-4432
+- Function: `clojure-range`
+
+### Errors Fixed:
+- `(range 3)` creating infinite range - FIXED ✅
+- `for` comprehension with `:let` modifier - WORKING ✅
+- `for` comprehension with `:when` modifier - WORKING ✅
+
+### Test Results:
+- Small `for` tests now pass ✅
+- Full `for.clj` test causes heap exhaustion (known limitation of eager evaluation)
+
+### Next Steps:
+- The `for` comprehension functionality is working correctly for reasonable-sized inputs
+- Large-scale tests would require implementing true lazy sequence evaluation
+- Move on to implementing Java constructor interop for UUID/new (from iteration 77)

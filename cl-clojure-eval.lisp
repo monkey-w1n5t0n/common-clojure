@@ -806,7 +806,7 @@
                  ;; Keyword modifiers - collect for current binding
                  ((and (symbolp clause)
                        (keywordp clause)
-                       (member (symbol-name clause) '("when" "while" "let") :test #'string=))
+                       (member (symbol-name clause) '("when" "while" "let") :test #'string-equal))
                   (when (null rest)
                     (error "Missing value for ~A in for" clause))
                   (when (null result)
@@ -835,28 +835,42 @@
 (defun apply-local-modifiers (env modifiers)
   "Apply local modifiers (:when, :while, :let) to an environment.
    Returns NIL if :when fails or :while fails (filter out this iteration).
-   Returns updated env if :let is present or all modifiers pass."
+   Returns updated env if :let is present or all modifiers pass.
+
+   Each modifier is (key value-expr) where key is a keyword like :let, and
+   value-expr is the unevaluated form for that modifier.
+
+   The modifier is stored as a proper list: (:LET [z (+ x y)])
+   So we use second (cadr) to get the value expression."
   (dolist (modifier modifiers env)
-    (let ((key (car modifier))
-          (value-expr (cdr modifier)))
-      (cond
-        ((eq key :when)
-         (let ((test-val (clojure-eval value-expr env)))
-           (when (falsey? test-val)
-             (return-from apply-local-modifiers nil))))
-        ((eq key :while)
-         (let ((test-val (clojure-eval value-expr env)))
-           (when (falsey? test-val)
-             (return-from apply-local-modifiers nil))))
-        ((eq key :let)
-         ;; :let creates new bindings - value-expr should be a vector of bindings
-         ;; For now, we only handle simple :let [binding expr] forms
-         (when (vectorp value-expr)
-           (let ((bindings-list (coerce value-expr 'list)))
-             (loop for (name val-expr) on bindings-list by #'cddr
-                   while name
-                   do (let ((val (clojure-eval val-expr env)))
-                        (setf env (env-extend-lexical env name val)))))))))))
+    (destructuring-bind (key value-expr) modifier
+      (declare (ignore key))  ; We use string-equal on symbol-name instead
+      (let ((key-sym (car modifier)))
+        (cond
+          ((or (eq key-sym :when) (and (keywordp key-sym) (string-equal (symbol-name key-sym) "WHEN")))
+           (let ((test-val (clojure-eval value-expr env)))
+             (when (falsey? test-val)
+               (return-from apply-local-modifiers nil))))
+          ((or (eq key-sym :while) (and (keywordp key-sym) (string-equal (symbol-name key-sym) "WHILE")))
+           (let ((test-val (clojure-eval value-expr env)))
+             (when (falsey? test-val)
+               (return-from apply-local-modifiers nil))))
+          ((or (eq key-sym :let) (and (keywordp key-sym) (string-equal (symbol-name key-sym) "LET")))
+           ;; :let creates new bindings - value-expr should be a vector of bindings
+           ;; Handle both vector and list forms for bindings
+           (let ((bindings-list (if (vectorp value-expr)
+                                   (coerce value-expr 'list)
+                                   (when (listp value-expr)
+                                     value-expr))))
+             (when bindings-list
+               (loop for (name val-expr) on bindings-list by #'cddr
+                     while name
+                     do (let ((val (clojure-eval val-expr env)))
+                          (setf env (env-extend-lexical env name val)))))))
+          (t
+           ;; Unknown modifier - ignore
+           nil))))))
+
 
 (defun extend-map-binding (env binding-map value-map)
   "Extend environment with map destructuring.
@@ -4403,9 +4417,11 @@
    (range 1 10 2) -> 1 3 5 7 9"
   (cond
     ;; No arguments - infinite range starting from 0
-    ((and (null end) (null step))
+    ;; This is only when no args were passed, so start is still 0 (default)
+    ((and (null end) (null step) (eql start 0))
      (make-lazy-range :start 0 :end nil :step 1 :current 0))
     ;; One argument: treat as end, start from 0
+    ;; This happens when we call (range n) - start becomes n, end and step are nil
     ((null end)
      (if (null start)
          '()

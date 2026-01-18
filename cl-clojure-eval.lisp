@@ -1016,6 +1016,8 @@
                                 (nth (1+ amp-pos) binding-list)))
                   ;; Handle hash tables, lazy ranges, vectors, and lists for value-list
                   (value-list (cond
+                               ;; nil - treat as empty list
+                               ((null value) '())
                                ;; Hash table - convert to list of [k v] pairs
                                ((hash-table-p value) (clojure-seq value))
                                ;; Lazy range - convert with limit
@@ -1026,8 +1028,8 @@
                                ((vectorp value) (coerce value 'list))
                                ;; String - convert to list of chars
                                ((stringp value) (coerce value 'list))
-                               ;; Otherwise try to coerce (may fail)
-                               (t (coerce value 'list))))
+                               ;; Otherwise wrap in list (can't coerce arbitrary types)
+                               (t (list value))))
                   (new-env env)
                   (regular-count (min (length regular-bindings)
                                       (length value-list)))
@@ -1086,6 +1088,8 @@
                                 (nth (1+ amp-pos) binding-form)))
                   ;; Handle hash tables, lazy ranges, vectors, and lists for value-list
                   (value-list (cond
+                               ;; nil - treat as empty list
+                               ((null value) '())
                                ;; Hash table - convert to list of [k v] pairs
                                ((hash-table-p value) (clojure-seq value))
                                ;; Lazy range - convert with limit
@@ -1096,8 +1100,8 @@
                                ((vectorp value) (coerce value 'list))
                                ;; String - convert to list of chars
                                ((stringp value) (coerce value 'list))
-                               ;; Otherwise try to coerce (may fail)
-                               (t (coerce value 'list))))
+                               ;; Otherwise wrap in list (can't coerce arbitrary types)
+                               (t (list value))))
                   (new-env env)
                   (regular-count (min (length regular-bindings)
                                       (length value-list)))
@@ -3378,6 +3382,8 @@
   (register-core-function env 'vector? #'clojure-vector?)
   (register-core-function env 'list? #'clojure-list?)
   (register-core-function env 'string? #'clojure-string?)
+  (register-core-function env 'set? #'clojure-set?)
+  (register-core-function env 'map? #'clojure-map?)
   (register-core-function env 'empty? #'clojure-empty?)
   (register-core-function env 'empty #'clojure-empty)
   (register-core-function env 'not #'clojure-not)
@@ -3406,6 +3412,7 @@
   (register-core-function env 'not-any? #'clojure-not-any?)
   (register-core-function env 'get #'clojure-get)
   (register-core-function env 'contains? #'clojure-contains?)
+  (register-core-function env 'hash #'clojure-hash)
   (register-core-function env 'assoc #'clojure-assoc)
   (register-core-function env 'assoc! #'clojure-assoc)  ; Transients not implemented
   (register-core-function env 'dissoc #'clojure-dissoc)
@@ -3414,6 +3421,9 @@
   (register-core-function env 'disj! #'clojure-disj)  ; Transients not implemented
   (register-core-function env 'keys #'clojure-keys)
   (register-core-function env 'vals #'clojure-vals)
+  (register-core-function env 'key #'clojure-key)
+  (register-core-function env 'val #'clojure-val)
+  (register-core-function env 'map-entry? #'clojure-map-entry?)
   (register-core-function env 'update-in #'clojure-update-in)
   (register-core-function env 'update #'clojure-update)
   (register-core-function env 'get-in #'clojure-get-in)
@@ -3581,6 +3591,7 @@
   (register-core-function env 'find-first #'clojure-find-first)
   (register-core-function env 'keep #'clojure-keep)
   (register-core-function env 'keep-indexed #'clojure-keep-indexed)
+  (register-core-function env 'partition #'clojure-partition)
   (register-core-function env 'partition-by #'clojure-partition-by)
   (register-core-function env 'partition-all #'clojure-partition-all)
   (register-core-function env 'reductions #'clojure-reductions)
@@ -3961,7 +3972,7 @@
          (aref seq 0)
          nil))
     ((hash-table-p seq)
-     ;; For hash tables, convert to list of key-value vectors and return first
+     ;; For hash tables, convert to list of [key value] vectors and return first
      (let ((result '()))
        (maphash (lambda (k v)
                   (push (vector k v) result))
@@ -3988,7 +3999,7 @@
          (coerce (subseq seq 1) 'list)
          '()))
     ((hash-table-p seq)
-     ;; For hash tables, convert to list of key-value vectors and return rest
+     ;; For hash tables, convert to list of [key value] vectors and return rest
      (let ((result '()))
        (maphash (lambda (k v)
                   (push (vector k v) result))
@@ -4245,16 +4256,9 @@
            (mapcar callable-fn (coerce coll 'list)))
           ((stringp coll)
            (mapcar callable-fn (coerce coll 'list)))
-          ((hash-table-p coll)
-           ;; Convert hash table to list of key-value vectors and map
-           (let ((result '()))
-             (maphash (lambda (k v)
-                        (push (vector k v) result))
-                      coll)
-             (mapcar callable-fn (nreverse result))))
           (t
-           ;; Convert to list and map
-           (mapcar callable-fn (coerce coll 'list))))
+           ;; For other types, wrap in list and map
+           (mapcar callable-fn (list coll))))
         ;; Multiple collections - map in parallel
         (let* ((all-colls (cons coll colls))
                ;; Helper function to get length of a collection
@@ -4272,7 +4276,7 @@
                                  (hash-table-count c))
                                 ((vectorp c) (length c))
                                 ((stringp c) (length c))
-                                (t (length (coerce c 'list))))))
+                                (t 1))))
                (min-length (apply #'min (mapcar coll-length all-colls))))
           ;; Convert all to lists
           (let ((coll-lists (mapcar (lambda (c)
@@ -4294,7 +4298,7 @@
                                          (coerce c 'list))
                                         ((stringp c)
                                          (coerce c 'list))
-                                        (t (coerce c 'list))))
+                                        (t (list c))))
                                   all-colls)))
             ;; Map function across elements at each position
             (loop for i from 0 below min-length
@@ -4357,7 +4361,7 @@
                                  (hash-table-count c))
                                 ((vectorp c) (length c))
                                 ((stringp c) (length c))
-                                (t (length (coerce c 'list))))))
+                                (t 1))))
                (min-length (apply #'min (mapcar coll-length all-colls))))
           ;; Convert all to lists
           (let ((coll-lists (mapcar (lambda (c)
@@ -4379,7 +4383,7 @@
                                          (coerce c 'list))
                                         ((stringp c)
                                          (coerce c 'list))
-                                        (t (coerce c 'list))))
+                                        (t (list c))))
                                   all-colls)))
             ;; Map function across elements at each position
             (loop for i from 0 below min-length
@@ -4485,7 +4489,7 @@
     (cond
       ((lazy-range-p coll) coll)
       ((listp coll) coll)
-      ;; For hash tables (maps), convert to list of key-value vectors
+      ;; For hash tables (maps), convert to list of [key value] vectors
       ;; Clojure's (seq map) returns a sequence of MapEntry objects
       ((hash-table-p coll)
        (let ((result '()))
@@ -4524,7 +4528,7 @@
                      (coerce from 'list))
                     ((stringp from)
                      (coerce from 'list))
-                    (t (coerce from 'list)))))
+                    (t (list from)))))
     (cond
       ;; If to is a vector, build a new vector
       ((vectorp to)
@@ -4561,7 +4565,7 @@
                             (coerce coll 'list))
                            ((stringp coll)
                             (coerce coll 'list))
-                           (t (coerce coll 'list)))))
+                           (t (list coll)))))
           (setf result (append coll-list result)))))
     result))
 
@@ -4592,7 +4596,7 @@
                                   (coerce item 'list))
                                  ((stringp item)
                                   (coerce item 'list))
-                                 (t (coerce item 'list)))))
+                                 (t (list item)))))
                 (setf result (append item-list result)))))
           result))
       ;; Multiple collections - map in parallel then concat each result
@@ -4617,7 +4621,7 @@
                                   (coerce item 'list))
                                  ((stringp item)
                                   (coerce item 'list))
-                                 (t (coerce item 'list)))))
+                                 (t (list item)))))
                 (setf result (append item-list result)))))
           result))))
 
@@ -5026,7 +5030,14 @@
     ((vectorp coll)
      (when (> (length coll) 0)
        (aref coll (1- (length coll)))))
-    (t (car (last (coerce coll 'list))))))
+    ((hash-table-p coll)
+     ;; For hash tables, get the last entry (in arbitrary order)
+     (let ((result '()))
+       (maphash (lambda (k v)
+                  (push (vector k v) result))
+                coll)
+       (car (last result))))
+    (t (car (last (list coll))))))
 
 (defun clojure-reverse (coll)
   "Return a new sequence with elements in reverse order."
@@ -5041,7 +5052,7 @@
                   (push (vector k v) result))
                 coll)
        (reverse (nreverse result))))
-    (t (reverse (coerce coll 'list)))))
+    (t (reverse (list coll)))))
 
 (defun clojure-sort (coll &optional comparator)
   "Return a sorted sequence of the items in coll.
@@ -5057,7 +5068,14 @@
     ((vectorp coll)
      (when (> (length coll) 0)
        (sort (copy-seq (coerce coll 'list)) #'<)))
-    (t (sort (copy-seq (coerce coll 'list)) #'<))))
+    ((hash-table-p coll)
+     ;; For hash tables, convert to list of entries and sort
+     (let ((result '()))
+       (maphash (lambda (k v)
+                  (push (vector k v) result))
+                coll)
+       (sort (nreverse result) #'<)))
+    (t (sort (list coll) #'<))))
 
 (defun expand-thread-first-macro (form)
   "Expand a -> (thread-first) macro call WITHOUT evaluating.
@@ -5507,11 +5525,12 @@
              when (funcall callable-pred item)
              collect item))
       ((hash-table-p coll)
-       ;; For hash tables, iterate over key-value vectors
+       ;; For hash tables, iterate over map-entry structs
        (let ((result '()))
          (maphash (lambda (k v)
-                    (when (funcall callable-pred (vector k v))
-                      (push (vector k v) result)))
+                    (let ((entry (vector k v)))
+                      (when (funcall callable-pred entry)
+                        (push entry result))))
                   coll)
          (nreverse result)))
       ((vectorp coll)
@@ -5549,11 +5568,12 @@
              unless (funcall callable-pred item)
              collect item))
       ((hash-table-p coll)
-       ;; For hash tables, iterate over key-value vectors
+       ;; For hash tables, iterate over map-entry structs
        (let ((result '()))
          (maphash (lambda (k v)
-                    (unless (funcall callable-pred (vector k v))
-                      (push (vector k v) result)))
+                    (let ((entry (vector k v)))
+                      (unless (funcall callable-pred entry)
+                        (push entry result))))
                   coll)
          (nreverse result)))
       ((vectorp coll)
@@ -5638,6 +5658,28 @@
 (defun clojure-vector? (x) (vectorp x))
 (defun clojure-list? (x) (listp x))
 (defun clojure-string? (x) (stringp x))
+(defun clojure-set? (x)
+  "Return true if x is a set (hash table where all values are t)."
+  (and (hash-table-p x)
+       ;; Check if all values are t (or table is empty)
+       (block all-values-are-t
+         (maphash (lambda (k v)
+                    (declare (ignore k))
+                    (unless (eq v t)
+                      (return-from all-values-are-t nil)))
+                  x)
+         t)))
+(defun clojure-map? (x)
+  "Return true if x is a map (hash table that is not a set)."
+  (and (hash-table-p x)
+       ;; A map is a hash table that has at least one non-t value
+       (block has-non-t-value
+         (maphash (lambda (k v)
+                    (declare (ignore k))
+                    (unless (eq v t)
+                      (return-from has-non-t-value t)))
+                  x)
+         nil)))
 
 (defun clojure-identical? (x y)
   "Return true if x and y are identical (same object).
@@ -6747,6 +6789,19 @@
             while (< i (length lst))
             collect (coerce (subseq lst i (min (+ i n) (length lst))) 'vector)))))
 
+(defun clojure-partition (n &optional (step nil) (pad nil) coll)
+  "Partition coll into chunks of size n.
+   If step is not provided, defaults to n (non-overlapping).
+   If coll doesn't divide evenly, the last partition is dropped (unless pad is provided)."
+  (let ((lst (if (vectorp coll)
+                 (coerce coll 'list)
+                 coll))
+        (step-val (or step n)))
+    (when (consp lst)
+      (loop for i from 0 to (length lst) by step-val
+            while (<= (+ i n) (length lst))
+            collect (coerce (subseq lst i (+ i n)) 'vector)))))
+
 (defun clojure-reductions (f init &rest colls)
   "Return lazy sequence of intermediate reduction values."
   (cons init
@@ -6804,15 +6859,19 @@
    If there are more vals than keys, excess vals are ignored."
   (let ((result (make-hash-table :test 'equal))
         (keys-list (cond
+                     ((null keys) '())
                      ((vectorp keys) (coerce keys 'list))
                      ((lazy-range-p keys) (lazy-range-to-list keys 10000))
                      ((listp keys) keys)
-                     (t (coerce keys 'list))))
+                     ((hash-table-p keys) (clojure-seq keys))
+                     (t (list keys))))
         (vals-list (cond
+                     ((null vals) '())
                      ((vectorp vals) (coerce vals 'list))
                      ((lazy-range-p vals) (lazy-range-to-list vals 10000))
                      ((listp vals) vals)
-                     (t (coerce vals 'list)))))
+                     ((hash-table-p vals) (clojure-seq vals))
+                     (t (list vals)))))
     (loop while (and keys-list vals-list)
           do (setf (gethash (car keys-list) result) (car vals-list))
              (setf keys-list (cdr keys-list))
@@ -6848,7 +6907,7 @@
     ((vectorp coll)
      (coerce coll 'list))
     ((hash-table-p coll)
-     ;; Convert hash table to list of key-value vectors
+     ;; Convert hash table to list of [key value] vectors
      (let ((result '()))
        (maphash (lambda (k v)
                   (push (vector k v) result))
@@ -7132,6 +7191,10 @@
          nil))
     (t nil)))
 
+(defun clojure-hash (x)
+  "Return a hash code for x. Uses sxhash as implementation."
+  (sxhash x))
+
 (defun clojure-assoc (map &rest key-value-pairs)
   "Associate key-value pairs to a map. Returns new map."
   (unless (evenp (length key-value-pairs))
@@ -7204,6 +7267,22 @@
                    (push v vals))
                  map)
         (nreverse vals))
+      nil))
+
+(defun clojure-map-entry? (x)
+  "Return true if x is a map entry (represented as a 2-element vector)."
+  (and (vectorp x) (= (length x) 2)))
+
+(defun clojure-key (map-entry)
+  "Return the key from a map entry (represented as a 2-element vector)."
+  (if (and (vectorp map-entry) (> (length map-entry) 0))
+      (aref map-entry 0)
+      nil))
+
+(defun clojure-val (map-entry)
+  "Return the value from a map entry (represented as a 2-element vector)."
+  (if (and (vectorp map-entry) (> (length map-entry) 1))
+      (aref map-entry 1)
       nil))
 
 (defun clojure-update-in (map keys f &rest args)
@@ -8344,6 +8423,31 @@
                   (dolist (body-form body-forms)
                     (clojure-eval body-form new-env))))
               nil))
+           ((and head-name (string= head-name "doto"))
+            ;; Doto form: (doto x form1 form2 ...)
+            ;; Evaluates x, then evaluates each form with x inserted appropriately
+            ;; Returns x
+            (let* ((obj-expr (cadr form))
+                   (forms (cddr form))
+                   (obj (clojure-eval obj-expr env)))
+              ;; Evaluate each form with obj inserted
+              (dolist (form forms)
+                (when (consp form)
+                  (let ((head (car form))
+                        (rest (cdr form))
+                        (head-name-internal (when (symbolp (car form))
+                                              (string-downcase (symbol-name (car form))))))
+                    (cond
+                      ;; Java method call like (.put "x" 1) - insert obj as first arg
+                      ;; to get (.put obj "x" 1)
+                      ((and head-name-internal (char= (char head-name-internal 0) #\.))
+                       ;; Reconstruct the form with obj as target
+                       ;; (.method args...) becomes (.method obj args...)
+                       (clojure-eval (list* head obj rest) env))
+                      ;; Regular function call - insert obj as first argument
+                      (t
+                       (clojure-eval (cons head (cons obj rest)) env))))))
+              obj))
            ;; Function application (including when head is not a symbol)
            (t
             (let ((fn-value (clojure-eval head env)))

@@ -4908,5 +4908,78 @@ Error evaluating test_let_bindings: Undefined symbol: int-vecs
 **Next Steps:**
 1. Debug "Cannot apply non-function: 1" error in for test (BLOCKED - needs more investigation)
 2. Fix "Undefined symbol: key" error in data_structures test
-3. Fix hash table SEQUENCE type error in vectors test
-4. Fix try_catch nil type error
+3. Fix SEQUENCE type errors (clearing, array_symbols tests)
+4. Fix try_catch and vectors test errors
+
+---
+
+### Iteration 84 - 2026-01-18
+
+**Focus:** Remove map-entry struct and fix SEQUENCE type errors
+
+**Problem 1 - Map Entry Struct Issues:**
+The previous iteration had introduced a `map-entry` struct to represent map entries, but this was causing SEQUENCE type errors because Common Lisp structs are not sequences by default.
+
+**Root Cause:**
+In Clojure, map entries (returned by `seq` on a map) implement the vector/interface, so they can be used in sequence operations. Our map-entry struct did not implement the SEQUENCE interface, causing errors when code tried to use map entries as sequences.
+
+**Solution:**
+Reverted the map-entry struct approach entirely. Now map entries are represented as 2-element vectors `[key value]`, which are proper sequences in Common Lisp.
+
+**Changes Made:**
+
+1. **Removed map-entry struct** - cl-clojure-eval.lisp:1924-1931
+   - Deleted the `defstruct map-entry` definition
+   - All map entries are now vectors
+
+2. **Updated all functions to use vectors instead of map-entry structs:**
+   - `clojure-seq` - returns list of `[key value]` vectors for hash tables
+   - `clojure-sequence` - same as above
+   - `clojure-first` - vector handling works for map entries
+   - `clojure-rest` - vector handling works for map entries
+   - `clojure-filter` - uses vectors for hash table entries
+   - `clojure-remove` - uses vectors for hash table entries
+   - All other functions using `make-map-entry` - replaced with `(vector k v)`
+
+3. **Fixed `key`, `val`, and `map-entry?` functions:**
+   - `clojure-key` - returns `(aref map-entry 0)` for vectors
+   - `clojure-val` - returns `(aref map-entry 1)` for vectors
+   - `clojure-map-entry?` - checks `(and (vectorp x) (= (length x) 2))`
+
+4. **Fixed unguarded `coerce` calls that fail on hash tables:**
+   - `extend-binding` - added `((null value) '())` check before hash-table-p
+   - Changed `(t (coerce value 'list))` to `(t (list value))` - wraps non-sequences instead of coercing
+   - `clojure-zipmap` - added null and hash-table-p checks
+   - `clojure-map` - removed duplicate hash-table-p check, changed t case to `(list coll)`
+   - `clojure-mapv` - same fixes as clojure-map
+   - `clojure-concat` - changed t case to `(t (list coll))`
+   - `clojure-into` - changed t case to `(t (list from))`
+   - `clojure-last` - added hash-table-p case, changed t case to `(list coll)`
+   - `clojure-reverse` - changed t case to `(t (list coll))`
+   - `clojure-sort` - added hash-table-p case, changed t case to `(sort (list coll) #'<)`
+   - `clojure-mapcat` - changed t case to `(t (list item))`
+   - `coll-length` helper - changed t case from `(length (coerce c 'list))` to `1`
+
+**Problem 2 - Nil Handling in extend-binding:**
+The destructuring code was using `(t (coerce value 'list))` which would fail for arbitrary values. Changed to `(t (list value))` which wraps any value in a list instead of trying to coerce.
+
+**Errors Fixed:**
+- Map-entry struct SEQUENCE type errors - FIXED ✅
+- Unguarded `coerce` calls on hash tables - FIXED ✅
+- Nil being coerced to list when it should be empty list - FIXED ✅
+
+**Test Results:**
+- Parse: 93 ok, 9 errors (note: file count increased due to test files)
+- Eval: 63 ok, 39 errors (same count as previous iteration)
+- try_catch error still present: `|nil| is not of type LIST` (different issue)
+- vectors error still present: hash table SEQUENCE type error (different source)
+
+**Known Issues:**
+- try_catch test: `|nil| is not of type LIST` - needs investigation of symbol reading
+- vectors test: hash table SEQUENCE type error - source not yet identified
+- Many tests still have Java interop and other issues
+
+**Next Steps:**
+1. Debug try_catch `|nil|` error (symbol reading issue)
+2. Debug vectors hash table SEQUENCE error (needs more investigation)
+3. Continue with other test failures

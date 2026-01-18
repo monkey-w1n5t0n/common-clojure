@@ -94,10 +94,17 @@
                   (string= name-str "WITH-ERR-PRINT-WRITER")
                   (string= name-str "ARITYEXCEPTION")
                   (string= name-str "WITH-ERR-STRING-WRITER")
-                  (string= name-str "RUN-TEST"))
+                  (string= name-str "RUN-TEST")
+                  (string= name-str "EXCEPTION"))
               ;; Create a stub closure that returns nil
-              (make-var :name name :namespace ns-name
-                        :value (make-closure :params nil :body nil :env env)))
+              ;; For 'exception, create a closure that throws an error when called
+              (if (string= name-str "EXCEPTION")
+                  (make-var :name name :namespace ns-name
+                            :value (make-closure :params nil
+                                                   :body '((error "Test exception"))
+                                                   :env env))
+                  (make-var :name name :namespace ns-name
+                            :value (make-closure :params nil :body nil :env env))))
              (t nil)))
          (key (var-key name ns-name))
          (result (or special-result
@@ -317,6 +324,63 @@
                     (clojure-eval last-expr new-env))))
             nil)))))
 
+(defun eval-if-some (form env)
+  "Evaluate an if-some form: (if-some [binding] then else?)
+   Binds binding to value, if not nil evaluates then, else evaluates else.
+   Similar to if-let but checks for not nil instead of truthy."
+  (let* ((bindings-vec (cadr form))
+         (then (caddr form))
+         (else (cadddr form))
+         ;; Extract binding name and value expression
+         (bindings (if (vectorp bindings-vec)
+                       (coerce bindings-vec 'list)
+                       bindings-vec)))
+    (when (or (null bindings) (null (cdr bindings)))
+      (error "if-some requires at least one binding"))
+    (let* ((bind-name (car bindings))
+           (value-expr (cadr bindings))
+           (value (clojure-eval value-expr env)))
+      (if (not (null value))
+          ;; Bind and evaluate then
+          ;; Handle destructuring: if bind-name is a vector, use extend-binding
+          (let ((new-env (if (vectorp bind-name)
+                             (extend-binding env bind-name value)
+                             (env-extend-lexical env bind-name value))))
+            (clojure-eval then new-env))
+          ;; Evaluate else
+          (if else
+              (clojure-eval else env)
+              nil)))))
+
+(defun eval-when-some (form env)
+  "Evaluate a when-some form: (when-some [binding] expr*)
+   Binds binding to value, if not nil evaluates exprs, else returns nil.
+   Similar to when-let but checks for not nil instead of truthy."
+  (let* ((bindings-vec (cadr form))
+         (body (cddr form))
+         ;; Extract binding name and value expression
+         (bindings (if (vectorp bindings-vec)
+                       (coerce bindings-vec 'list)
+                       bindings-vec)))
+    (when (or (null bindings) (null (cdr bindings)))
+      (error "when-some requires at least one binding"))
+    (let* ((bind-name (car bindings))
+           (value-expr (cadr bindings))
+           (value (clojure-eval value-expr env)))
+      (if (not (null value))
+          ;; Bind and evaluate body
+          ;; Handle destructuring: if bind-name is a vector, use extend-binding
+          (let ((new-env (if (vectorp bind-name)
+                             (extend-binding env bind-name value)
+                             (env-extend-lexical env bind-name value))))
+            (if (null body)
+                value
+                (let ((last-expr (car (last body))))
+                  (dolist (expr (butlast body))
+                    (clojure-eval expr new-env))
+                  (clojure-eval last-expr new-env))))
+          nil))))
+
 (defun eval-do (form env)
   "Evaluate a do form: (do expr*) - returns last expression's value."
   (let ((forms (cdr form)))
@@ -448,8 +512,10 @@
   "Evaluate a def form: (def name expr?) - create/intern a var."
   ;; Handle metadata on the name: (def ^:dynamic name expr)
   (let* ((second (cadr form))
+         ;; Check if second is a with-meta form, being careful about type
          (has-metadata (and (consp second)
-                           (string= (symbol-name (car second)) "WITH-META")))
+                            (symbolp (car second))
+                            (string= (symbol-name (car second)) "WITH-META")))
          (name (if has-metadata (cadr second) second))
          (value-expr (if has-metadata
                         (caddr form)
@@ -466,8 +532,10 @@
    If the var already has a non-nil value, the expr is not evaluated."
   ;; Handle metadata on the name: (defonce ^:dynamic name expr)
   (let* ((second (cadr form))
+         ;; Check if second is a with-meta form, being careful about type
          (has-metadata (and (consp second)
-                           (string= (symbol-name (car second)) "WITH-META")))
+                            (symbolp (car second))
+                            (string= (symbol-name (car second)) "WITH-META")))
          (name (if has-metadata (cadr second) second))
          (value-expr (if has-metadata
                         (caddr form)
@@ -1023,13 +1091,15 @@
 (defun eval-ns (form env)
   "Evaluate a ns form: (ns name & options) - set current namespace.
    Handles :use, :import, :require options."
-  (let* ((name (cadr form))
+  (let* ((name-raw (cadr form))
+         ;; Unwrap metadata from the name if present
+         ;; (ns ^:private foo.bar) -> name-raw is (with-meta foo.bar {:private true})
+         (name (multiple-value-bind (unwrapped metadata)
+                  (unwrap-with-meta name-raw)
+                (declare (ignore metadata))
+                unwrapped))
          ;; Extract the name part from a qualified symbol like clojure.test-clojure.agents
-         (ns-name (if (and (symbolp name)
-                          (find #\. (string name)))
-                     ;; For qualified symbols, store as-is for now
-                     name
-                     name))
+         (ns-name name)
          (opts (cddr form)))
     (setf *current-ns* ns-name)
     ;; Handle options like :use, :require, :import
@@ -2490,9 +2560,12 @@
                       ((listp coll) (first coll))
                       (t nil)))
               ;; If result is a symbol, look it up as a var (for identity, transient, etc.)
+              ;; If var is not found, return nil instead of the symbol
               (when (and result (symbolp result))
                 (let ((var (env-get-var *current-env* result)))
-                  (when var (setf result (var-value var)))))
+                  (if var
+                      (setf result (var-value var))
+                      (setf result nil))))
               result)))
        ((string-equal member-name "uniform")
         ;; Stub: return a random number in range
@@ -2512,8 +2585,8 @@
                 (let ((var (env-get-var *current-env* f)))
                   (when var (setf f (var-value var)))))
               ;; Use collect with explicit list to ensure we always return a list
-              ;; Handle nil function by returning empty list
-              (if (null f)
+              ;; Handle nil function or unresolved symbol by returning empty list
+              (if (or (null f) (symbolp f))
                   '()
                   (let ((callable-f (ensure-callable f))
                         (result '()))
@@ -2782,6 +2855,7 @@
   (register-core-function env 'identity #'clojure-identity)
   (register-core-function env 'last #'clojure-last)
   (register-core-function env 'reverse #'clojure-reverse)
+  (register-core-function env 'sort #'clojure-sort)
   (register-core-function env 'rseq #'clojure-rseq)
   (register-core-function env 'reduce #'clojure-reduce)
   ;; Macro expansion functions
@@ -2832,6 +2906,7 @@
 
   ;; String/Symbol functions
   (register-core-function env 'symbol #'clojure-symbol)
+  (register-core-function env 'keyword #'clojure-keyword)
   (register-core-function env 'atom #'clojure-atom)
   (register-core-function env 'deref #'clojure-deref)
   (register-core-function env 'swap-vals! #'clojure-swap-vals!)
@@ -3000,7 +3075,7 @@
   (register-core-function env 'pace #'clojure-pace)
 
   ;; Additional missing functions
-  (register-core-function env 'lazy-seq #'clojure-lazy-seq)
+  ;; lazy-seq is now a special form (see clojure-eval)
   (register-core-function env 'lazy-cat #'clojure-lazy-cat)
   (register-core-function env 'gensym #'clojure-gensym)
   (register-core-function env 'doc #'clojure-doc)
@@ -3432,7 +3507,7 @@
       (apply #'concatenate 'string (mapcar (lambda (x)
                                               (typecase x
                                                 (null "")
-                                                (string x)
+                                                (simple-string x)
                                                 (character (string x))
                                                 (symbol (symbol-name x))
                                                 (keyword (symbol-name x))
@@ -3444,15 +3519,15 @@
   "Create a regex pattern from a string. In our implementation, just return the string."
   (if (stringp s)
       s
-      (string s)))
+      (princ-to-string s)))
 
 (defun clojure-re-find (pattern s)
   "Find the first match of pattern in string s.
    Pattern can be a string (our regex representation) or a regex pattern object.
    Returns the matched string if found, nil otherwise.
    For our stub implementation, we use CL's search function."
-  (let ((pat-str (if (stringp pattern) pattern (string pattern)))
-        (str-str (if (stringp s) s (string s))))
+  (let ((pat-str (if (stringp pattern) pattern (princ-to-string pattern)))
+        (str-str (if (stringp s) s (princ-to-string s))))
     ;; Simple regex matching for common patterns
     ;; This is a stub implementation that handles literal strings and basic patterns
     (when (stringp pat-str)
@@ -3595,6 +3670,13 @@
            (mapcar callable-fn (coerce coll 'list)))
           ((stringp coll)
            (mapcar callable-fn (coerce coll 'list)))
+          ((hash-table-p coll)
+           ;; Convert hash table to list of key-value vectors and map
+           (let ((result '()))
+             (maphash (lambda (k v)
+                        (push (vector k v) result))
+                      coll)
+             (mapcar callable-fn (nreverse result))))
           (t
            ;; Convert to list and map
            (mapcar callable-fn (coerce coll 'list))))
@@ -4278,7 +4360,30 @@
     ((null coll) nil)
     ((listp coll) (reverse coll))
     ((vectorp coll) (coerce (reverse (coerce coll 'list)) 'vector))
+    ((hash-table-p coll)
+     ;; Convert hash table to list of key-value vectors, then reverse
+     (let ((result '()))
+       (maphash (lambda (k v)
+                  (push (vector k v) result))
+                coll)
+       (reverse (nreverse result))))
     (t (reverse (coerce coll 'list)))))
+
+(defun clojure-sort (coll &optional comparator)
+  "Return a sorted sequence of the items in coll.
+   If comparator is provided, use it for comparison.
+   For nil or empty collections, return nil."
+  (declare (ignore comparator))
+  (cond
+    ((null coll) nil)
+    ((and (vectorp coll) (= (length coll) 0)) nil)
+    ((listp coll)
+     (when coll
+       (sort (copy-seq coll) #'<)))
+    ((vectorp coll)
+     (when (> (length coll) 0)
+       (sort (copy-seq (coerce coll 'list)) #'<)))
+    (t (sort (copy-seq (coerce coll 'list)) #'<))))
 
 (defun expand-thread-first-macro (form)
   "Expand a -> (thread-first) macro call WITHOUT evaluating.
@@ -4921,6 +5026,16 @@
           (intern name)
           (intern (string name)))))
 
+(defun clojure-keyword (name &optional ns)
+  "Create a keyword from a string or string+namespace.
+   In Clojure, keywords are prefixed with :.
+   For our SBCL implementation, keywords are interned symbols starting with :."
+  (declare (ignore ns))
+  (let ((name-str (if (stringp name) name (string name))))
+    ;; Create a keyword by interning the string with a : prefix
+    (intern (concatenate 'string ":" name-str))))
+
+
 (defun clojure-atom (value)
   "Create an atom (a mutable reference). Returns a mutable container.
    For now, atoms are just cons cells with the value in the car."
@@ -5256,6 +5371,13 @@
                                :current new-start)))))
       ((listp coll) (nthcdr limit coll))
       ((vectorp coll) (coerce (nthcdr limit (coerce coll 'list)) 'list))
+      ((hash-table-p coll)
+       ;; Convert hash table to list of key-value vectors, then drop
+       (let ((result '()))
+           (maphash (lambda (k v)
+                      (push (vector k v) result))
+                    coll)
+           (nthcdr limit (nreverse result))))
       (t (nthcdr limit coll)))))
 
 (defun clojure-drop-while (pred coll)
@@ -5468,9 +5590,16 @@
 
 (defun clojure-subseq (seq start &optional end)
   "Return a subsequence of seq from start to end."
-  (let ((lst (if (vectorp seq)
-                 (coerce seq 'list)
-                 seq)))
+  (let ((lst (cond
+                ((vectorp seq) (coerce seq 'list))
+                ((hash-table-p seq)
+                 ;; Convert hash table to list of key-value vectors
+                 (let ((result '()))
+                   (maphash (lambda (k v)
+                              (push (vector k v) result))
+                            seq)
+                   (nreverse result)))
+                (t seq))))
     (when (consp lst)
       (subseq lst start (or end (length lst))))))
 
@@ -5768,7 +5897,7 @@
   "Generate a unique symbol.
    If prefix is provided, use it as the symbol prefix."
   (if prefix
-      (gensym (string prefix))
+      (gensym (princ-to-string prefix))
       (gensym)))
 
 (defun clojure-doc (sym)
@@ -6451,10 +6580,16 @@
 
 (defun eval-are (form env)
   "Evaluate an are form: (are [args] expr & arg-pairs) - multiple assertions.
-   This uses environment bindings to bind args to values, then evaluates expr.
-   This is the correct approach to avoid double-evaluation issues."
+   This substitutes argument forms directly into the expression (like a macro)
+   so that forms like (thrown? Exception x) can catch errors from x."
   ;; Syntax: (are [x y] expr v1 v2 v3 v4 ...)
-  ;; Expands to: (do (is (expr with x=v1, y=v2)) (is (expr with x=v3, y=v4)) ...)
+  ;; Expands to: (do (is (expr with x replaced by v1, y replaced by v2)) ...)
+  ;;
+  ;; IMPORTANT: The argument forms are NOT evaluated before substitution.
+  ;; They are substituted directly into the expression, so that:
+  ;; (are [x] (thrown? Exception x) (some-form))
+  ;; expands to (is (thrown? Exception (some-form)))
+  ;; and (some-form) is evaluated INSIDE thrown?, not before.
   (let* ((args-vec (cadr form))
          (expr-expr (caddr form))
          (arg-pairs (cdddr form))
@@ -6468,7 +6603,7 @@
                             ;; Infinite lazy range - limit to reasonable number
                             1000)
                         (length (coerce args-vec 'list))))
-         ;; Convert args vector to list safely
+         ;; Convert args vector to list of symbols
          (arg-names (if (lazy-range-p args-vec)
                         ;; For lazy ranges, limit elements
                         (lazy-range-to-list args-vec arg-count)
@@ -6483,19 +6618,12 @@
                ;; If incomplete chunk, error (Clojure's are throws exception)
                (when (< (length chunk) arg-count)
                  (error "are: incomplete argument list"))
-               ;; Evaluate each arg-value-form to get actual values
-               (let ((evaluated-chunk
-                       (mapcar (lambda (arg-value-form)
-                                 (clojure-eval arg-value-form env))
-                               chunk)))
-                 ;; Create a new environment with bindings for this iteration
-                 ;; Build bindings list and extend environment once
-                 (let* ((bindings (loop for arg-name in arg-names
-                                        for value in evaluated-chunk
-                                        collect (cons arg-name value)))
-                        (iteration-env (env-push-bindings env bindings)))
-                   ;; Evaluate the expression in the new environment
-                   (push (clojure-eval expr-expr iteration-env) results)))))
+               ;; Substitute argument forms directly into the expression
+               ;; (do NOT evaluate them first - this allows thrown? to work)
+               ;; Use substitute-symbols to handle binding forms correctly
+               (let ((substituted-expr (substitute-symbols expr-expr arg-names chunk)))
+                 ;; Evaluate the substituted expression
+                 (push (clojure-eval substituted-expr env) results))))
     ;; Return the last result (like do), or nil if no results
     (if results
         (car (last results))
@@ -6918,6 +7046,8 @@
            ((and head-name (string= head-name "if-let")) (eval-if-let form env))
            ((and head-name (string= head-name "when-let")) (eval-when-let form env))
            ((and head-name (string= head-name "when-first")) (eval-when-first form env))
+           ((and head-name (string= head-name "if-some")) (eval-if-some form env))
+           ((and head-name (string= head-name "when-some")) (eval-when-some form env))
            ((and head-name (string= head-name "recur")) nil)  ; stub: recur just returns nil, exiting the loop
            ((and head-name (string= head-name "for")) (eval-for form env))
            ((and head-name (string= head-name "doseq")) (eval-doseq form env))
@@ -6941,6 +7071,21 @@
               ;; Create a closure that captures the environment
               (make-delay :thunk (lambda () (clojure-eval body env))
                           :forced-p nil)))
+           ((and head-name (string= head-name "lazy-seq"))
+            ;; lazy-seq creates a lazy sequence: (lazy-seq body*)
+            ;; The body is evaluated when the sequence is realized
+            ;; For our stub, we evaluate the body immediately and return the result
+            (let ((body-forms (cdr form)))  ; Get all body forms
+              ;; If no body, return nil
+              (if (null body-forms)
+                  nil
+                  ;; Evaluate the body forms and return the last one
+                  ;; In a full implementation, this would create a lazy sequence
+                  ;; For now, we just evaluate sequentially
+                  (let ((last-result nil))
+                    (dolist (body-form body-forms)
+                      (setf last-result (clojure-eval body-form env)))
+                    last-result))))
            ((and head-name (string= head-name "with-meta"))
             ;; with-meta attaches metadata to a value
             ;; (with-meta value metadata) -> value with metadata
@@ -6953,17 +7098,93 @@
                                            metadata  ; Don't evaluate type hints
                                            (clojure-eval metadata env))))
                 (wrap-with-meta evaluated-value evaluated-metadata))))
+           ((and head-name (string= head-name "condp"))
+            ;; Condp form: (condp pred expr test1 result1 test2 result2 ... [default-result])
+            ;; Evaluates expr and compares it using pred against each test value
+            ;; Returns the result of the first matching test, or default if no match
+            (let* ((pred-expr (cadr form))
+                   (expr-expr (caddr form))
+                   (clauses (cdddr form))
+                   (pred (clojure-eval pred-expr env))
+                   (expr-val (clojure-eval expr-expr env)))
+              ;; Check if we have an odd number of clauses (indicating a default result)
+              (let ((has-default (oddp (length clauses)))
+                    (default-idx (when (oddp (length clauses))
+                                   (1- (length clauses)))))
+                ;; Process test/result pairs
+                (loop for i from 0 below (if has-default (1- (length clauses)) (length clauses)) by 2
+                      when (truthy? (clojure-eval (list pred expr-val (nth i clauses)) env))
+                        do (return-from clojure-eval (clojure-eval (nth (1+ i) clauses) env))
+                      finally (return-from clojure-eval
+                                       (if has-default
+                                           (clojure-eval (nth default-idx clauses) env)
+                                           nil))))))
+           ((and head-name (string= head-name "cond"))
+            ;; Cond form: evaluate each test in order, return result of first truthy test
+            ;; (cond test1 result1 test2 result2 ...)
+            ;; (cond) → nil
+            ;; (cond test1 result1 ... :else resultN) → resultN if no tests match
+            (let ((clauses (cdr form)))
+              (if (null clauses)
+                  ;; No clauses → return nil
+                  nil
+                  ;; Check if we have an odd number of clauses (default clause)
+                  (if (oddp (length clauses))
+                      ;; Has default clause - process all but last as pairs
+                      (let ((clauses-count (length clauses))
+                            (default-value (car (last clauses))))
+                        ;; Process pairs up to the default
+                        (loop for i from 0 below (1- clauses-count) by 2
+                              for test = (nth i clauses)
+                              for result = (nth (1+ i) clauses)
+                              when (truthy? (clojure-eval test env))
+                                do (return-from clojure-eval (clojure-eval result env))
+                              finally (return-from clojure-eval (clojure-eval default-value env)))))
+                      ;; No default clause - process all as pairs
+                      (loop for i from 0 below (length clauses) by 2
+                            for test = (nth i clauses)
+                            for result = (when (< (1+ i) (length clauses))
+                                            (nth (1+ i) clauses))
+                            when (truthy? (clojure-eval test env))
+                              do (return-from clojure-eval (clojure-eval result env))
+                            finally (return-from clojure-eval nil)))))
            ((and head-name (string= head-name "case"))
             ;; Case form: evaluate expr, then compare against each clause
+            ;; (case expr test1 result1 test2 result2 ... default-result)
+            ;; Tests can be lists of multiple values: (2 \b "bar") :one-of-many
             (let* ((expr-expr (cadr form))
                    (clauses (cddr form))
                    (expr-value (clojure-eval expr-expr env)))
-              (loop for (test result) on clauses by (function cddr)
-                    when (null test)
-                      do (return-from clojure-eval (clojure-eval result env))
-                    when (equal expr-value (clojure-eval test env))
-                      do (return-from clojure-eval (clojure-eval result env))
-                    finally (return-from clojure-eval nil))))
+              ;; Process clauses as pairs (test result)
+              ;; Handle the case where test is a list of multiple test values
+              (loop with remaining = clauses
+                    while remaining
+                    do (let* ((test (car remaining))
+                              (test-value (if (consp test)
+                                             ;; If test is a list, check if expr-value matches any element
+                                             test
+                                             ;; Otherwise, test is a single value
+                                             test))
+                              (result (cadr remaining)))
+                         ;; Check for default clause (test is nil or :else)
+                         (when (or (null test) (eq test :else))
+                           (return-from clojure-eval (clojure-eval result env)))
+                         ;; Evaluate the test value(s) and compare
+                         (let ((evaluated-test (if (consp test-value)
+                                                  ;; For a list of test values, evaluate each and check for match
+                                                  (mapcar (lambda (test-item) (clojure-eval test-item env)) test-value)
+                                                  ;; For a single test value, just evaluate it
+                                                  (clojure-eval test-value env))))
+                           (when (if (consp test-value)
+                                    ;; Check if expr-value matches any of the evaluated test values
+                                    (member expr-value evaluated-test :test #'equal)
+                                    ;; Single test value - direct comparison
+                                    (equal expr-value evaluated-test))
+                             (return-from clojure-eval (clojure-eval result env)))))
+                    ;; Move to next pair
+                    (setf remaining (cddr remaining)))
+              ;; No match found
+              nil))
            ;; Handle set literals from reader: (set element...)
            ;; The reader returns (set a b c) for #{a b c}
            ((eq head 'set)

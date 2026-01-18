@@ -3615,3 +3615,73 @@ The `lazy-seq` special form implementation:
 2. Implement undefined symbols: struct, derive, partial, ab, dotimes
 3. Fix hash table type errors in vectors and special tests
 4. Continue implementing more core functions as tests require them
+
+---
+
+### Iteration 60 - 2026-01-18
+
+**Focus:** Fix metadata unwrapping and typecase issues causing "not a string designator" errors
+
+**Changes Made:**
+
+1. **Fixed `eval-ns` to unwrap metadata from namespace name** - cl-clojure-eval.lisp:1090-1096
+   - When a namespace symbol has metadata (e.g., `^:private foo.ns`), the reader wraps it in `(with-meta foo.ns {...})`
+   - Added unwrapping using `unwrap-with-meta` before using the namespace name
+   - This fixes the genclass test error where `*current-ns*` was being set to a `with-meta` form
+
+2. **Fixed `eval-def` to safely check `car second` type** - cl-clojure-eval.lisp:516-518
+   - Added `symbolp` check before calling `symbol-name` on `(car second)`
+   - Prevents error when `second` is a cons cell but `car second` is not a symbol
+
+3. **Fixed `eval-defonce` to safely check `car second` type** - cl-clojure-eval.lisp:536-538
+   - Same fix as `eval-def`
+
+4. **Fixed `case` special form to handle compound test values** - cl-clojure-eval.lisp:7151-7187
+   - In Clojure, `(case expr (a b c) :result)` matches if expr equals a, b, or c
+   - Implemented proper handling for list test values containing multiple test constants
+   - Evaluate each test value and check if expr-value matches any of them
+   - Fixed `t` parameter name issue (was shadowing CL's `t` constant)
+
+5. **Fixed `clojure-str` typecase bug** - cl-clojure-eval.lisp:3510
+   - The clause `(string x)` doesn't check for string type - it's just a variable binding pattern
+   - Changed to `(simple-string x)` to properly match strings
+
+6. **Fixed `clojure-re-pattern` to use `princ-to-string`** - cl-clojure-eval.lisp:3522
+   - `(string s)` fails when `s` is not a string designator
+   - Changed to `(princ-to-string s)` for safe conversion
+
+7. **Fixed `clojure-re-find` to use `princ-to-string`** - cl-clojure-eval.lisp:3529-3530
+   - Same fix as `clojure-re-pattern`
+
+8. **Fixed `clojure-gensym` to use `princ-to-string`** - cl-clojure-eval.lisp:5900
+   - `(string prefix)` fails when `prefix` is not a string designator
+   - Changed to `(princ-to-string prefix)` for safe conversion
+
+**Root Cause Analysis:**
+
+The "not a string designator" errors occur when CL's `string` function is called on something that's not a string, character, or symbol. This happens in several places:
+
+1. **Metadata wrapping** - When the reader encounters `^:private foo.ns`, it creates `(with-meta foo.ns {:private true})`. If this is passed directly to functions expecting symbols (like `var-key`), calling `(string ...)` on it fails.
+
+2. **Typecase misuse** - In `(typecase x (string x) ...)`, the `(string x)` clause doesn't check for string type. It's just a variable pattern that matches anything and binds it to `x`. This causes `(string x)` to be called on non-string-designators.
+
+3. **Non-string arguments** - Functions like `clojure-re-pattern` and `clojure-gensym` call `(string ...)` on their arguments, which fails if the argument is a vector or other non-string-designator.
+
+**Errors Fixed:**
+- genclass "is not a string designator" error - FIXED ✅ (now errors on "Unsupported Java constructor: ExampleClass")
+- `case` with compound test values now works correctly - FIXED ✅
+- Type-related errors in string conversion functions - FIXED ✅
+
+**Test Results:**
+- Parse: 94 ok, 8 errors ✅ (no change)
+- Eval: 54 ok, 48 errors (no count change)
+
+**Remaining Issues:**
+- control test still has "#(|a| |b|) is not a string designator" error - source not yet identified
+- This error seems to be a vector of symbols being passed to a function expecting a string designator
+
+**Next Steps:**
+1. Continue investigating the control test error (may require deeper debugging)
+2. Implement undefined symbols: struct, derive, partial, ab, dotimes
+3. Fix hash table type errors in vectors and special tests
+4. Continue implementing more core functions as tests require them

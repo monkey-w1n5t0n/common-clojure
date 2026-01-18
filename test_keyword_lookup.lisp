@@ -1,16 +1,26 @@
-(load "cl-clojure-syntax")
-(load "cl-clojure-eval")
+;; Test keyword lookup with nil
+(load "package.lisp")
+(load "cl-clojure-syntax.lisp")
+(load "cl-clojure-eval.lisp")
+
 (init-eval-system)
 
-;; Test keyword lookup
-(let* ((num-seqs (make-hash-table :test 'equal))
-       (_ (setf (gethash :standard num-seqs) (clojure-range 1 100)))
-       (_ (setf (gethash :longer num-seqs) (clojure-concat (gethash :standard num-seqs) (vector 100))))
-       (int-vecs (make-hash-table :test 'equal))
-       (_ (setf (gethash :standard int-vecs) (clojure-into (clojure-vector-of :int) (gethash :standard num-seqs))))
-       (_ (setf (gethash :longer int-vecs) (clojure-into (clojure-vector-of :int) (gethash :longer num-seqs))))
-       (longer-vec (gethash :longer int-vecs)))
-  (format t "longer-vec type: ~A~%" (type-of longer-vec))
-  (format t "longer-vec: ~A~%" longer-vec)
-  (let ((result (clojure-compare (gethash :standard int-vecs) longer-vec)))
-    (format t "Result: ~A~%" result)))
+;; Test (:keyword nil) pattern
+(let ((result (clojure-eval '(:arglists nil) *current-env*)))
+  (format t "(:arglists nil) = ~A~%" result))
+
+;; Test (count nil)
+(let ((result (clojure-eval '(count nil) *current-env*)))
+  (format t "(count nil) = ~A~%" result))
+
+;; Test combined
+(let ((result (clojure-eval '(count (:arglists nil)) *current-env*)))
+  (format t "(count (:arglists nil)) = ~A~%" result))
+
+;; Test with empty map
+(let ((result (clojure-eval '(count (:arglists {})) *current-env*)))
+  (format t "(count (:arglists {})) = ~A~%" result))
+
+;; Test > with nil
+(let ((result (clojure-eval '(> 0 0) *current-env*)))
+  (format t "(> 0 0) = ~A~%" result))

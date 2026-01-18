@@ -4845,3 +4845,33 @@ Fixed keyword-as-function handling:
 - Fix clearing test SEQUENCE type error
 - Fix array_symbols test SEQUENCE type error
 - Fix data_structures "Undefined symbol: key" error
+
+### Iteration 82 - 2026-01-18
+
+**Focus:** Debug "Cannot apply non-function: 1" error in for test
+
+**Investigation:**
+- Error occurs in `for` test: "Cannot apply non-function: 1"
+- Debug output showed `fn-value` is `1` with `args: (3 5 7 9)`
+- This suggests the list `(1 3 5 7 9)` returned by `for` is being treated as a function call `(1 3 5 7 9)`
+- Also observed `=` being called with `(for for)` - symbols instead of evaluated values
+
+**Root Cause Analysis:**
+- The `for` comprehension correctly returns `(1 3 5 7 9)` (odd numbers)
+- But somewhere in the evaluation chain, this list is being re-evaluated as a function call
+- The `deftest-both` macro expansion may also be contributing to the issue
+
+**Status:** Issue not resolved - needs deeper investigation of:
+1. How lists returned by special forms are handled as arguments
+2. Macro expansion of `deftest-both`
+3. Symbol evaluation in argument position
+
+**Next Steps:**
+1. Fix "Cannot apply non-function: 1" error in for test (BLOCKED - needs more investigation)
+2. Fix "Undefined symbol: key" error in data_structures test
+3. Fix "JAVA.LANG.OBJECT is not of type SEQUENCE" error in clearing test
+4. Fix compilation warnings in extend-binding and eval-dot-dot
+
+**Test Status:**
+- Parse: 94/68 ok, 8 errors (note: counts don't add up due to test file structure)
+- Eval: 63 ok, 39 errors

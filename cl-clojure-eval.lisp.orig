@@ -806,7 +806,7 @@
                  ;; Keyword modifiers - collect for current binding
                  ((and (symbolp clause)
                        (keywordp clause)
-                       (member (symbol-name clause) '("when" "while" "let") :test #'string-equal))
+                       (member (symbol-name clause) '("when" "while" "let") :test #'string=))
                   (when (null rest)
                     (error "Missing value for ~A in for" clause))
                   (when (null result)
@@ -835,42 +835,28 @@
 (defun apply-local-modifiers (env modifiers)
   "Apply local modifiers (:when, :while, :let) to an environment.
    Returns NIL if :when fails or :while fails (filter out this iteration).
-   Returns updated env if :let is present or all modifiers pass.
-
-   Each modifier is (key value-expr) where key is a keyword like :let, and
-   value-expr is the unevaluated form for that modifier.
-
-   The modifier is stored as a proper list: (:LET [z (+ x y)])
-   So we use second (cadr) to get the value expression."
+   Returns updated env if :let is present or all modifiers pass."
   (dolist (modifier modifiers env)
-    (destructuring-bind (key value-expr) modifier
-      (declare (ignore key))  ; We use string-equal on symbol-name instead
-      (let ((key-sym (car modifier)))
-        (cond
-          ((or (eq key-sym :when) (and (keywordp key-sym) (string-equal (symbol-name key-sym) "WHEN")))
-           (let ((test-val (clojure-eval value-expr env)))
-             (when (falsey? test-val)
-               (return-from apply-local-modifiers nil))))
-          ((or (eq key-sym :while) (and (keywordp key-sym) (string-equal (symbol-name key-sym) "WHILE")))
-           (let ((test-val (clojure-eval value-expr env)))
-             (when (falsey? test-val)
-               (return-from apply-local-modifiers nil))))
-          ((or (eq key-sym :let) (and (keywordp key-sym) (string-equal (symbol-name key-sym) "LET")))
-           ;; :let creates new bindings - value-expr should be a vector of bindings
-           ;; Handle both vector and list forms for bindings
-           (let ((bindings-list (if (vectorp value-expr)
-                                   (coerce value-expr 'list)
-                                   (when (listp value-expr)
-                                     value-expr))))
-             (when bindings-list
-               (loop for (name val-expr) on bindings-list by #'cddr
-                     while name
-                     do (let ((val (clojure-eval val-expr env)))
-                          (setf env (env-extend-lexical env name val)))))))
-          (t
-           ;; Unknown modifier - ignore
-           nil))))))
-
+    (let ((key (car modifier))
+          (value-expr (cdr modifier)))
+      (cond
+        ((eq key :when)
+         (let ((test-val (clojure-eval value-expr env)))
+           (when (falsey? test-val)
+             (return-from apply-local-modifiers nil))))
+        ((eq key :while)
+         (let ((test-val (clojure-eval value-expr env)))
+           (when (falsey? test-val)
+             (return-from apply-local-modifiers nil))))
+        ((eq key :let)
+         ;; :let creates new bindings - value-expr should be a vector of bindings
+         ;; For now, we only handle simple :let [binding expr] forms
+         (when (vectorp value-expr)
+           (let ((bindings-list (coerce value-expr 'list)))
+             (loop for (name val-expr) on bindings-list by #'cddr
+                   while name
+                   do (let ((val (clojure-eval val-expr env)))
+                        (setf env (env-extend-lexical env name val)))))))))))
 
 (defun extend-map-binding (env binding-map value-map)
   "Extend environment with map destructuring.
@@ -881,8 +867,6 @@
    - :syms [s1 s2] - bind values for symbols s1, s2
    - :or {k default} - default values
    - :as sym - bind entire map to sym
-   - keyword key with destructuring form: e.g., {:via [{:keys [data]}]} extracts :via and destructures it
-   - keyword key with symbol: e.g., {:data sym} extracts :data and binds to sym
 
    Note: Due to Clojure reader case sensitivity, we need to match keys by
    lowercase symbol name since Clojure preserves case but CL uppercases."
@@ -893,7 +877,7 @@
                           (string-equal (symbol-name k) name))
                    return k)))
     (let ((new-env env))
-      ;; Get the special keys
+      ;; Get the keys to extract
       (let ((keys-key (find-key "keys"))
             (syms-key (find-key "syms"))
             (or-key (find-key "or"))
@@ -921,7 +905,7 @@
         ;; Handle :syms destructuring
         (when (and syms-key (gethash syms-key binding-map))
           (let ((syms-spec (gethash syms-key binding-map)))
-            ;; syms-spec is like [x y] - extract 'x and :y from value-map
+            ;; syms-spec is like [x y] - extract 'x and 'y from value-map
             ;; For namespaced symbols like a/b, bind just b (local name)
             (dolist (sym (coerce syms-spec 'list))
               (let* ((sym-name (symbol-name sym))
@@ -944,33 +928,6 @@
         (when (and as-key (gethash as-key binding-map))
           (let ((as-spec (gethash as-key binding-map)))
             (setf new-env (env-extend-lexical new-env as-spec value-map)))))
-      ;; Handle regular keys in binding-map
-      ;; In Clojure destructuring, the syntax is:
-      ;;   {binding-form key-to-extract ...}
-      ;; For example: {[{:keys [a]}] :via} means extract :via and destructuring with [{:keys [a]}]
-      ;; And: {sym :key} means extract :key and bind to sym
-      ;;
-      ;; The reader creates: key=binding-form, value=key-to-extract
-      ;; So we iterate and extract the VALUE from the binding-map (which is the key to extract)
-      ;; and bind it using the KEY from the binding-map (which is the binding form)
-      (maphash (lambda (binding-form key-to-extract)
-                 ;; Skip special keywords that were already handled
-                 (when (and (keywordp key-to-extract)
-                           (not (member (symbol-name key-to-extract)
-                                       '("keys" "syms" "or" "as")
-                                       :test #'string=)))
-                   ;; Note: Due to case sensitivity issues, we need to find the key by name comparison
-                   ;; Clojure preserves case, CL uppercases, so we compare by symbol-name
-                   (let ((value (loop for k being the hash-keys of value-map
-                                     when (and (keywordp k)
-                                              (string-equal (symbol-name k) (symbol-name key-to-extract)))
-                                     return (gethash k value-map))))
-                     ;; The binding-form can be:
-                     ;; - A symbol: bind the value to that symbol
-                     ;; - A vector: destructuring bind the value
-                     ;; - A hash table: nested map destructuring
-                     (setf new-env (extend-binding new-env binding-form value)))))
-               binding-map)
       new-env)))
 
 (defun list-to-map (lst)
@@ -1142,12 +1099,11 @@
     (t
      (error "Invalid binding form: ~A (type: ~A)" binding-form (type-of binding-form)))))
 
-(defun eval-for-nested (bindings body-expr env &optional (result-limit 100000))
+(defun eval-for-nested (bindings body-expr env)
   "Evaluate nested for comprehension, producing list of results.
    bindings is (((binding-form . unevaluated-expr) . local-modifiers)...) - exprs are
    evaluated with current env, and modifiers apply to each iteration of that binding.
-   binding-form can be a symbol or a list for destructuring.
-   result-limit limits total results to avoid heap exhaustion."
+   binding-form can be a symbol or a list for destructuring."
   (if (null bindings)
       ;; Base case: evaluate body
       ;; Vectors need to be evaluated element-wise
@@ -1165,8 +1121,7 @@
              (rest-bindings (cdr bindings)))
         ;; Evaluate the collection expression with current env
         (let* ((first-coll (clojure-eval first-expr env))
-               (results nil)
-               (results-count 0))
+               (results nil))
           ;; Handle lazy ranges specially to avoid heap exhaustion
           (cond
             ((lazy-range-p first-coll)
@@ -1175,37 +1130,27 @@
                    (step (lazy-range-step first-coll)))
                (if end
                    ;; Bounded range - iterate but limit to avoid heap issues
-                   (let ((iter-limit (min 1000 (- end start))))
+                   (let ((iter-limit (min 10000 (- end start))))
                      (loop for i from start below end by step
                            for iter-count from 0
-                           while (and (< iter-count iter-limit)
-                                     (< results-count result-limit))
+                           while (< iter-count iter-limit)
                            do (let* ((new-env (extend-binding env first-binding i))
                                      (filtered-env (apply-local-modifiers new-env local-modifiers)))
                                 (when filtered-env
                                   (let ((nested-results (eval-for-nested rest-bindings
                                                                         body-expr
-                                                                        filtered-env
-                                                                        (- result-limit results-count))))
-                                    (dolist (nr nested-results)
-                                      (when (< results-count result-limit)
-                                        (push nr results)
-                                        (incf results-count)))))))))
+                                                                        filtered-env)))
+                                    (setf results (append results nested-results)))))))
                    ;; Infinite range - limit iterations
                    (loop for i from start by step
-                         repeat (min 1000 result-limit)
-                         while (< results-count result-limit)
+                         repeat 1000
                          do (let* ((new-env (extend-binding env first-binding i))
                                    (filtered-env (apply-local-modifiers new-env local-modifiers)))
                               (when filtered-env
                                 (let ((nested-results (eval-for-nested rest-bindings
                                                                           body-expr
-                                                                          filtered-env
-                                                                          (- result-limit results-count))))
-                                  (dolist (nr nested-results)
-                                    (when (< results-count result-limit)
-                                      (push nr results)
-                                      (incf results-count)))))))))
+                                                                          filtered-env)))
+                                  (setf results (append results nested-results)))))))))
             ;; Hash table (map) - convert to list of [key value] vectors
             ((hash-table-p first-coll)
              (let ((entries '()))
@@ -1214,37 +1159,27 @@
                        first-coll)
                (let ((first-coll-list (nreverse entries)))
                  (dolist (elem first-coll-list)
-                   (when (< results-count result-limit)
-                     (let* ((new-env (extend-binding env first-binding elem))
-                            (filtered-env (apply-local-modifiers new-env local-modifiers)))
-                       (when filtered-env
-                         (let ((nested-results (eval-for-nested rest-bindings
-                                                                 body-expr
-                                                                 filtered-env
-                                                                 (- result-limit results-count))))
-                           (dolist (nr nested-results)
-                             (when (< results-count result-limit)
-                               (push nr results)
-                               (incf results-count)))))))))))
-            ;; Regular collection - convert to list with limit
-            (t
-             (let ((first-coll-list (if (listp first-coll)
-                                        first-coll
-                                        (coerce first-coll 'list))))
-               (dolist (elem first-coll-list)
-                 (when (< results-count result-limit)
                    (let* ((new-env (extend-binding env first-binding elem))
                           (filtered-env (apply-local-modifiers new-env local-modifiers)))
                      (when filtered-env
                        (let ((nested-results (eval-for-nested rest-bindings
                                                                  body-expr
-                                                                 filtered-env
-                                                                 (- result-limit results-count))))
-                         (dolist (nr nested-results)
-                           (when (< results-count result-limit)
-                             (push nr results)
-                             (incf results-count)))))))))))
-          (nreverse results)))))
+                                                                 filtered-env)))
+                         (setf results (append results nested-results)))))))))
+            ;; Regular collection - convert to list
+            (t
+             (let ((first-coll-list (if (listp first-coll)
+                                        first-coll
+                                        (coerce first-coll 'list))))
+               (dolist (elem first-coll-list)
+                 (let* ((new-env (extend-binding env first-binding elem))
+                        (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                   (when filtered-env
+                     (let ((nested-results (eval-for-nested rest-bindings
+                                                               body-expr
+                                                               filtered-env)))
+                       (setf results (append results nested-results)))))))))
+          results))))
 
 (defun eval-doseq (form env)
   "Evaluate a doseq form: (doseq [seq-exprs] body+) - execute body for side effects.
@@ -3031,32 +2966,6 @@
           (make-hash-table :test 'equal)))
        (t
         (error "Unsupported chk method: ~A" member-name))))
-    ;; UUID class methods
-    ((or (string-equal class-name "UUID") (string-equal class-name "java.util.UUID"))
-     (cond
-       ((string-equal member-name "randomUUID")
-        ;; Generate a random UUID string
-        (format nil "~8,'0X-~4,'0X-~4,'0X-~4,'0X-~12,'0X"
-                (random #x100000000)
-                (random #x10000)
-                (random #x10000)
-                (random #x10000)
-                (random #x1000000000000)))
-       ((string-equal member-name "fromString")
-        ;; Parse UUID from string (stub - just return the string)
-        (if (null args)
-            nil
-            (first args)))
-       ((string-equal member-name "toString")
-        ;; Convert UUID to string (for UUID objects that are strings)
-        (if (null args)
-            "00000000-0000-0000-0000-000000000000"
-            (let ((arg (first args)))
-              (if (stringp arg)
-                  arg
-                  "00000000-0000-0000-0000-000000000000"))))
-       (t
-        (error "Unsupported UUID method: ~A" member-name))))
     ;; Default: error for unknown Java interop
     (t
      (error "Unsupported Java interop: ~A/~A" class-name member-name))))
@@ -3151,20 +3060,6 @@
        (if (null args)
            :exception
            (first args)))
-      ;; Throwable constructor - creates a throwable
-      ((or (string-equal name "Throwable")
-           (string-equal name "java.lang.Throwable"))
-       ;; For SBCL, just return the message as a stub
-       (if (null args)
-           :throwable
-           (first args)))
-      ;; RuntimeException constructor
-      ((or (string-equal name "RuntimeException")
-           (string-equal name "java.lang.RuntimeException"))
-       ;; For SBCL, just return the message as a stub
-       (if (null args)
-           :runtime-exception
-           (first args)))
       ;; HashSet constructor - creates a hash set
       ((string-equal name "HashSet")
        ;; For SBCL, return an empty hash table
@@ -3202,44 +3097,6 @@
       ;; Object constructor (genclass test)
       ((string-equal name "Object")
        ;; For SBCL, just return a stub hash table
-       (make-hash-table :test 'equal))
-      ;; UUID constructor - creates a UUID
-      ((or (string-equal name "UUID")
-           (string-equal name "java.util.UUID"))
-       ;; For SBCL, create a stub UUID representation
-       ;; With two args (most significant bits, least significant bits)
-       ;; return a UUID string representation
-       (if (>= (length args) 2)
-           ;; Format as UUID string: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-           (let ((msb (first args))
-                 (lsb (second args)))
-             (format nil "~8,'0X-~4,'0X-~4,'0X-~4,'0X-~12,'0X"
-                     (logand (ash msb -32) #xFFFFFFFF)
-                     (logand (ash msb -16) #xFFFF)
-                     (logand msb #xFFFF)
-                     (logand (ash lsb -48) #xFFFF)
-                     (logand lsb #xFFFFFFFFFFFF)))
-           ;; No args - return a random UUID string
-           (format nil "~8,'0X-~4,'0X-~4,'0X-~4,'0X-~12,'0X"
-                   (random #x100000000)
-                   (random #x10000)
-                   (random #x10000)
-                   (random #x10000)
-                   (random #x1000000000000))))
-      ;; ArrayList constructor
-      ((or (string-equal name "ArrayList")
-           (string-equal name "java.util.ArrayList"))
-       ;; For SBCL, return an empty list as a stub
-       '())
-      ;; HashMap constructor
-      ((or (string-equal name "HashMap")
-           (string-equal name "java.util.HashMap"))
-       ;; For SBCL, return an empty hash table as a stub
-       (make-hash-table :test 'equal))
-      ;; HashSet constructor
-      ((or (string-equal name "HashSet")
-           (string-equal name "java.util.HashSet"))
-       ;; For SBCL, return an empty hash table as a stub
        (make-hash-table :test 'equal))
       ;; Default: error for unknown constructors
       (t
@@ -3337,10 +3194,6 @@
   (register-core-function env 'list #'clojure-list)
   (register-core-function env 'map #'clojure-map)
   (register-core-function env 'mapv #'clojure-mapv)
-  (register-core-function env 'refer #'clojure-refer)
-  (register-core-function env 'Throwable->map #'clojure-throwable-map)
-  (register-core-function env 'ex-info #'clojure-ex-info)
-  (register-core-function env 'ex-data #'clojure-ex-data)
   (register-core-function env 'apply #'clojure-apply)
   (register-core-function env 'eval #'clojure-eval-function)
   (register-core-function env 'str #'clojure-str)
@@ -3451,7 +3304,6 @@
   (register-core-function env 'reset! #'clojure-reset!)
   (register-core-function env 'reset-vals! #'clojure-reset-vals!)
   (register-core-function env 'var-set #'clojure-var-set)
-  (register-core-function env 'set #'clojure-set)
   (register-core-function env 'hash-set #'clojure-hash-set)
   (register-core-function env 'sorted-set #'clojure-sorted-set)
   (register-core-function env 'sorted-set-by #'clojure-sorted-set-by)
@@ -3653,7 +3505,6 @@
   (register-core-function env 'isa? #'clojure-isa?)
   (register-core-function env 'defstruct #'clojure-defstruct)
   (register-core-function env 'struct #'clojure-struct)
-  (register-core-function env 'tagged-literal #'clojure-tagged-literal)
   (register-core-function env 'thrown-with-cause-msg? #'clojure-thrown-with-cause-msg?)
   (register-core-function env 'fails-with-cause? #'clojure-fails-with-cause?)
   (register-core-function env 'platform-newlines #'clojure-platform-newlines)
@@ -3776,23 +3627,21 @@
 
 (defun clojure< (x &rest args)
   "True if arguments are in strictly increasing order.
-   Returns false (not nil) if any comparison involves NaN or non-numbers."
+   Returns false (not nil) if any comparison involves NaN."
   (handler-case
       (or (null args)
           (and (< x (car args))
                (apply #'< args)))
-    (floating-point-invalid-operation () nil)
-    (type-error () nil)))
+    (floating-point-invalid-operation () nil)))
 
 (defun clojure> (x &rest args)
   "True if arguments are in strictly decreasing order.
-   Returns false (not nil) if any comparison involves NaN or non-numbers."
+   Returns false (not nil) if any comparison involves NaN."
   (handler-case
       (or (null args)
           (and (> x (car args))
            (apply #'> args)))
-    (floating-point-invalid-operation () nil)
-    (type-error () nil)))
+    (floating-point-invalid-operation () nil)))
 
 (defun clojure<= (x &rest args)
   "True if arguments are in non-decreasing order.
@@ -3801,7 +3650,6 @@
       (or (null args)
           (and (<= x (car args))
            (apply #'<= args)))
-    (type-error () nil)
     (floating-point-invalid-operation () nil)))
 
 (defun clojure>= (x &rest args)
@@ -3811,8 +3659,8 @@
       (or (null args)
           (and (>= x (car args))
            (apply #'>= args)))
-    (type-error () nil)
     (floating-point-invalid-operation () nil)))
+
 (defun clojure-min (x &rest args)
   "Return the minimum of the arguments.
    If any argument is NaN, return NaN (Clojure behavior)."
@@ -4387,81 +4235,6 @@
                   into result
                   finally (return (coerce result 'vector))))))))
 
-(defun clojure-refer (ns-symbol &rest kwargs)
-  "Refer to symbols in another namespace. This is a stub implementation.
-   In Clojure, refer is used to import symbols from other namespaces.
-   For SBCL, we just return nil as a stub."
-  ;; The test uses: (refer 'clojure.core :rename '{with-open renamed-with-open})
-  ;; We don't actually implement namespace references, so just return nil
-  (declare (ignore ns-symbol kwargs))
-  nil)
-
-(defun clojure-throwable-map (throwable)
-  "Convert a Throwable/Exception to a map with :cause, :via, :trace keys.
-   This is a stub implementation for SBCL."
-  ;; In Clojure, Throwable->map returns a map with:
-  ;; :cause - the root cause message
-  ;; :via - a vector of maps with :class, :message, :at, :type keys
-  ;; :trace - a vector of stack trace elements
-  ;; For SBCL stub, we return a basic map structure
-  ;; Helper to extract value from flat plist-like list
-  (labels ((extract-value (lst key)
-             "Extract value for key from flat list (key1 val1 key2 val2 ...)"
-             (loop for tail on lst by #'cddr
-                   when (eq (car tail) key)
-                   return (cadr tail))))
-    (let* ((is-ex-info (and (consp throwable) (eq (car throwable) :ex-info)))
-           (message (if is-ex-info
-                       ;; Extract :message from ex-info
-                       (extract-value (cdr throwable) :message)
-                       (if (stringp throwable)
-                           throwable
-                           (if (and (consp throwable)
-                                    (eq (car throwable) :exception))
-                               (or (cadr throwable) "unknown")
-                               "unknown"))))
-           (data (if is-ex-info
-                    ;; Extract :data from ex-info
-                    (extract-value (cdr throwable) :data)
-                    nil))
-           ;; Create via-entry as a hash table (not a list)
-           (via-entry (let ((ht (make-hash-table :test 'equal)))
-                        (setf (gethash :class ht) (if data "clojure.lang.ExceptionInfo" "java.lang.Exception"))
-                        (setf (gethash :message ht) message)
-                        (setf (gethash :at ht) nil)
-                        (when data
-                          (setf (gethash :data ht) data))
-                        ht))
-           (via (vector via-entry))  ; Vector of hash tables
-           (trace #()))  ; Empty vector for SBCL
-      ;; Create result hash table
-      (let ((result (make-hash-table :test 'equal)))
-        (setf (gethash :cause result) message)
-        (setf (gethash :via result) via)
-        (setf (gethash :trace result) trace)
-        (when data
-          (setf (gethash :data result) data))
-        result))))
-
-(defun clojure-ex-info (msg &optional data)
-  "Create an ex-info exception. This is a stub for SBCL."
-  ;; In Clojure, ex-info creates an exception with data
-  ;; For SBCL, return a stub structure
-  (list :ex-info
-        :message msg
-        :data (or data (make-hash-table :test 'equal))))
-
-(defun clojure-ex-data (throwable)
-  "Get the data from an ex-info exception. Returns nil if not ex-info."
-  ;; Check if this is an ex-info structure
-  (if (and (consp throwable)
-           (eq (car throwable) :ex-info))
-      ;; Extract the :data entry from the flat list
-      (loop for tail on (cdr throwable) by #'cddr
-            when (eq (car tail) :data)
-            return (cadr tail))
-      nil))
-
 (defun clojure-apply (fn-arg &rest args)
   "Apply fn to args with last arg being a list of args."
   ;; Ensure fn-arg is callable (wrap closures if needed)
@@ -4629,11 +4402,9 @@
    (range 1 10 2) -> 1 3 5 7 9"
   (cond
     ;; No arguments - infinite range starting from 0
-    ;; This is only when no args were passed, so start is still 0 (default)
-    ((and (null end) (null step) (eql start 0))
+    ((and (null end) (null step))
      (make-lazy-range :start 0 :end nil :step 1 :current 0))
     ;; One argument: treat as end, start from 0
-    ;; This happens when we call (range n) - start becomes n, end and step are nil
     ((null end)
      (if (null start)
          '()
@@ -5794,20 +5565,6 @@
   (delay-value delay-obj))
 
 ;;; Set creation functions
-(defun clojure-set (coll)
-  "Create a hash set from a collection."
-  (let ((result (make-hash-table :test 'equal)))
-    ;; Convert coll to list and add each element
-    (let ((items (cond
-                   ((listp coll) coll)
-                   ((vectorp coll) (coerce coll 'list))
-                   ((lazy-range-p coll) (lazy-range-to-list coll 1000))
-                   ((hash-table-p coll) (loop for k being the hash-keys of coll collect k))
-                   (t '()))))
-      (dolist (elem items)
-        (setf (gethash elem result) t)))
-    result))
-
 (defun clojure-hash-set (&rest elements)
   "Create a hash set from elements."
   (let ((result (make-hash-table :test 'equal)))
@@ -6455,11 +6212,6 @@
     (t (let ((f (first args))
              (more-args (rest args)))
          (lambda (&rest more) (apply f (append more-args more)))))))
-
-(defun clojure-tagged-literal (tag form)
-  "Create a tagged literal value. Stub implementation that returns the form as-is."
-  (declare (ignore tag))
-  form)
 
 (defun clojure-flatten (coll)
   "Flatten nested sequences into a single-level list."
@@ -7606,22 +7358,6 @@
             (string= (symbol-name (car expr)) "thrown-with-msg?"))
        ;; Handle thrown-with-msg? specially within is
        (eval-thrown-with-msg expr env))
-      ((and (consp expr)
-            (symbolp (car expr))
-            (string= (symbol-name (car expr)) "thrown-with-cause-msg?"))
-       ;; Handle thrown-with-cause-msg? specially within is
-       ;; This is similar to thrown-with-msg? - just catch errors and return true
-       (let ((exception-type (cadr expr))
-             (msg (caddr expr))
-             (body-expr (cadddr expr)))
-         (declare (ignore exception-type msg))
-         (handler-case
-             (progn
-               (clojure-eval body-expr env)
-               nil)  ; No exception thrown, return nil (false)
-           (error (c)
-             (declare (ignore c))
-             'true))))  ; Exception caught, return 'true
       ;; Normal is - just evaluate the expression (ignore message)
       (t (clojure-eval expr env)))))
 
@@ -7697,10 +7433,9 @@
                ;; Substitute argument forms directly into the expression
                ;; (do NOT evaluate them first - this allows thrown? to work)
                ;; Use substitute-symbols to handle binding forms correctly
-               ;; Wrap the substituted expression in (is ...) like Clojure's are does
                (let ((substituted-expr (substitute-symbols expr-expr arg-names chunk)))
-                 ;; Evaluate (is substituted-expr) - are wraps each test with is
-                 (push (clojure-eval (list 'is substituted-expr) env) results))))
+                 ;; Evaluate the substituted expression
+                 (push (clojure-eval substituted-expr env) results))))
     ;; Return the last result (like do), or nil if no results
     (if results
         (car (last results))
@@ -8175,34 +7910,15 @@
            ((and head-name (string= head-name "with-meta"))
             ;; with-meta attaches metadata to a value
             ;; (with-meta value metadata) -> value with metadata
-            ;; Note: For type hints (metadata is a symbol or vector), we don't evaluate the metadata
-            ;; Type hints like ^int, ^String, or ^[int], ^[_] are self-evaluating
+            ;; Note: For type hints (metadata is a symbol), we don't evaluate the metadata
             (destructuring-bind (with-meta-sym value metadata) form
               (declare (ignore with-meta-sym))
               (let ((evaluated-value (clojure-eval value env))
-                    ;; Only evaluate metadata if it's not a simple symbol or vector (type hints are symbols or vectors)
-                    (evaluated-metadata (if (or (symbolp metadata)
-                                                (vectorp metadata))
+                    ;; Only evaluate metadata if it's not a simple symbol (type hints are symbols)
+                    (evaluated-metadata (if (symbolp metadata)
                                            metadata  ; Don't evaluate type hints
                                            (clojure-eval metadata env))))
                 (wrap-with-meta evaluated-value evaluated-metadata))))
-           ((and head-name (string= head-name "tagged-literal"))
-            ;; tagged-literal: (tagged-literal tag value)
-            ;; Created by reader for tagged literals like #uuid "...", #inst "..."
-            ;; For our stub, we handle common tags specially and return value for unknown tags
-            (destructuring-bind (tagged-literal-sym tag value) form
-              (declare (ignore tagged-literal-sym))
-              ;; Evaluate the value (it's usually a string)
-              (let ((evaluated-value (clojure-eval value env)))
-                ;; Handle specific tags
-                (cond
-                  ;; UUID literals - return the value as-is for our stub
-                  ;; In a full implementation, this would create a UUID object
-                  ((string= (symbol-name tag) "UUID") evaluated-value)
-                  ;; Inst literals - return the value as-is for our stub
-                  ((string= (symbol-name tag) "INST") evaluated-value)
-                  ;; For unknown tags, return value with metadata indicating tag
-                  (t (wrap-with-meta evaluated-value tag))))))
            ((and head-name (string= head-name "condp"))
             ;; Condp form: (condp pred expr test1 result1 test2 result2 ... [default-result])
             ;; Evaluates expr and compares it using pred against each test value
@@ -8461,27 +8177,27 @@
 
       ;; Keyword as function - look itself up in the first argument (a map)
       ;; In Clojure, (:key map) is equivalent to (get map :key)
-      ;; Note: In Common Lisp, keywords are not symbols, so this check must come before symbol check
-      (keyword
-       (cond
-         ((null unwrapped-args)
-          (error "Wrong number of args (0) passed to: ~A" fn-value))
-         ((> (length unwrapped-args) 20)
-          (error "Wrong number of args (> 20) passed to: ~A" fn-value))
-         ((hash-table-p (car unwrapped-args))
-          (gethash actual-fn (car unwrapped-args)))
-         ;; For non-maps, return nil
-         (t nil)))
-
-      ;; Symbol that is not a keyword - error (unless it's a special case)
       (symbol
-       (error "Cannot apply non-function symbol: ~A" fn-value))
+       (if (keywordp actual-fn)
+           ;; Keyword used as function on a map
+           (cond
+             ((null unwrapped-args)
+              (error "Wrong number of args (0) passed to: ~A" fn-value))
+             ((> (length unwrapped-args) 20)
+              (error "Wrong number of args (> 20) passed to: ~A" fn-value))
+             ((hash-table-p (car unwrapped-args))
+              (gethash actual-fn (car unwrapped-args)))
+             ;; For non-maps, return nil
+             (t nil))
+           ;; Not a keyword, fall through to error
+           (error "Cannot apply non-function: ~A" fn-value)))
 
       ;; Regular Lisp function
       (function (apply actual-fn unwrapped-args))
 
       ;; Error
       (t (error "Cannot apply non-function: ~A" fn-value)))))
+
 ;;; ============================================================
 ;;; REPL and Evaluation Interface
 ;;; ============================================================

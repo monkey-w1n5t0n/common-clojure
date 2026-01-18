@@ -4576,3 +4576,69 @@ The "Cannot apply non-function: #<HASH-TABLE...>" error occurred because:
 ### Next Steps:
 - Add test.check generator stubs (elements, fmap, return, etc.)
 - Continue investigating remaining 39 test errors
+
+---
+
+## Iteration 77 - Fix vector type hints and tagged literal support (2026-01-18)
+
+### Focus: Fix with-meta for vector type hints and implement tagged-literal special form
+
+### Changes Made
+
+1. **Fixed `with-meta` to handle vector type hints** - cl-clojure-eval.lisp:7923-7938
+   - Type hints like `^int`, `^String` are symbols (already handled)
+   - Type hints like `^[int]`, `^[_]` are vectors (NOT handled before)
+   - Changed `(symbolp metadata)` to `(or (symbolp metadata) (vectorp metadata))`
+   - Vector type hints are now correctly treated as self-evaluating metadata
+
+2. **Implemented `tagged-literal` special form handler** - cl-clojure-eval.lisp:7940-7955
+   - Reader converts `#uuid "..."` to `(tagged-literal 'uuid "...")`
+   - Reader converts `#inst "..."` to `(tagged-literal 'inst "...")`
+   - Handler evaluates the value and handles specific tags:
+     - `UUID` literals: return the value as-is (stub)
+     - `INST` literals: return the value as-is (stub)
+     - Unknown tags: return value with metadata indicating the tag
+
+3. **Added `clojure-tagged-literal` function** - cl-clojure-eval.lisp:6217-6221
+   - Stub implementation that returns the form as-is
+   - Function callable directly: `(tagged-literal 'uuid "...")`
+   - Registered in `setup-core-functions` at line 3507
+
+4. **Fixed EOF error from missing parenthesis** - cl-clojure-eval.lisp:7955
+   - The `tagged-literal` handler was missing a closing parenthesis
+   - `destructuring-bind` has 3 clauses in `cond`, each ending with `)`
+   - But the `destructuring-bind` itself needed a 4th `)` to close
+   - Fixed by adding the missing closing paren
+
+### Root Cause Analysis
+
+The `method_thunks.clj` test was failing with "Undefined symbol: _" because:
+
+1. The test contains `^[]` and `^[_]` type hints on function parameters
+2. The reader converts `^[_]` to `(with-meta [_] meta)` where the symbol is `[_]` (a vector symbol)
+3. But more importantly, when this becomes a `with-meta` form, the metadata part is a vector
+4. The `with-meta` handler only checked `(symbolp metadata)` to decide if metadata should be evaluated
+5. Since vector type hints were not recognized as self-evaluating, they were being evaluated as forms
+6. This caused the symbol `_` inside the vector to be looked up as a variable
+
+The "Undefined symbol: TAGGED-LITERAL" error occurred because:
+1. The reader converts `#uuid "..."` to `(tagged-literal 'uuid "...")`
+2. This form was being treated as a regular function call
+3. There was no `tagged-literal` function registered, and no special form handler
+
+### Errors Fixed:
+- "Undefined symbol: _" in method_thunks test - FIXED ✅ (vector type hints now self-evaluating)
+- "Undefined symbol: TAGGED-LITERAL" in method_thunks test - FIXED ✅ (special form added)
+- "Undefined symbol: uuid" in method_thunks test - FIXED ✅ (tagged-literal handler)
+- EOF error during file loading - FIXED ✅ (missing parenthesis added)
+
+### Test Results:
+- Parse: 94 ok, 8 errors ✅ (unchanged)
+- Eval: 63 ok, 39 errors (unchanged)
+- method_thunks test now fails on "Unsupported Java interop: UUID/new" instead of "Undefined symbol: _"
+- This is progress - the test now gets past type hint parsing and tagged literal handling
+
+### Next Steps:
+- Implement Java constructor interop for UUID/new (or stub it)
+- Continue investigating remaining 39 test errors
+- The tagged literal infrastructure is in place for #uuid, #inst, and custom tags

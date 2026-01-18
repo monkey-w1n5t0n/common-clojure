@@ -3505,6 +3505,7 @@
   (register-core-function env 'isa? #'clojure-isa?)
   (register-core-function env 'defstruct #'clojure-defstruct)
   (register-core-function env 'struct #'clojure-struct)
+  (register-core-function env 'tagged-literal #'clojure-tagged-literal)
   (register-core-function env 'thrown-with-cause-msg? #'clojure-thrown-with-cause-msg?)
   (register-core-function env 'fails-with-cause? #'clojure-fails-with-cause?)
   (register-core-function env 'platform-newlines #'clojure-platform-newlines)
@@ -6213,6 +6214,11 @@
              (more-args (rest args)))
          (lambda (&rest more) (apply f (append more-args more)))))))
 
+(defun clojure-tagged-literal (tag form)
+  "Create a tagged literal value. Stub implementation that returns the form as-is."
+  (declare (ignore tag))
+  form)
+
 (defun clojure-flatten (coll)
   "Flatten nested sequences into a single-level list."
   (when coll
@@ -7910,15 +7916,34 @@
            ((and head-name (string= head-name "with-meta"))
             ;; with-meta attaches metadata to a value
             ;; (with-meta value metadata) -> value with metadata
-            ;; Note: For type hints (metadata is a symbol), we don't evaluate the metadata
+            ;; Note: For type hints (metadata is a symbol or vector), we don't evaluate the metadata
+            ;; Type hints like ^int, ^String, or ^[int], ^[_] are self-evaluating
             (destructuring-bind (with-meta-sym value metadata) form
               (declare (ignore with-meta-sym))
               (let ((evaluated-value (clojure-eval value env))
-                    ;; Only evaluate metadata if it's not a simple symbol (type hints are symbols)
-                    (evaluated-metadata (if (symbolp metadata)
+                    ;; Only evaluate metadata if it's not a simple symbol or vector (type hints are symbols or vectors)
+                    (evaluated-metadata (if (or (symbolp metadata)
+                                                (vectorp metadata))
                                            metadata  ; Don't evaluate type hints
                                            (clojure-eval metadata env))))
                 (wrap-with-meta evaluated-value evaluated-metadata))))
+           ((and head-name (string= head-name "tagged-literal"))
+            ;; tagged-literal: (tagged-literal tag value)
+            ;; Created by reader for tagged literals like #uuid "...", #inst "..."
+            ;; For our stub, we handle common tags specially and return value for unknown tags
+            (destructuring-bind (tagged-literal-sym tag value) form
+              (declare (ignore tagged-literal-sym))
+              ;; Evaluate the value (it's usually a string)
+              (let ((evaluated-value (clojure-eval value env)))
+                ;; Handle specific tags
+                (cond
+                  ;; UUID literals - return the value as-is for our stub
+                  ;; In a full implementation, this would create a UUID object
+                  ((string= (symbol-name tag) "UUID") evaluated-value)
+                  ;; Inst literals - return the value as-is for our stub
+                  ((string= (symbol-name tag) "INST") evaluated-value)
+                  ;; For unknown tags, return value with metadata indicating tag
+                  (t (wrap-with-meta evaluated-value tag))))))
            ((and head-name (string= head-name "condp"))
             ;; Condp form: (condp pred expr test1 result1 test2 result2 ... [default-result])
             ;; Evaluates expr and compares it using pred against each test value

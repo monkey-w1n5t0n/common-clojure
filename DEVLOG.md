@@ -4218,3 +4218,36 @@ The control test had TWO issues:
 - Implement `should-print-err-message` test helper
 - Continue with other test failures
 - Implement more core functions as tests require them
+
+---
+
+## Iteration 69 - Add special form symbols to global environment (2026-01-18)
+
+### Focus: Make special form names resolvable as symbols
+
+### Problem
+The repl test was failing with "Undefined symbol: catch" when calling `(doc catch)`. The issue was that special form names like `catch`, `try`, `if`, etc. were not defined as vars in the environment. In Clojure, special form names can still be referenced as symbols, even though they're implemented as special forms rather than functions.
+
+### Solution
+Added all special form symbols to the global environment in `setup-core-functions`. Each special form symbol now maps to itself (the symbol), so when functions like `doc` receive a special form name as an argument, they can look it up successfully.
+
+### Changes Made
+
+1. **Added special form symbol registration** - cl-clojure-eval.lisp:3061-3070
+   - Created a list of all special form names
+   - Each symbol is registered as a var that contains itself
+   - This allows special forms to be referenced by functions like `doc`, `source`, etc.
+   - Special forms registered: def, do, if, if-let, if-not, let, letfn, loop, case, cond, condp, when, when-not, when-first, when-let, if-some, when-some, try, catch, finally, throw, quote, var, fn, fn*, recur, dotimes, binding, while, with-local-vars, with-precision, with-redefs, with-redefs-fn, new, monitor-enter, monitor-exit, set!, defonce, ns, import, require, use, refer, load, declare, in-ns, ns*
+
+### Errors Fixed:
+- "Undefined symbol: catch" in repl test - FIXED ✅
+- repl test now progresses to "Undefined symbol: source-fn"
+
+### Test Results:
+- Parse: 94 ok, 8 errors ✅
+- Eval: 61 ok, 41 errors (no count change, but repl test progresses further)
+
+### Next Steps:
+- Implement `source-fn` function for repl test
+- Implement `should-print-err-message` test helper
+- Continue with other test failures

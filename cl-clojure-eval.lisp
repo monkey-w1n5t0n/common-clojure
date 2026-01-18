@@ -3058,6 +3058,17 @@
 (defun setup-core-functions (env)
   "Set up all core functions in the environment."
 
+  ;; Special form symbols - these need to be defined so they can be referenced
+  ;; by functions like doc, even though they're implemented as special forms
+  (dolist (sym '(def do if if-let if-not let letfn loop case cond condp
+                  when when-not when-first when-let if-some when-some
+                  try catch finally throw quote var fn fn*
+                  recur dotimes binding while with-local-vars with-precision
+                  with-redefs with-redefs-fn new monitor-enter monitor-exit
+                  set! defonce ns import require use refer load
+                  declare in-ns ns*))
+    (env-set-var env sym sym))
+
   ;; Boolean values
   (env-set-var env 'true t)
   (env-set-var env 'false 'false)

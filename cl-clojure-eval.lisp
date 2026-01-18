@@ -2393,14 +2393,22 @@
      (cond
        ((string-equal member-name "rand-nth")
         ;; Stub: return first element of collection or a default value
+        ;; If the result is a symbol, look it up as a var to get its value
         (if (null args)
             nil
-            (let ((coll (first args)))
-              (cond
-                ((null coll) nil)
-                ((vectorp coll) (if (> (length coll) 0) (aref coll 0) nil))
-                ((listp coll) (first coll))
-                (t nil)))))
+            (let ((coll (first args))
+                  (result nil))
+              (setf result
+                    (cond
+                      ((null coll) nil)
+                      ((vectorp coll) (if (> (length coll) 0) (aref coll 0) nil))
+                      ((listp coll) (first coll))
+                      (t nil)))
+              ;; If result is a symbol, look it up as a var (for identity, transient, etc.)
+              (when (and result (symbolp result))
+                (let ((var (env-get-var *current-env* result)))
+                  (when var (setf result (var-value var)))))
+              result)))
        ((string-equal member-name "uniform")
         ;; Stub: return a random number in range
         (if (null args)
@@ -2414,13 +2422,18 @@
             '()
             (let ((n (first args))
                   (f (second args)))
+              ;; If f is a symbol, look it up as a var to get the function
+              (when (symbolp f)
+                (let ((var (env-get-var *current-env* f)))
+                  (when var (setf f (var-value var)))))
               ;; Use collect with explicit list to ensure we always return a list
               ;; Handle nil function by returning empty list
               (if (null f)
                   '()
-                  (let ((result '()))
+                  (let ((callable-f (ensure-callable f))
+                        (result '()))
                     (loop for i from 1 to n
-                          do (push (funcall f) result))
+                          do (push (funcall callable-f) result))
                     (nreverse result))))))
        ((string-equal member-name "one-of")
         ;; Stub: return first element
@@ -5150,21 +5163,6 @@
   (lambda (x)
     (some (lambda (p) (funcall p x)) preds)))
 
-(defun clojure-comp (&rest fns)
-  "Compose functions - return a function that applies fns right-to-left."
-  (if fns
-      (let ((composed (reduce (lambda (g f)
-                                (lambda (&rest args)
-                                  (funcall g (apply f args))))
-                              (reverse fns))))
-        composed)
-      #'identity))
-
-(defun clojure-juxt (&rest fns)
-  "Return a function that applies each of fns to arguments and returns vector of results."
-  (lambda (&rest args)
-    (coerce (mapcar (lambda (f) (apply f args)) fns) 'vector)))
-
 (defun clojure-fnil (f fill-val &rest more-fills)
   "Return a function that calls f but replaces nil arguments with fill values."
   (lambda (&rest args)
@@ -6643,6 +6641,8 @@
                                       arg))
                                 args)))
     (typecase actual-fn
+      ;; nil - return nil (in Clojure, calling nil is valid but does nothing)
+      (null nil)
       ;; Clojure closure
       (closure
        (let* ((params (closure-params actual-fn))

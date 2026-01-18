@@ -684,7 +684,10 @@
     (cons
      (if (eq (car form) 'quasiquote)
          ;; Convert quasiquote contents to our format
-         `(syntax-quote ,(mapcar #'convert-cl-quasiquote (cdr form)))
+         ;; The body is (cadr form) - the single element after quasiquote
+         ;; We need to convert just that one element, not mapcar over cdr
+         (let ((body (cadr form)))
+           `(syntax-quote ,(convert-cl-quasiquote body)))
          ;; Recursively process list elements
          (mapcar #'convert-cl-quasiquote form)))
     ;; Handle vectors (but not strings, which are handled above)

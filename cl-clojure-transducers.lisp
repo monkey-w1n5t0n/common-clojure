@@ -4,13 +4,16 @@
 
 (in-package :cl-clojure-eval)
 
+;; Note: +transducer-sentinel+ is defined in cl-clojure-eval.lisp
+
 ;; Override clojure-map to support transducer arity
-(defun clojure-map (fn-arg &optional coll &rest colls)
+(defun clojure-map (fn-arg &optional (coll +transducer-sentinel+) &rest colls)
   "Apply fn to each item in collection(s). Returns lazy sequence.
    When called with only fn, returns a transducer."
   (let ((callable-fn (ensure-callable fn-arg)))
-    (if (null coll)
+    (if (eq coll +transducer-sentinel+)
         ;; Transducer arity - (map f) returns a transducer
+        ;; Note: Sentinel value distinguishes (map f) from (map f nil)
         (lambda (reducing-function)
           "Map transducer - applies f to each input before reducing."
           (lambda (result input)
@@ -86,11 +89,11 @@
                       collect (apply callable-fn (mapcar (lambda (c) (nth i c)) coll-lists)))))))))
 
 ;; Override clojure-filter to support transducer arity
-(defun clojure-filter (pred &optional coll)
+(defun clojure-filter (pred &optional (coll +transducer-sentinel+))
   "Return a lazy sequence of items in coll for which pred returns true.
    When called with only pred, returns a transducer."
   (let ((callable-pred (ensure-callable pred)))
-    (if (null coll)
+    (if (eq coll +transducer-sentinel+)
         ;; Transducer arity - (filter pred) returns a transducer
         (lambda (reducing-function)
           "Filter transducer - only includes inputs where pred returns true."
@@ -98,7 +101,7 @@
             (if (funcall callable-pred input)
                 (funcall reducing-function result input)
                 result)))
-        ;; Collection arity - filter over collection
+        ;; Collection arity - filter over collection (even if coll is nil)
         (cond
           ((null coll) '())
           ((lazy-range-p coll)
@@ -136,10 +139,10 @@
                    collect item)))))))
 
 ;; Cat transducer - concatenates collections during transduction
-(defun clojure-cat (&optional coll)
+(defun clojure-cat (&optional (coll +transducer-sentinel+))
   "Concatenation transducer. When called with no args, returns the cat transducer.
    When called with a collection, returns that collection converted to a list."
-  (if (null coll)
+  (if (eq coll +transducer-sentinel+)
       ;; Transducer arity - (cat) returns a transducer
       (lambda (reducing-function)
         "Cat transducer - concatenates input collections."
@@ -260,9 +263,9 @@
                         (funcall reduced result item))
                       coll-list
                       :initial-value init))))))))
-(defun clojure-dedupe (&optional coll)
+(defun clojure-dedupe (&optional (coll +transducer-sentinel+))
   "Remove consecutive duplicates from collection."
-  (if (null coll)
+  (if (eq coll +transducer-sentinel+)
       (lambda (reducing-function)
         (let ((previous nil)
               (first-p t))
@@ -284,9 +287,9 @@
         (nreverse result))))
 
 ;; Take-nth transducer
-(defun clojure-take-nth (n &optional coll)
+(defun clojure-take-nth (n &optional (coll +transducer-sentinel+))
   "Return every nth element."
-  (if (null coll)
+  (if (eq coll +transducer-sentinel+)
       (let ((index 0))
         (lambda (reducing-function)
           (lambda (result input)
@@ -301,10 +304,10 @@
             collect elem)))
 
 ;; Replace transducer
-(defun clojure-replace (smap &optional coll)
+(defun clojure-replace (smap &optional (coll +transducer-sentinel+))
   "Replace values in coll using smap (a map of from -> to).
    When called with only smap, returns a transducer."
-  (if (null coll)
+  (if (eq coll +transducer-sentinel+)
       ;; Transducer arity
       (lambda (reducing-function)
         (lambda (result input)
@@ -320,10 +323,10 @@
         (nreverse result))))
 
 ;; Interpose transducer
-(defun clojure-interpose (sep &optional coll)
+(defun clojure-interpose (sep &optional (coll +transducer-sentinel+))
   "Insert sep between elements of coll.
    When called with only sep, returns a transducer."
-  (if (null coll)
+  (if (eq coll +transducer-sentinel+)
       ;; Transducer arity
       (let ((first-p t))
         (lambda (reducing-function)
@@ -347,11 +350,11 @@
           (nreverse result)))))
 
 ;; Keep-indexed transducer
-(defun clojure-keep-indexed (f &optional coll)
+(defun clojure-keep-indexed (f &optional (coll +transducer-sentinel+))
   "Keep indices and items where (f index item) returns truthy.
    When called with only f, returns a transducer."
   (let ((callable-f (ensure-callable f)))
-    (if (null coll)
+    (if (eq coll +transducer-sentinel+)
         ;; Transducer arity
         (let ((index -1))
           (lambda (reducing-function)
@@ -372,11 +375,11 @@
           (nreverse result)))))
 
 ;; Map-indexed transducer
-(defun clojure-map-indexed (f &optional coll)
+(defun clojure-map-indexed (f &optional (coll +transducer-sentinel+))
   "Map (f index item) over collection.
    When called with only f, returns a transducer."
   (let ((callable-f (ensure-callable f)))
-    (if (null coll)
+    (if (eq coll +transducer-sentinel+)
         ;; Transducer arity
         (let ((index -1))
           (lambda (reducing-function)

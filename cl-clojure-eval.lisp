@@ -3,6 +3,10 @@
 
 (in-package #:cl-clojure-eval)
 
+;;; Sentinel value for distinguishing between optional args not provided
+;;; vs explicitly passed as nil. Used by functions with transducer arity.
+(defconstant +transducer-sentinel+ (make-symbol "TRANSDUCER-SENTINEL"))
+
 ;;; Forward declarations for functions used before definition
 (declaim (ftype (function (&rest t) t) clojure-set-union))
 (declaim (ftype (function (&rest t) t) clojure-set-intersection))
@@ -4066,36 +4070,37 @@
     (t (let ((rest (cdr seq)))
          (if (null rest) nil rest)))))
 
-(defun clojure-nth (coll index &optional not-found)
+(defun clojure-nth (coll index &optional (not-found +transducer-sentinel+))
   "Return element at index. Returns not-found if index out of bounds.
    Defaults to nil if not-found not provided."
-  (cond
-    ((null coll)
-     (if (null not-found) (error "Index out of bounds") not-found))
-    ((vectorp coll)
-     (if (and (>= index 0) (< index (length coll)))
-         (aref coll index)
-         (if (null not-found) (error "Index out of bounds") not-found)))
-    ((lazy-range-p coll)
-     (let ((start (lazy-range-start coll))
-           (end (lazy-range-end coll))
-           (step (lazy-range-step coll)))
-       (let ((value (+ start (* index step))))
-         (if (and end (>= value end))
-             (if (null not-found) (error "Index out of bounds") not-found)
-             value))))
-    ((stringp coll)
-     (if (and (>= index 0) (< index (length coll)))
-         (aref coll index)
-         (if (null not-found) (error "Index out of bounds") not-found)))
-    ((listp coll)
-     (if (and (>= index 0))
-         (let ((result (nthcdr index coll)))
-           (if (and result (consp result))
-               (car result)
-               (if (null not-found) (error "Index out of bounds") not-found)))
-         (if (null not-found) (error "Index out of bounds") not-found)))
-    (t (if (null not-found) (error "Index out of bounds") not-found))))
+  (let ((default-value (if (eq not-found +transducer-sentinel+) nil not-found)))
+    (cond
+      ((null coll)
+       default-value)
+      ((vectorp coll)
+       (if (and (>= index 0) (< index (length coll)))
+           (aref coll index)
+           default-value))
+      ((lazy-range-p coll)
+       (let ((start (lazy-range-start coll))
+             (end (lazy-range-end coll))
+             (step (lazy-range-step coll)))
+         (let ((value (+ start (* index step))))
+           (if (and end (>= value end))
+               default-value
+               value))))
+      ((stringp coll)
+       (if (and (>= index 0) (< index (length coll)))
+           (aref coll index)
+           default-value))
+      ((listp coll)
+       (if (and (>= index 0))
+           (let ((result (nthcdr index coll)))
+             (if (and result (consp result))
+                 (car result)
+                 default-value))
+           default-value))
+      (t default-value))))
 
 (defun clojure-str (&rest args)
   "Convert arguments to string and concatenate. With no args, returns empty string."
@@ -7294,7 +7299,8 @@
   (sxhash x))
 
 (defun clojure-assoc (map &rest key-value-pairs)
-  "Associate key-value pairs to a map. Returns new map."
+  "Associate key-value pairs to a map. Returns new map.
+   For vectors, can grow the vector to accommodate all new indices."
   (unless (evenp (length key-value-pairs))
     (error "assoc requires an even number of arguments"))
   (if (hash-table-p map)
@@ -7307,17 +7313,39 @@
         (loop for (key value) on key-value-pairs by #'cddr
               do (setf (gethash key new-map) value))
         new-map)
-      ;; For vectors, assoc sets values at indices
+      ;; For vectors, assoc sets values at indices and can grow
       (if (vectorp map)
-          (let ((new-vec (copy-seq map)))
-            (loop for (key value) on key-value-pairs by #'cddr
-                  when (integerp key)
-                  do (if (and (>= key 0) (< key (length new-vec)))
-                         (setf (aref new-vec key) value)
-                         (error "Index out of bounds")))
-            new-vec)
-          ;; For lists, not supported yet
-          (error "assoc not supported for lists"))))
+          ;; Find max index to determine final size
+          (let* ((vec-len (length map))
+                 (max-index (loop for (key value) on key-value-pairs by #'cddr
+                                  when (integerp key)
+                                  maximize key)))
+            ;; Check for invalid indices (negative or gap beyond current length)
+            ;; Clojure allows assoc to grow vectors, but not with gaps
+            (when (and max-index (< max-index 0))
+              (error "Index out of bounds"))
+            ;; Create new vector of appropriate size (max of current and max index + 1)
+            (let ((new-len (max vec-len (if max-index (1+ max-index) 0)))
+                  (new-vec (copy-seq map)))
+              ;; Grow vector if needed by appending nils
+              (when (> new-len vec-len)
+                (let ((grown (make-array new-len :initial-element nil)))
+                  (loop for i from 0 below vec-len
+                        do (setf (aref grown i) (aref new-vec i)))
+                  (setf new-vec grown)))
+              ;; Set new values
+              (loop for (key value) on key-value-pairs by #'cddr
+                    when (integerp key)
+                    do (setf (aref new-vec key) value))
+              new-vec))
+          ;; For nil or empty, create a hash table
+          (if (null map)
+              (let ((new-map (make-hash-table :test 'equal)))
+                (loop for (key value) on key-value-pairs by #'cddr
+                      do (setf (gethash key new-map) value))
+                new-map)
+              ;; For lists, not supported yet
+              (error "assoc not supported for lists")))))
 
 (defun clojure-dissoc (map &rest keys)
   "Dissociate keys from a map. Returns new map."

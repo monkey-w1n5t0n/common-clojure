@@ -5158,3 +5158,101 @@ This error occurred because the `cond` form wasn't properly closed before the `a
 1. Investigate "invalid number of arguments: 1" runtime error in array_symbols test (likely in a different function)
 2. Fix "JAVA.LANG.OBJECT is not of type SEQUENCE" error in clearing test
 3. Continue fixing remaining test failures
+
+---
+
+## Iteration 88 - 2026-01-18
+
+**Focus:** Fix transducer nil collection handling, nth nil handling, and assoc vector growth
+
+**Problems:**
+1. Transducer functions (map, filter, cat, dedupe, take-nth, replace, interpose, keep-indexed, map-indexed) were incorrectly treating `nil` passed as an explicit collection argument as "transducer arity"
+2. `clojure-nth` raised an error when collection was `nil` instead of returning nil
+3. `clojure-assoc` didn't support vector growth - couldn't assoc to indices beyond current vector length
+
+**Investigation:**
+
+1. **Transducer arity detection issue**:
+   - Original code used `(null coll)` to detect transducer arity
+   - This broke when `nil` was passed explicitly as the collection argument
+   - Example: `(map inc nil)` should return `()`, not return a transducer
+
+2. **nth nil collection issue**:
+   - Original code raised "Index out of bounds" error for nil collections
+   - Clojure's `nth` returns nil for nil collections
+   - Also needed to distinguish between "no not-found arg" and "not-found arg is nil"
+
+3. **assoc vector growth issue**:
+   - Original code only allowed setting existing indices
+   - Clojure's `assoc` can grow vectors: `(assoc [] 0 5)` returns `[5]`
+   - Test in data_structures.clj failed with "Index out of bounds"
+
+**Changes Made:**
+
+1. **Added sentinel pattern for arity detection** - cl-clojure-eval.lisp:10
+   ```lisp
+   (defconstant +transducer-sentinel+ (make-symbol "TRANSDUCER-SENTINEL"))
+   ```
+
+2. **Fixed transducer functions** - cl-clojure-transducers.lisp
+   - Changed `clojure-map`: `(defun clojure-map (fn-arg &optional (coll +transducer-sentinel+) &rest colls)`
+   - Changed `clojure-filter`: `(defun clojure-filter (pred &optional (coll +transducer-sentinel+))`
+   - Changed `clojure-cat`: `(defun clojure-cat (&optional (coll +transducer-sentinel+))`
+   - Changed `clojure-dedupe`: `(defun clojure-dedupe (&optional (coll +transducer-sentinel+))`
+   - Changed `clojure-take-nth`: `(defun clojure-take-nth (n &optional (coll +transducer-sentinel+))`
+   - Changed `clojure-replace`: `(defun clojure-replace (sm &optional (coll +transducer-sentinel+))`
+   - Changed `clojure-interpose`: `(defun clojure-interpose (sep &optional (coll +transducer-sentinel+))`
+   - Changed `clojure-keep-indexed`: `(defun clojure-keep-indexed (f &optional (coll +transducer-sentinel+))`
+   - Changed `clojure-map-indexed`: `(defun clojure-map-indexed (f &optional (coll +transducer-sentinel+))`
+   - All functions now check `(eq coll +transducer-sentinel+)` instead of `(null coll)`
+
+3. **Fixed clojure-nth nil handling** - cl-clojure-eval.lisp:4069-4097
+   ```lisp
+   (defun clojure-nth (coll index &optional (not-found +transducer-sentinel+))
+     "Return element at index. Returns not-found if index out of bounds.
+      Defaults to nil if not-found not provided."
+     (let ((default-value (if (eq not-found +transducer-sentinel+) nil not-found)))
+       (cond
+         ((null coll)
+          default-value)
+         ((vectorp coll)
+          (if (and (>= index 0) (< index (length coll)))
+              (aref coll index)
+              default-value))
+         ...)))
+   ```
+
+4. **Fixed clojure-assoc vector growth** - cl-clojure-eval.lisp:7298-7345
+   ```lisp
+   (let* ((vec-len (length map))
+          (max-index (loop for (key value) on key-value-pairs by #'cddr
+                           when (integerp key)
+                           maximize key))
+          (new-len (max vec-len (if max-index (1+ max-index) 0))))
+     (let ((new-vec (make-array new-len :initial-element nil)))
+       ;; Copy existing elements
+       (loop for i from 0 below vec-len
+             do (setf (aref new-vec i) (aref map i)))
+       ;; Set new values
+       ...)))
+   ```
+
+**Test Results:**
+- Parse: 93 ok, 9 errors
+- Eval: 64 ok, 38 errors (same count, but errors changed)
+- "Index out of bounds" in data_structures test FIXED ✅
+- Transducer nil collection handling FIXED ✅
+- nth nil collection handling FIXED ✅
+- assoc vector growth FIXED ✅
+
+**Known Issues:**
+- data_structures test: "invalid number of arguments: 2" - new error to investigate
+- for test: "Cannot apply non-function: 1" - needs investigation
+- array_symbols test: "invalid number of arguments: 1"
+- SEQUENCE type errors in clearing and other tests
+
+**Next Steps:**
+1. Fix "invalid number of arguments: 2" error in data_structures test
+2. Fix "Cannot apply non-function: 1" error in for test
+3. Fix "invalid number of arguments: 1" error in array_symbols test
+4. Fix SEQUENCE type errors in clearing and other tests

@@ -4049,13 +4049,63 @@ The fix makes `defstruct` behave like `defn` - it defines the name in the enviro
 - data_structures test now progresses past struct definition to "Undefined symbol: sorted-map-by"
 
 ### Known Issues
-- "Undefined symbol: try" in delays test - still investigating
 - "Undefined symbol: catch" in repl test
 - Many tests still have Java interop and type errors
 - The "try" special form dispatch looks correct, so the issue may be elsewhere
 
 ### Next Steps
-- Investigate the "Undefined symbol: try" error in delays test
-- The `try` form is dispatched correctly in `clojure-eval`
-- The issue may be related to how `#(try ...)` anonymous functions are evaluated
+- Continue investigating other evaluation errors
 - Continue implementing more core functions as tests require them
+- Focus on errors that appear to be missing core functionality
+
+---
+
+## Iteration 66 - Fix #(try ...) Reader Special Form Grouping (2026-01-18)
+
+### Issue: Undefined symbol: try in delays test
+
+The delays test was failing with "Undefined symbol: try" when evaluating anonymous functions like `#(try @d (catch Exception e e))`.
+
+### Root Cause Analysis
+
+The issue was in the `read-anon-fn` reader function in `cl-clojure-syntax.lisp`. When reading `#(try @d (catch Exception e e))`, the reader was parsing this as separate forms:
+- `try` (symbol)
+- `@d` (deref form)
+- `(catch Exception e e)` (list)
+
+When the anonymous function was created, these became separate body expressions. When evaluated, the symbol `try` was evaluated first, causing "Undefined symbol: try" because it was being evaluated as a symbol rather than being recognized as a special form head.
+
+The correct Clojure behavior is that `#(try @d (catch Exception e e))` should be read as `(fn* [] (try @d (catch Exception e e)))` - with the entire `try` expression as a single form.
+
+### Solution
+
+Added a `group-special-forms` function in `cl-clojure-syntax.lisp` that:
+1. Recognizes special forms like `try`, `if`, `when`, `def`, etc.
+2. Groups the special form with its sub-forms (body expressions, catch clauses, etc.)
+3. Returns a properly structured list where special forms are single units
+
+The key changes:
+- Modified `read-anon-fn` to call `group-special-forms` on the raw forms before processing
+- Implemented grouping logic for `try` that collects body expressions and groups all catch/finally clauses together
+- Added grouping for `if`, `when`, `when-not`, `def`, `defonce`, and `set!`
+
+### Results
+
+- **delays test now passes** (61/102 tests passing, up from 60)
+- Parse: 94 ok, 8 errors (improved from 93 ok, 9 errors)
+- Eval: 61 ok, 41 errors (improved from 60 ok, 42 errors)
+
+### Code Changes
+
+File: `cl-clojure-syntax.lisp`
+- Added `group-special-forms` function (line 336)
+- Modified `read-anon-fn` to use `group-special-forms` (line 422)
+
+### Known Issues
+- "Undefined symbol: catch" in repl test
+- Many tests still have Java interop and type errors
+
+### Next Steps
+- Investigate "Undefined symbol: catch" error in repl test
+- Continue implementing more core functions as tests require them
+- Focus on errors that appear to be missing core functionality

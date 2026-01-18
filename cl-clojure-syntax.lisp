@@ -333,25 +333,114 @@
 
 ;;; Anonymous function reader
 
+(defun group-special-forms (forms)
+  "Group special forms that span multiple elements in #() reader.
+   For example, #(try @d (catch Exception e e)) should group
+   the try/catch forms together instead of treating them as separate forms.
+
+   Returns a new list where special forms are properly grouped."
+  (let ((result '())
+        (remaining forms))
+    (loop while remaining
+          do (let ((first (car remaining))
+                   (rest (cdr remaining)))
+               (cond
+                 ;; try special form: (try body* catch* finally?)
+                 ;; Group try with its body and catch/finally clauses
+                 ((and (symbolp first)
+                       (string= (symbol-name first) "try"))
+                  ;; Collect all forms until we run out or hit a non-special keyword
+                  (let* ((grouped (list first))
+                         (current rest)
+                         ;; Track if we've seen catch/finally clauses
+                         (in-catch-clauses nil))
+                    (loop while current
+                          do (let* ((next-form (car current))
+                                   (is-catch (and (consp next-form)
+                                                   (symbolp (car next-form))
+                                                   (string= (symbol-name (car next-form)) "catch")))
+                                   (is-finally (and (consp next-form)
+                                                    (symbolp (car next-form))
+                                                    (string= (symbol-name (car next-form)) "finally"))))
+                               (cond
+                                 ;; Once we see a catch or finally, we're in catch clause mode
+                                 ;; Everything until the end belongs to try
+                                 (in-catch-clauses
+                                  (push next-form grouped)
+                                  (setf current (cdr current)))
+                                 ;; catch clause starts
+                                 (is-catch
+                                  (setf in-catch-clauses t)
+                                  (push next-form grouped)
+                                  (setf current (cdr current)))
+                                 ;; finally clause starts (last clause)
+                                 (is-finally
+                                  (push next-form grouped)
+                                  (setf current nil))  ; done after finally
+                                 ;; Body expression - include it
+                                 (t
+                                  (push next-form grouped)
+                                  (setf current (cdr current))))))
+                    (push (nreverse grouped) result)
+                    (setf remaining nil)))  ; all forms consumed
+                 ;; if special form: (if test then else?)
+                 ((and (symbolp first)
+                       (string= (symbol-name first) "if"))
+                  (if (>= (length rest) 2)
+                      (let ((grouped (list first (car rest) (cadr rest))))
+                        (push grouped result)
+                        (setf remaining (cddr rest)))
+                      (progn
+                        (push (list first) result)
+                        (setf remaining rest))))
+                 ;; when, when-not: (when test body+)
+                 ((and (symbolp first)
+                       (member (symbol-name first) '("when" "when-not") :test #'string=))
+                  (if rest
+                      (let ((grouped (cons first rest)))
+                        (push grouped result)
+                        (setf remaining nil))
+                      (progn
+                        (push (list first) result)
+                        (setf remaining rest))))
+                 ;; def, defonce, set!: (def symbol expr)
+                 ((and (symbolp first)
+                       (member (symbol-name first) '("def" "defonce" "set!") :test #'string=))
+                  (if (>= (length rest) 1)
+                      (let ((grouped (list first (car rest) (if (cdr rest) (cadr rest) nil))))
+                        (push grouped result)
+                        (setf remaining (if (cdr rest) (cddr rest) rest)))
+                      (progn
+                        (push (list first) result)
+                        (setf remaining rest))))
+                 ;; Default: just add the form as-is
+                 (t
+                  (push first result)
+                  (setf remaining rest)))))
+    (nreverse result)))
+
 (defun read-anon-fn (stream sub-char num)
   "Read a Clojure anonymous function literal: #(body)
    Converts to (fn* [args] body) where args are inferred from % placeholders.
    % or %1 = first arg, %2 = second arg, etc. %& = rest args."
   (declare (ignore sub-char num))
   ;; Read the body forms until closing )
-  (let ((body-forms (read-delimited-list #\) stream t)))
-    ;; Analyze body to find % placeholders
-    (multiple-value-bind (arg-count has-rest)
-        (analyze-arg-placeholders body-forms)
-      ;; Generate argument names: gen__#, gen__2#, gen__3#, etc.
-      (let* ((args (generate-arg-names arg-count has-rest))
-             ;; Build arg map for substitution
-             (arg-map (build-arg-map arg-count has-rest))
-             ;; Replace % placeholders with generated arg names
-             (processed-body (mapcar #'(lambda (form) (replace-placeholders form arg-map))
-                                    body-forms)))
-        ;; Build the fn* form
-        `(fn* ,args ,@processed-body)))))
+  (let ((raw-forms (read-delimited-list #\) stream t)))
+    ;; Group special forms that span multiple elements
+    ;; e.g., #(try @d (catch Exception e e)) should group (try @d (catch Exception e e))
+    (let ((body-forms (group-special-forms raw-forms)))
+      ;; Analyze body to find % placeholders
+      (multiple-value-bind (arg-count has-rest)
+          (analyze-arg-placeholders body-forms)
+        ;; Generate argument names: gen__#, gen__2#, gen__3#, etc.
+        (let* ((args (generate-arg-names arg-count has-rest))
+               ;; Build arg map for substitution
+               (arg-map (build-arg-map arg-count has-rest))
+               ;; Replace % placeholders with generated arg names
+               (processed-body (mapcar #'(lambda (form) (replace-placeholders form arg-map))
+                                      body-forms)))
+          ;; Build the fn* form
+          `(fn* ,args ,@processed-body))))))
 
 (defun analyze-arg-placeholders (forms)
   "Analyze forms to determine how many arguments are needed and if rest args are used.

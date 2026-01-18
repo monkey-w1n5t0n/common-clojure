@@ -7,6 +7,10 @@
 ;;; vs explicitly passed as nil. Used by functions with transducer arity.
 (defconstant +transducer-sentinel+ (make-symbol "TRANSDUCER-SENTINEL"))
 
+;;; Global registry for tracking array types created by make-array
+;;; Maps vector objects to their array type symbols (e.g., String/1)
+(defvar *array-type-registry* (make-hash-table :test 'eq))
+
 ;;; Forward declarations for functions used before definition
 (declaim (ftype (function (&rest t) t) clojure-set-union))
 (declaim (ftype (function (&rest t) t) clojure-set-intersection))
@@ -2204,10 +2208,49 @@
        ((string-equal member-name "forName")
         ;; Return a class object that works with resolve
         ;; The tests expect (Class/forName "[Z") to equal (resolve 'boolean/1)
+        ;; Return the array type symbol directly
         (if (null args)
             (error "Class/forName requires an argument")
             (let ((class-name-str (first args)))
-              (list 'array-class class-name-str))))
+              ;; Map class descriptors to array type symbols
+              (cond
+                ;; Primitive array types
+                ((string= class-name-str "[Z") 'boolean/1)
+                ((string= class-name-str "[B") 'byte/1)
+                ((string= class-name-str "[C") 'char/1)
+                ((string= class-name-str "[S") 'short/1)
+                ((string= class-name-str "[I") 'int/1)
+                ((string= class-name-str "[F") 'float/1)
+                ((string= class-name-str "[D") 'double/1)
+                ((string= class-name-str "[J") 'long/1)
+                ;; 2D arrays
+                ((string= class-name-str "[[Z") 'boolean/2)
+                ((string= class-name-str "[[B") 'byte/2)
+                ((string= class-name-str "[[C") 'char/2)
+                ((string= class-name-str "[[S") 'short/2)
+                ((string= class-name-str "[[I") 'int/2)
+                ((string= class-name-str "[[F") 'float/2)
+                ((string= class-name-str "[[D") 'double/2)
+                ((string= class-name-str "[[J") 'long/2)
+                ;; Object arrays - parse the class name
+                ((and (> (length class-name-str) 2)
+                      (char= (char class-name-str 0) #\[)
+                      (char= (char class-name-str 1) #\L))
+                 ;; Extract class name from [Ljava.lang.String;
+                 (let* ((end-pos (position #\; class-name-str))
+                        (full-class (subseq class-name-str 2 end-pos))
+                        (dimensions (loop for i from 0 below (length class-name-str)
+                                       while (char= (char class-name-str i) #\[)
+                                       count i)))
+                   ;; Convert java.lang.String -> String/1, [[Ljava.lang.String; -> String/2
+                   (let ((simple-name (if (find #\. full-class)
+                                        ;; Get the simple class name
+                                        (let ((last-dot (position #\. full-class :from-end t)))
+                                          (subseq full-class (1+ last-dot)))
+                                        full-class)))
+                     (intern (format nil "~A/~A" simple-name dimensions)))))
+                ;; Unknown - return as list for backward compatibility
+                (t (list 'array-class class-name-str))))))
        ((string-equal member-name "TYPE")
         ;; Return a stub TYPE value for primitive classes
         :type)
@@ -4762,29 +4805,70 @@
    Can be called as:
    - (into-array coll) - creates Object array
    - (into-array type coll) - creates typed array (type is ignored for SBCL)"
-  (declare (ignore type))
   ;; Handle both arities: (into-array coll) and (into-array type coll)
   ;; If aseq is a type keyword (like :int-type) or a Java class symbol (like String),
   ;; and type is provided, then type is the actual sequence and aseq is the type.
-  (let ((actual-seq (cond
-                      ;; Two-argument form with keyword type: (into-array :int-type coll)
-                      ((and (keywordp aseq) type)
-                       type)
-                      ;; Two-argument form with symbol type: (into-array String coll)
-                      ;; aseq is a Java class symbol, type is the collection
-                      ((and (symbolp aseq) type)
-                       type)
-                      ;; Single-argument form: aseq is the sequence
-                      (t
-                       aseq))))
-    (let ((seq-to-convert (cond
+  (let* ((is-two-arg (and type))
+         (array-type-sym (cond
+                           ;; Two-argument form with keyword type: (into-array :int-type coll)
+                           ((and (keywordp aseq) type)
+                            (cond ((eq aseq :int-type) 'int/1)
+                                  ((eq aseq :long-type) 'long/1)
+                                  ((eq aseq :float-type) 'float/1)
+                                  ((eq aseq :double-type) 'double/1)
+                                  ((eq aseq :boolean-type) 'boolean/1)
+                                  ((eq aseq :byte-type) 'byte/1)
+                                  ((eq aseq :short-type) 'short/1)
+                                  ((eq aseq :char-type) 'char/1)
+                                  (t 'Object/1)))
+                           ;; Two-argument form with symbol type: (into-array String coll)
+                           ;; aseq is a Java class symbol, type is the collection
+                           ((and (symbolp aseq) type)
+                            (cond ((eq aseq 'String) 'String/1)
+                                  ((eq aseq 'Integer/TYPE) 'int/1)
+                                  ((eq aseq 'Long/TYPE) 'long/1)
+                                  ((eq aseq 'Float/TYPE) 'float/1)
+                                  ((eq aseq 'Double/TYPE) 'double/1)
+                                  ((eq aseq 'Boolean/TYPE) 'boolean/1)
+                                  ((eq aseq 'Byte/TYPE) 'byte/1)
+                                  ((eq aseq 'Short/TYPE) 'short/1)
+                                  ((eq aseq 'Character/TYPE) 'char/1)
+                                  ((eq aseq 'Object) 'Object/1)
+                                  ;; Already an array class type - increment dimension
+                                  ;; String/1 -> String/2, String/2 -> String/3, etc.
+                          ((symbol-ends-with aseq "/1")
+                           (let ((name (symbol-name aseq)))
+                             (intern (concatenate 'string (subseq name 0 (- (length name) 2)) "/2"))))
+                          ((symbol-ends-with aseq "/2")
+                           (let ((name (symbol-name aseq)))
+                             (intern (concatenate 'string (subseq name 0 (- (length name) 2)) "/3"))))
+                          ((symbol-ends-with aseq "/3")
+                           (let ((name (symbol-name aseq)))
+                             (intern (concatenate 'string (subseq name 0 (- (length name) 2)) "/4"))))
+                          (t 'Object/1)))
+                           ;; Single-argument form: no type specified
+                           (t 'Object/1)))
+         (actual-seq (cond
+                       ;; Two-argument form: type is the collection
+                       ((and (symbolp aseq) type)
+                        type)
+                       ;; Two-argument form with keyword: type is the collection
+                       ((and (keywordp aseq) type)
+                        type)
+                       ;; Single-argument form: aseq is the sequence
+                       (t
+                        aseq)))
+         (seq-to-convert (cond
                             ((lazy-range-p actual-seq)
                              (lazy-range-to-list actual-seq (if (lazy-range-end actual-seq)
-                                                                most-positive-fixnum
-                                                                10000)))
+                                                                   most-positive-fixnum
+                                                                   10000)))
                             ((listp actual-seq) actual-seq)
                             (t (coerce actual-seq 'list)))))
-      (coerce seq-to-convert 'vector))))
+    (let ((result (coerce seq-to-convert 'vector)))
+      ;; Store the array type in the global registry
+      (setf (gethash result *array-type-registry*) array-type-sym)
+      result)))
 
 ;; Type conversion functions for sequences
 (defun clojure-bytes (seq)
@@ -4870,11 +4954,33 @@
   value)
 
 (defun clojure-make-array (type &rest size)
-  "Create an array of the specified type and size. Stub for SBCL - returns vector."
-  (declare (ignore type))
-  (if (null size)
-      #()
-      (make-array (first size) :initial-element 0)))
+  "Create an array of the specified type and size. Stub for SBCL - returns vector.
+   The array type is stored in a global registry so (class ...) can return it correctly."
+  (declare (ignore size))
+  ;; Convert type to array class representation and store in registry
+  (let* ((array-type (cond
+                       ;; Primitive types
+                       ((eq type 'Boolean/TYPE) 'boolean/1)
+                       ((eq type 'Byte/TYPE) 'byte/1)
+                       ((eq type 'Character/TYPE) 'char/1)
+                       ((eq type 'Short/TYPE) 'short/1)
+                       ((eq type 'Integer/TYPE) 'int/1)
+                       ((eq type 'Long/TYPE) 'long/1)
+                       ((eq type 'Float/TYPE) 'float/1)
+                       ((eq type 'Double/TYPE) 'double/1)
+                       ;; Object types - convert to array type
+                       ((eq type 'String) 'String/1)
+                       ((eq type 'Object) 'Object/1)
+                       ;; For array classes (when type is already an array type)
+                       ((or (and (symbolp type) (symbol-ends-with type "/1"))
+                            (and (symbolp type) (symbol-ends-with type "/2"))
+                            (and (symbolp type) (symbol-ends-with type "/3")))
+                        type)
+                       (t 'Object/1)))
+         (result #()))
+    ;; Store the array type in the global registry
+    (setf (gethash result *array-type-registry*) array-type)
+    result))
 
 (defun clojure-barrier (action-fn &optional parties)
   "CyclicBarrier stub - just call the function and return nil."
@@ -4914,12 +5020,21 @@
 (defun clojure-bigdec (x) x)
 
 ;; Class/type introspection stubs
+(defun symbol-ends-with (sym suffix)
+  "Check if symbol name ends with the given suffix string."
+  (let ((name (symbol-name sym)))
+    (and (> (length name) (length suffix))
+         (string= name suffix :start1 (- (length name) (length suffix))))))
+
 (defun clojure-class (x)
   "Return the class of x. Stub for SBCL - returns a keyword or symbol representing the type.
    In Clojure, (type nil) returns nil."
   (cond
     ;; nil has no type - return nil (Clojure behavior)
     ((null x) nil)
+    ;; Check for arrays registered by make-array
+    ((and (vectorp x) (gethash x *array-type-registry*))
+     (gethash x *array-type-registry*))
     ;; For very large integers that would be BigInt in Clojure
     ((and (integerp x) (or (> x most-positive-fixnum) (< x most-negative-fixnum)))
      'clojure.lang.BigInt)
@@ -7275,46 +7390,9 @@
                        (t (if (stringp ns-or-sym)
                              (intern ns-or-sym)
                              ns-or-sym)))))
-    ;; Check if this is an array type symbol (contains /)
-    (when (symbolp actual-sym)
-      (let ((name (symbol-name actual-sym)))
-        (when (find #\/ name)
-          (let* ((slash-pos (position #\/ name))
-                 (type-name (subseq name 0 slash-pos))
-                 (dimension-str (subseq name (1+ slash-pos)))
-                 (dimension (parse-integer dimension-str :junk-allowed t)))
-            ;; Map primitive types to their Java array class descriptors
-            ;; Return (array-class <descriptor>) structure
-            (list 'array-class
-                  (cond
-                    ;; Primitive array types
-                    ((string-equal type-name "boolean") "[Z")
-                    ((string-equal type-name "byte") "[B")
-                    ((string-equal type-name "char") "[C")
-                    ((string-equal type-name "short") "[S")
-                    ((string-equal type-name "float") "[F")
-                    ((string-equal type-name "double") "[D")
-                    ((string-equal type-name "int") "[I")
-                    ((string-equal type-name "long") "[J")
-                    ;; Object array types - add [L prefix and ; suffix for each dimension
-                    (t
-                     ;; For object types, build the multi-dimensional array class name
-                     ;; String/1 -> "[Ljava.lang.String;"
-                     ;; String/2 -> "[[Ljava.lang.String;"
-                     (let ((base-class
-                             (cond
-                               ((string-equal type-name "String") "java.lang.String")
-                               ((string-equal type-name "Object") "java.lang.Object")
-                               ;; Handle fully-qualified class names
-                               ((find #\. type-name) type-name)
-                               ;; Otherwise, assume it's in java.lang
-                               (t (concatenate 'string "java.lang." type-name)))))
-                       (with-output-to-string (s)
-                         (dotimes (i dimension)
-                           (write-char #\[ s))
-                         (write-char #\L s)
-                         (write-string base-class s)
-                         (write-char #\; s))))))))))))
+    ;; For array type symbols (contains /number), return the symbol itself
+    ;; This matches what (class ...) returns for arrays
+    actual-sym))
 
 (defun clojure-println (&rest args)
   "Print arguments to standard output, followed by a newline.

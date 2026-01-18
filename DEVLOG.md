@@ -5306,3 +5306,57 @@ invalid number of arguments: 2
 2. Fix "Cannot apply non-function: 1" error in for test
 3. Fix "invalid number of arguments: 1" error in array_symbols test
 4. Fix "invalid number of arguments: 0" errors (java_interop, other_functions, repl)
+
+---
+
+### Iteration 90 - 2026-01-18
+
+**Focus:** Implement require, use, refer, and load special forms
+
+**Changes Made:**
+
+1. **Implemented `eval-require` special form** - cl-clojure-eval.lisp:1430-1444
+   - `(require & args)` - loads Clojure libraries
+   - Validates arguments: `(require)` and `(require :foo)` throw exceptions
+   - For SBCL, this is a stub that returns nil for valid forms
+   - Supports proper vector syntax: `(require '[clojure.set :as s])`
+
+2. **Implemented `eval-use` special form** - cl-clojure-eval.lisp:1446-1460
+   - `(use & args)` - refers to symbols in namespaces
+   - Validates arguments: `(use)` and `(use :foo)` throw exceptions
+   - For SBCL, this is a stub that returns nil for valid forms
+
+3. **Implemented `eval-refer` special form** - cl-clojure-eval.lisp:1462-1467
+   - `(refer ns-name & args)` - refers to symbols in a namespace
+   - Stub implementation that returns nil
+
+4. **Implemented `eval-load` special form** - cl-clojure-eval.lisp:1469-1474
+   - `(load path & options)` - loads a Clojure file
+   - Stub implementation that returns nil
+
+5. **Added special form dispatch entries** - cl-clojure-eval.lisp:8422-8425
+   - Added require, use, refer, load to the special form dispatch chain
+   - These are now recognized as special forms and properly evaluated
+
+**Errors Fixed:**
+- "Undefined symbol: require" - FIXED ✅
+- "Undefined symbol: use" - FIXED ✅
+- "Undefined symbol: refer" - FIXED ✅
+- "Undefined symbol: load" - FIXED ✅
+
+**Test Results:**
+- Parse: 93 ok, 9 errors ✅
+- Eval: 65 ok, 37 errors (up from 64 ok, 38 errors!)
+- Progress: +1 test passing
+
+**Remaining Issues:**
+- ns_libs: "invalid number of arguments: 2" - different error, likely from ns-aliases or other ns functions
+- for: "Cannot apply non-function: 1" - needs investigation
+- array_symbols: "invalid number of arguments: 1"
+- Several tests have "invalid number of arguments: 0" errors
+
+**Next Steps:**
+1. Investigate "invalid number of arguments: 2" error in ns_libs test (likely ns-aliases function)
+2. Fix "Cannot apply non-function: 1" error in for test
+3. Fix "invalid number of arguments: 1" error in array_symbols test
+4. Fix "invalid number of arguments: 0" errors (java_interop, other_functions, repl)

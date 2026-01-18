@@ -5488,3 +5488,39 @@ when it should detect that the docstring is present and skip it.
 - Investigate "Cannot apply non-function: 1" error in for test  
 - Investigate "invalid number of arguments: 1" error in array_symbols test
 
+
+## Iteration 94 - Fix eval-dot-dot and improve Java interop (2026-01-18)
+
+### What I attempted
+1. Fixed the `eval-dot-dot` function bug where `(result (clojure-eval ...))` was incorrectly
+   placed as a let binding instead of using `setq`
+2. Added handler for bare `.` form in Java interop: `(. target member)`
+3. Added string method handlers: `.toUpperCase`, `.toLowerCase`, `.charAt`, `.substring`, etc.
+4. Added Math method handlers: `.abs`, `.min`, `.max`, `.sqrt`, etc.
+5. Added `Math` to the list of common Java class names
+
+### Outcome
+- Fixed the "invalid number of arguments: 0" error that was caused by `eval-dot-dot` bug
+- Java interop tests now progress further but hit "Unsupported Java constructor: java.awt.Point"
+- Test results remain: 66 ok, 36 errors (same count, but different errors)
+
+### Key changes
+1. **cl-clojure-eval.lisp:1900-1921** - Fixed `eval-dot-dot` function
+   - Changed `(result (clojure-eval ...))` to `(setq result (clojure-eval ...))`
+   - Fixed parentheses: `result))))` -> `result))))`
+
+2. **cl-clojure-eval.lisp:8365-8420** - Added bare `.` form handler
+   - Handles `(. target member)` syntax
+   - Supports both symbol and list member forms
+   - Added Math and String method handlers
+
+3. **cl-clojure-eval.lisp:8338** - Added `Math` to common Java class names
+   - Allows `Math` symbol to be treated as class reference
+
+4. **cl-clojure-eval.lisp:8501-8523** - Added string method handlers to `.method` form
+   - Handles `.toUpperCase`, `.toLowerCase`, `.charAt`, `.substring`, `.length`, `.toString`
+
+### Next Steps
+- Investigate "Unsupported Java constructor: java.awt.Point" error in java_interop test
+- Continue working on remaining 36 test failures
+

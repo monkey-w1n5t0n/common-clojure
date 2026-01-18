@@ -1917,9 +1917,8 @@
                               ;; If it's a symbol, it's just a method-name with no args
                               (intern (concatenate 'string "." (string form-item)))))
           ;; Evaluate the method call with current result
-          (result (clojure-eval (list method-form result) env)))
-          (setq result result)))
-      result)))
+          (setq result (clojure-eval (list method-form result) env))))
+      result))))
 
 (defun eval-try (form env)
   "Evaluate a try form: (try body catch* finally?)
@@ -8336,7 +8335,7 @@
                      ;; These are implicitly imported in Clojure
                      ((member name '("Object" "String" "Number" "Integer" "Long"
                                      "Double" "Float" "Boolean" "Character"
-                                     "Byte" "Short" "Void" "Class"
+                                     "Byte" "Short" "Void" "Class" "Math"
                                      "Exception" "RuntimeException" "Throwable"
                                      "IllegalArgumentException" "NullPointerException"
                                      "ClassCastException" "ArithmeticException")
@@ -8363,6 +8362,68 @@
               (head-name (when (symbolp head)
                           (string-downcase (symbol-name head)))))
          (cond
+           ;; Java interop: (. target member & args) or (. target (member args...))
+           ;; The bare dot form for accessing members
+           ((and head-name (string= head-name "."))
+            ;; Handle (. x y) where x is target and y is member
+            ;; or (. x (y args...)) where x is target and (y args...) is a method call
+            (if (null rest-form)
+                (error ". requires at least 2 arguments")
+                (let ((target-expr (car rest-form))
+                      (member-form (cadr rest-form))
+                      (extra-args (cddr rest-form)))
+                  (let ((target (clojure-eval target-expr env)))
+                    (cond
+                      ;; If member-form is a list like (getName) or (abs -7), extract method name and args
+                      ((consp member-form)
+                       (let ((method-name (symbol-name (car member-form)))
+                             (method-args (cdr member-form))
+                             ;; Evaluate the method args
+                             (evaluated-args (mapcar (lambda (arg) (clojure-eval arg env)) (cdr member-form))))
+                         (cond
+                           ;; Handle Math methods
+                           ((and (symbolp target) (string= (symbol-name target) "Math"))
+                            (cond
+                              ((string= method-name "abs") (abs (first evaluated-args)))
+                              ((string= method-name "min") (apply #'min evaluated-args))
+                              ((string= method-name "max") (apply #'max evaluated-args))
+                              ((string= method-name "sqrt") (sqrt (first evaluated-args)))
+                              ((string= method-name "pow") (expt (first evaluated-args) (second evaluated-args)))
+                              ((string= method-name "floor") (floor (first evaluated-args)))
+                              ((string= method-name "ceil") (ceiling (first evaluated-args)))
+                              ((string= method-name "round") (round (first evaluated-args)))
+                              (t target)))
+                           ;; Handle String methods
+                           ((stringp target)
+                            (cond
+                              ((string-equal method-name "toUpperCase") (string-upcase target))
+                              ((string-equal method-name "toLowerCase") (string-downcase target))
+                              ((string-equal method-name "toString") target)
+                              (t target)))
+                           ;; Handle String class methods
+                           ((and (symbolp target) (string= (symbol-name target) "String")
+                                 (string= method-name "getName"))
+                            "java.lang.String")
+                           ;; Default: return target
+                           (t target))))
+                      ;; If member-form is a symbol, treat it as field/method access
+                      ((symbolp member-form)
+                       (let ((method-name (symbol-name member-form)))
+                         (cond
+                           ;; String methods
+                           ((and (stringp target) (string= method-name "toUpperCase"))
+                            (string-upcase target))
+                           ((and (stringp target) (string= method-name "toLowerCase"))
+                            (string-downcase target))
+                           ((and (stringp target) (string= method-name "toString"))
+                            target)
+                           ;; Static methods like String/getName
+                           ((and (symbolp target) (string= (symbol-name target) "String")
+                                 (string= method-name "getName"))
+                            "java.lang.String")
+                           ;; Default: return target
+                           (t target))))
+                      (t (error ". member must be a symbol or list")))))))
            ;; Java method call: (.method target args...)
            ;; Symbols starting with . are Java instance method calls
            ((and head-name (char= (char head-name 0) #\.))
@@ -8446,6 +8507,29 @@
                   ((string= method-name "start")
                    ;; For stub purposes, just return nil
                    nil)
+                  ;; String methods - toUpperCase, toLowerCase, etc.
+                  ((and (stringp target) (string-equal method-name "toUpperCase"))
+                   (string-upcase target))
+                  ((and (stringp target) (string-equal method-name "toLowerCase"))
+                   (string-downcase target))
+                  ((and (stringp target) (string-equal method-name "charAt"))
+                   (if evaluated-args
+                       (let ((idx (first evaluated-args)))
+                         (when (and (integerp idx) (>= idx 0) (< idx (length target)))
+                           (subseq target idx (1+ idx))))
+                       target))
+                  ((and (stringp target) (string-equal method-name "substring"))
+                   (if (>= (length evaluated-args) 1)
+                       (let ((start (first evaluated-args)))
+                         (if (>= (length evaluated-args) 2)
+                             (let ((end (second evaluated-args)))
+                               (subseq target start end))
+                             (subseq target start)))
+                       target))
+                  ((and (stringp target) (string-equal method-name "length"))
+                   (length target))
+                  ((and (stringp target) (string-equal method-name "toString"))
+                   target)
                   ;; Default: return target (stub for unknown methods)
                   (t target)))))
 

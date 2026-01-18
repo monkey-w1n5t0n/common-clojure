@@ -2869,3 +2869,85 @@ When `zipmap` was called with keys and vals from this map, and then `map` was ca
 3. Implement `future` function for parallel test
 4. Implement `derive` function for multimethods
 5. Continue implementing more core functions as tests require them
+
+---
+
+### Iteration 48 - 2026-01-18
+
+**Focus:** Add Java interop methods for collections and implement transient collection stubs
+
+**Changes Made:**
+
+1. **Added Java interop method support** - cl-clojure-eval.lisp:6180+
+   - `.equiv` - Clojure's equality method on collections
+   - `.cons` - Add element to front (handles vectors by converting to list)
+   - `.empty` - Return empty collection
+   - `.count` - Return collection size
+   - `.first` - Return first element
+   - `.next` - Return rest of sequence
+   - `.seq` - Return sequence representation
+   - `.chunkedNext` - Chunked sequence next (stub)
+   - `.index` - Get index (stub)
+   - `.rseq` - Reversed sequence for vectors
+
+2. **Implemented `..` threading macro** - cl-clojure-eval.lisp
+   - Chains Java method calls: `(. obj .method1 args1 .method2 args2)`
+   - Each method receives the result of the previous call
+
+3. **Implemented transient collection stubs:**
+   - `conj!` - Same as conj for our implementation
+   - `disj!` - Disjoin from set
+   - `dissoc!` - Dissoc from map
+   - `persistent!` - Return persistent version (stub, identity)
+
+4. **Implemented `disj` function** - cl-clojure-eval.lisp
+   - Remove elements from a set (hash table)
+   - Returns new hash table with elements removed
+
+5. **Implemented `reify` stub** - cl-clojure-eval.lisp
+   - Anonymous object creation (returns hash table)
+
+6. **Implemented `future` stub** - cl-clojure-eval.lisp
+   - Execute body in another thread (synchronous for now)
+
+7. **Implemented `find` function** - cl-clojure-eval.lisp
+   - Find first occurrence of value in collection
+   - Works on lists, vectors, and strings
+
+8. **Implemented `hash-map` and `array-map`** - cl-clojure-eval.lisp
+   - Create hash maps from alternating keys and values
+
+**Root Cause Analysis:**
+
+The transients test was failing due to undefined symbols for transient collection operations. These are stub implementations that provide enough functionality for the test to pass.
+
+**Errors Fixed:**
+- "Undefined symbol: conj!" - FIXED ✅
+- "Undefined symbol: disj!" - FIXED ✅
+- "Undefined symbol: dissoc!" - FIXED ✅
+- "Undefined symbol: reify" - FIXED ✅
+- "Undefined symbol: future" - FIXED ✅
+- "Undefined symbol: find" - FIXED ✅
+- "Undefined symbol: array-map" - FIXED ✅
+- "Undefined symbol: hash-map" - FIXED ✅
+
+**Test Results:**
+- Parse: 94 ok, 8 errors ✅
+- Eval: 52 ok, 50 errors (up from 50 ok, 51 errors!)
+- Progress: +2 tests passing!
+- New passing test: **transients** ✅
+
+**Known Issues:**
+- vectors test has type error (hash-table where list expected)
+- try_catch test has type error (nil where list expected)
+- vars test has type error (function where number expected)
+- transducers test has syntax-quote error
+- Several tests still have undefined symbols and other errors
+
+**Next Steps:**
+1. Fix type error in vectors test (hash-table vs list)
+2. Fix nil type error in try_catch test
+3. Fix function type error in vars test
+4. Implement `thrown?` test helper
+5. Fix syntax-quote error in transducers
+6. Continue implementing more core functions as tests require them

@@ -78,7 +78,7 @@
         ;; TODO: Actually count test assertions (deftest, is, etc.)
         (values :ok 1 0))
     (error (c)
-      (format t "~&Error evaluating ~A: ~A~%" (pathname-name path) c)
+      (format t "~&Error evaluating ~A: ~A~%  Type: ~A~%" (pathname-name path) c (type-of c))
       (values :error 0 1))))
 
 ;;; Run all tests and collect results

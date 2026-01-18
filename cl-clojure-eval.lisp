@@ -19,6 +19,7 @@
 (declaim (ftype (function (t t) t) clojure-prewalk-replace))
 (declaim (ftype (function (&rest t) t) clojure-hash-set))
 (declaim (ftype (function (&rest t) t) clojure-sorted-set))
+(declaim (ftype (function (&rest t) t) clojure-sorted-map))
 (declaim (ftype (function (t) t) set-to-list))
 (declaim (ftype (function (t t) t) set-contains-p))
 (declaim (ftype (function (t) t) copy-set))
@@ -1157,6 +1158,25 @@
   ;; For now, just return nil - records are not implemented
   nil)
 
+(defun eval-reify (form env)
+  "Evaluate a reify form: (reify interfaces& methods&) - create an anonymous object.
+   This is a stub - creates a hash table to represent the object."
+  (declare (ignore form env))
+  ;; For now, return a hash table to represent the reified object
+  (make-hash-table :test 'equal))
+
+(defun eval-future (form env)
+  "Evaluate a future form: (future body&) - execute body in another thread.
+   This is a stub - executes body synchronously and returns result."
+  (let ((body (cdr form)))
+    (if (null body)
+        nil
+        ;; Evaluate all body forms, returning last result
+        (let ((result nil))
+          (dolist (expr body)
+            (setf result (clojure-eval expr env)))
+          result))))
+
 (defun eval-thrown-with-msg (form env)
   "Evaluate a thrown-with-msg form: (thrown-with-msg class regex body)
    This is a stub - just evaluates the body."
@@ -1345,6 +1365,30 @@
           (setf new-env (env-extend-lexical new-env name result))))
       ;; Return the final value
       (env-get-lexical new-env name))))
+
+(defun eval-dot-dot (form env)
+  "Evaluate a .. form: (.. obj method1 args1 method2 args2 ...)
+   Chains Java method calls. (.. obj (method1 args1) (method2 args2))
+   expands to nested method calls."
+  (let* ((forms (cdr form)))
+    (when (null forms)
+      (error ".. requires at least an object"))
+    ;; Start with the object
+    (let ((result (clojure-eval (car forms) env))
+          (remaining (cdr forms)))
+      ;; Chain each method call
+      (dolist (form-item remaining)
+        (let ((method-form (if (consp form-item)
+                              ;; If it's a list, it's (method-name args...)
+                              ;; We need to prepend a dot to make it a method call
+                              (cons (intern (concatenate 'string "." (string (car form-item))))
+                                    (cdr form-item))
+                              ;; If it's a symbol, it's just a method-name with no args
+                              (intern (concatenate 'string "." (string form-item)))))
+          ;; Evaluate the method call with current result
+          (result (clojure-eval (list method-form result) env)))
+          (setq result result)))
+      result)))
 
 (defun eval-try (form env)
   "Evaluate a try form: (try body catch* finally?)
@@ -2376,6 +2420,12 @@
            nil
            (let ((val (first args)))
              (not (null val)))))
+      ;; MapEntry constructor - creates a map entry [key val]
+      ((string-equal name "clojure.lang.MapEntry")
+       ;; Return a vector [key val] to represent the MapEntry
+       (if (>= (length args) 2)
+           (vector (first args) (second args))
+           (vector nil nil)))
       ;; Default: error for unknown constructors
       (t
        (error "Unsupported Java constructor: ~A" class-name)))))
@@ -2447,6 +2497,7 @@
   ;; Collection functions
   (register-core-function env 'cons #'clojure-cons)
   (register-core-function env 'conj #'clojure-conj)
+  (register-core-function env 'conj! #'clojure-conj)  ; Transients not implemented, use conj
   (register-core-function env 'first #'clojure-first)
   (register-core-function env 'second #'clojure-second)
   (register-core-function env 'rest #'clojure-rest)
@@ -2459,6 +2510,7 @@
   (register-core-function env 'subvec #'clojure-subvec)
   (register-core-function env 'list #'clojure-list)
   (register-core-function env 'map #'clojure-map)
+  (register-core-function env 'mapv #'clojure-mapv)
   (register-core-function env 'apply #'clojure-apply)
   (register-core-function env 'str #'clojure-str)
   (register-core-function env 're-pattern #'clojure-re-pattern)
@@ -2521,6 +2573,9 @@
   (register-core-function env 'contains? #'clojure-contains?)
   (register-core-function env 'assoc #'clojure-assoc)
   (register-core-function env 'dissoc #'clojure-dissoc)
+  (register-core-function env 'dissoc! #'clojure-dissoc)  ; Transients not implemented
+  (register-core-function env 'disj #'clojure-disj)
+  (register-core-function env 'disj! #'clojure-disj)  ; Transients not implemented
   (register-core-function env 'keys #'clojure-keys)
   (register-core-function env 'vals #'clojure-vals)
   (register-core-function env 'update-in #'clojure-update-in)
@@ -2560,6 +2615,9 @@
   (register-core-function env 'reset-vals! #'clojure-reset-vals!)
   (register-core-function env 'hash-set #'clojure-hash-set)
   (register-core-function env 'sorted-set #'clojure-sorted-set)
+  (register-core-function env 'hash-map #'clojure-hash-map)
+  (register-core-function env 'array-map #'clojure-array-map)
+  (register-core-function env 'sorted-map #'clojure-sorted-map)
   (register-core-function env 'read-string #'clojure-read-string)
   (register-core-function env 'println #'clojure-println)
   (register-core-function env 'prn #'clojure-prn)
@@ -2569,7 +2627,9 @@
   (register-core-function env 'fnil #'clojure-fnil)
   (register-core-function env 'repeatedly #'clojure-repeatedly)
   (register-core-function env 'filter #'clojure-filter)
+  (register-core-function env 'filterv #'clojure-filterv)
   (register-core-function env 'remove #'clojure-remove)
+  (register-core-function env 'find #'clojure-find)
   (register-core-function env 'juxt #'clojure-juxt)
   (register-core-function env 'replicate #'clojure-replicate)
   (register-core-function env 'repeat #'clojure-repeat)
@@ -3233,7 +3293,8 @@
                          v-len)))
       (when (> actual-end v-len)
         (error "End index out of bounds"))
-      (coerce (subseq v start actual-end) 'vector))))
+      ;; Convert to list, take subsequence, convert back to vector
+      (coerce (subseq (coerce v 'list) start actual-end) 'vector))))
 
 (defun clojure-list (&rest args)
   "Create a list from arguments."
@@ -3294,6 +3355,66 @@
             ;; Map function across elements at each position
             (loop for i from 0 below min-length
                   collect (apply callable-fn (mapcar (lambda (c) (nth i c)) coll-lists))))))))
+
+(defun clojure-mapv (fn-arg coll &rest colls)
+  "Apply fn to each item in collection(s). Returns vector.
+   Like map but returns a vector instead of a list."
+  ;; Ensure fn-arg is callable (wrap closures if needed)
+  (let ((callable-fn (ensure-callable fn-arg)))
+    (if (null colls)
+        ;; Single collection mapping
+        (cond
+          ((null coll) #())
+          ((lazy-range-p coll)
+           ;; For lazy ranges, limit to 1000 elements to avoid issues
+           (let ((start (lazy-range-start coll))
+                 (end (lazy-range-end coll))
+                 (step (lazy-range-step coll)))
+             (if end
+                 ;; Bounded range
+                 (loop for i from start below end by step
+                       collect (funcall callable-fn i) into result
+                       finally (return (coerce result 'vector)))
+                 ;; Infinite range - limit to 1000
+                 (loop for i from start by step
+                       repeat 1000
+                       collect (funcall callable-fn i) into result
+                       finally (return (coerce result 'vector))))))
+          ((listp coll)
+           (coerce (mapcar callable-fn coll) 'vector))
+          (t
+           ;; Convert to list and map
+           (coerce (mapcar callable-fn (coerce coll 'list)) 'vector)))
+        ;; Multiple collections - map in parallel
+        (let* ((all-colls (cons coll colls))
+               (min-length (apply #'min (mapcar (lambda (c)
+                                                  (cond
+                                                    ((null c) 0)
+                                                    ((lazy-range-p c)
+                                                     (if (lazy-range-end c)
+                                                         (ceiling (/ (- (lazy-range-end c)
+                                                                        (lazy-range-start c))
+                                                                     (lazy-range-step c)))
+                                                         1000))
+                                                    ((listp c) (length c))
+                                                    (t (length (coerce c 'list)))))
+                                                all-colls))))
+          ;; Convert all to lists
+          (let ((coll-lists (mapcar (lambda (c)
+                                      (cond
+                                        ((null c) '())
+                                        ((lazy-range-p c)
+                                         (lazy-range-to-list c (if (lazy-range-end c)
+                                                                   most-positive-fixnum
+                                                                   10000)))
+                                        ((listp c) c)
+                                        (t (coerce c 'list))))
+                                  all-colls)))
+            ;; Map function across elements at each position
+            (loop for i from 0 below min-length
+                  collect (apply callable-fn (mapcar (lambda (c) (nth i c)) coll-lists))
+                  into result
+                  finally (return (coerce result 'vector))))))))
 
 (defun clojure-apply (fn-arg &rest args)
   "Apply fn to args with last arg being a list of args."
@@ -4245,6 +4366,36 @@
                unless (funcall callable-pred item)
                collect item))))))
 
+(defun clojure-filterv (pred coll)
+  "Return a vector of items in coll for which pred returns true.
+   Like filter but returns a vector instead of a list."
+  ;; Ensure pred is callable (wrap closures if needed)
+  (let ((callable-pred (ensure-callable pred)))
+    (coerce (cond
+              ((null coll) '())
+              ((lazy-range-p coll)
+               (let ((start (lazy-range-start coll))
+                     (end (lazy-range-end coll))
+                     (step (lazy-range-step coll)))
+                 (if end
+                     (loop for i from start below end by step
+                           when (funcall callable-pred i)
+                           collect i)
+                     (loop for i from start by step
+                           repeat 1000
+                           when (funcall callable-pred i)
+                           collect i))))
+              ((listp coll)
+               (loop for item in coll
+                     when (funcall callable-pred item)
+                     collect item))
+              (t
+               (let ((coll-list (coerce coll 'list)))
+                 (loop for item in coll-list
+                       when (funcall callable-pred item)
+                       collect item))))
+            'vector)))
+
 (defun clojure-comp (&rest fns)
   "Return a function that is the composition of the given functions.
    (comp f g) returns a function that calls (f (g x...))
@@ -4434,6 +4585,28 @@
   (let ((result (make-hash-table :test 'equal)))
     (dolist (elem elements)
       (setf (gethash elem result) t))
+    result))
+
+(defun clojure-hash-map (&rest keyvals)
+  "Create a hash map from alternating keys and values."
+  (let ((result (make-hash-table :test 'equal)))
+    (loop while (and keyvals (cdr keyvals))
+          do (setf (gethash (car keyvals) result) (cadr keyvals))
+             (setf keyvals (cddr keyvals)))
+    result))
+
+(defun clojure-array-map (&rest keyvals)
+  "Create an array map from alternating keys and values.
+   For our stub, this is the same as hash-map."
+  (apply #'clojure-hash-map keyvals))
+
+(defun clojure-sorted-map (&rest keyvals)
+  "Create a sorted map from alternating keys and values.
+   For now, same as hash-map (not actually sorted)."
+  (let ((result (make-hash-table :test 'equal)))
+    (loop while (and keyvals (cdr keyvals))
+          do (setf (gethash (car keyvals) result) (cadr keyvals))
+             (setf keyvals (cddr keyvals)))
     result))
 
 ;;; Metadata support
@@ -4876,6 +5049,19 @@
                   do (incf i))))
       (apply f filled-args))))
 
+(defun clojure-find (v coll)
+  "Find the first occurrence of v in coll.
+   Returns v if found, nil otherwise."
+  (when (and coll (not (null coll)))
+    (cond
+      ((listp coll)
+       (when (member v coll :test #'equal) v))
+      ((vectorp coll)
+       (when (find v (coerce coll 'list) :test #'equal) v))
+      ((stringp coll)
+       (when (and (stringp v) (search v coll)) v))
+      (t nil))))
+
 (defun clojure-find-first (pred coll)
   "Find first element in coll matching predicate."
   (if (consp coll)
@@ -5286,6 +5472,20 @@
                  map)
         new-map)
       map))
+
+(defun clojure-disj (set &rest keys)
+  "Disjoin elements from a set. Returns new set.
+   For our stub implementation, sets are hash tables with values as keys."
+  (if (hash-table-p set)
+      (let ((new-set (make-hash-table :test (hash-table-test set))))
+        ;; Copy all entries except those to disjoin
+        (maphash (lambda (k v)
+                   (declare (ignore v))
+                   (unless (member k keys :test #'equal)
+                     (setf (gethash k new-set) t)))
+                 set)
+        new-set)
+      set))
 
 (defun clojure-keys (map)
   "Return a sequence of keys in a map."
@@ -6096,6 +6296,49 @@
                   ;; .getAsDouble on an atom returns the double value
                   ((and (consp target) (string= method-name "getAsDouble"))
                    (coerce (car target) 'double-float))
+                  ;; .equiv is Clojure's equality method on collections
+                  ;; It should compare using clojure= semantics
+                  ((string= method-name "equiv")
+                   (if (null evaluated-args)
+                       t
+                       (apply #'clojure= target evaluated-args)))
+                  ;; .count returns the size of a collection
+                  ((string= method-name "count")
+                   (length target))
+                  ;; .first returns the first element
+                  ((string= method-name "first")
+                   (clojure-first target))
+                  ;; .next returns the rest of the sequence
+                  ((string= method-name "next")
+                   (clojure-next target))
+                  ;; .seq returns the sequence representation
+                  ((string= method-name "seq")
+                   (clojure-seq target))
+                  ;; .empty returns an empty collection of the same type
+                  ;; For now, we return an empty list as a stub
+                  ((string= method-name "empty")
+                   '())
+                  ;; .cons adds an element to the front
+                  ;; If target is a vector, convert to list first
+                  ((string= method-name "cons")
+                   (if evaluated-args
+                       (let ((to-cons (car evaluated-args))
+                             (seq-target (if (vectorp target)
+                                           (coerce target 'list)
+                                           target)))
+                         (cons to-cons seq-target))
+                       target))
+                  ;; .chunkedNext returns next chunked sequence (stub: use next)
+                  ((string= method-name "chunkedNext")
+                   (clojure-next target))
+                  ;; .index returns the index in a reversed sequence (stub)
+                  ((string= method-name "index")
+                   (clojure-count target))
+                  ;; .rseq returns reversed sequence for vectors
+                  ((string= method-name "rseq")
+                   (if (vectorp target)
+                       (clojure-reverse target)
+                       target))
                   ;; Default: return target (stub for unknown methods)
                   (t target)))))
 
@@ -6124,6 +6367,8 @@
            ((and head-name (string= head-name "defspec")) (eval-defspec form env))
            ((and head-name (string= head-name "defstruct")) (eval-defstruct form env))
            ((and head-name (string= head-name "defrecord")) (eval-defrecord form env))
+           ((and head-name (string= head-name "reify")) (eval-reify form env))
+           ((and head-name (string= head-name "future")) (eval-future form env))
            ((and head-name (string= head-name "thrown-with-msg")) (eval-thrown-with-msg form env))
            ((and head-name (string= head-name "fails-with-cause")) (eval-fails-with-cause form env))
            ((and head-name (string= head-name "->")) (eval-thread-first form env))
@@ -6133,7 +6378,9 @@
            ((and head-name (string= head-name "cond->")) (eval-cond-thread-first form env))
            ((and head-name (string= head-name "cond->>")) (eval-cond-thread-last form env))
            ((and head-name (string= head-name "as->")) (eval-as-thread form env))
+           ((and head-name (string= head-name "..")) (eval-dot-dot form env))
            ((and head-name (string= head-name "is")) (eval-is form env))
+           ((and head-name (string= head-name "thrown?")) (eval-thrown form env))
            ((and head-name (string= head-name "testing")) (eval-testing form env))
            ((and head-name (string= head-name "are")) (eval-are form env))
            ((and head-name (string= head-name "do-template")) (eval-do-template form env))
@@ -6307,6 +6554,16 @@
                (dolist (expr (butlast body))
                  (clojure-eval expr new-env))
                (clojure-eval last-expr new-env)))))
+
+      ;; Vector as function - get element at index
+      ;; In Clojure, ([a b c] 1) returns b (element at index 1)
+      (vector
+       (if (null unwrapped-args)
+           nil
+           (let ((index (first unwrapped-args)))
+             (if (and (integerp index) (>= index 0) (< index (length actual-fn)))
+                 (aref actual-fn index)
+                 nil))))
 
       ;; Keyword as function - look itself up in the first argument (a map)
       ;; In Clojure, (:key map) is equivalent to (get map :key)

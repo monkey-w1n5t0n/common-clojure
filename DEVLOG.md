@@ -2728,3 +2728,73 @@ The test helper functions were defined but our namespace resolution didn't handl
 2. Address "is not a string designator" error in control test
 3. Fix toUpperCase Java interop issues
 4. Continue implementing core functions as tests require them
+---
+
+### Iteration 46 - 2026-01-18
+
+**Focus:** Fix vector handling in reduce and implement update-in/compare functions
+
+**Changes Made:**
+
+1. **Fixed clojure-reduce to handle vectors** - cl-clojure-eval.lisp:3948-3974
+   - `reduce` was not converting vectors to lists before calling `cdr`
+   - Changed to use `cond` with explicit `vectorp` check
+   - Now properly converts vectors to lists before reduction
+
+2. **Implemented update-in, update, get-in, assoc-in** - cl-clojure-eval.lisp:5154-5239
+   - `clojure-update-in`: Update nested map values with a function
+   - `clojure-update`: Single-key version of update-in
+   - `clojure-get-in`: Get value from nested map using key path
+   - `clojure-assoc-in`: Set value in nested map using key path
+   - All functions handle both vector and list key paths
+
+3. **Implemented zipmap** - cl-clojure-eval.lisp:4857-4868
+   - Creates a map from two sequences (keys and values)
+   - Handles both vector and list inputs
+   - Stops when either sequence is exhausted
+
+4. **Fixed pmap to handle vectors** - cl-clojure-eval.lisp:4459-4466
+   - `pmap` was not converting vectors to lists before `mapcar`
+   - Now properly handles vector collections
+
+5. **Implemented compare function** - cl-clojure-eval.lisp:2905-2976
+   - Returns -1, 0, or 1 for less-than, equal, greater-than
+   - Handles numbers, strings, keywords, symbols
+   - Supports lexicographic comparison for vectors and lists
+   - Converts lazy ranges to lists for comparison
+   - Uses `labels` for internal helper functions
+
+6. **Added keyword-as-function support** - cl-clojure-eval.lisp:6174-6184
+   - In Clojure, keywords can be used as functions to look themselves up in maps
+   - `(:key map)` is equivalent to `(get map :key)`
+   - Added keyword check in `apply-function` before the error case
+
+**Root Cause Analysis:**
+
+The vector type errors in `other_functions` test were caused by `reduce` not converting vectors to lists. When `reduce` received a vector like `#("fun" "counting" "words" "fun")`, it tried to call `cdr` directly on the vector, which failed because `cdr` only works on cons cells (lists).
+
+The "Cannot apply non-function: standard" error in vectors test was caused by keywords not being callable. In Clojure, keywords implement `IFn` and can be used as functions to look themselves up in maps.
+
+**Errors Fixed:**
+- `#("fun" "counting" "words" "fun") is not of type LIST` - FIXED ✅ (reduce now converts vectors to lists)
+- `#(0) is not of type LIST` - FIXED ✅ (pmap now converts vectors to lists)
+- "Undefined symbol: update-in" - FIXED ✅ (implemented)
+- "Undefined symbol: zipmap" - FIXED ✅ (implemented)
+- "Cannot apply non-function: standard" - FIXED ✅ (keyword-as-function support)
+- "Undefined symbol: compare" - FIXED ✅ (implemented, but needs lazy range comparison fix)
+
+**Test Results:**
+- Parse: 77 ok, 8 errors ✅ (no change)
+- Eval: 35 ok, 50 errors (no change from iteration 45)
+- Several tests now progress further:
+  - `other_functions`: Was at vector error, now at "Undefined symbol: keyword"
+  - `parallel`: Was at vector error, now at "Undefined symbol: future"
+  - `vectors`: Was at "Cannot apply non-function: standard", now at "Cannot compare nums..."
+  - `multimethods`: Progresses further through the test
+
+**Next Steps:**
+1. Fix `compare` function to properly handle lazy ranges in comparisons
+2. Implement `keyword` function for creating keywords from strings
+3. Implement `future` function for parallel test
+4. Implement `derive` function for multimethods
+5. Add more Java interop stubs (Tuple/create, str/split-lines)

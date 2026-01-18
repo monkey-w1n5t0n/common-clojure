@@ -28,6 +28,12 @@
 (declaim (ftype (function (t t &rest t) t) eval-java-interop))
 (declaim (ftype (function (function t) t) safe-math-fn1))
 (declaim (ftype (function (function t t) t) safe-math-fn2))
+(declaim (ftype (function (t t t &rest t) t) clojure-update-in))
+(declaim (ftype (function (t t t &rest t) t) clojure-update))
+(declaim (ftype (function (t t &optional t) t) clojure-get-in))
+(declaim (ftype (function (t t t) t) clojure-assoc-in))
+(declaim (ftype (function (t t) t) clojure-zipmap))
+(declaim (ftype (function (t t) (member -1 0 1)) clojure-compare))
 
 ;;; ============================================================
 ;;; Environment and Var System
@@ -2436,6 +2442,7 @@
   (register-core-function env 'min #'clojure-min)
   (register-core-function env 'max #'clojure-max)
   (register-core-function env 'abs #'clojure-abs)
+  (register-core-function env 'compare #'clojure-compare)
 
   ;; Collection functions
   (register-core-function env 'cons #'clojure-cons)
@@ -2516,6 +2523,10 @@
   (register-core-function env 'dissoc #'clojure-dissoc)
   (register-core-function env 'keys #'clojure-keys)
   (register-core-function env 'vals #'clojure-vals)
+  (register-core-function env 'update-in #'clojure-update-in)
+  (register-core-function env 'update #'clojure-update)
+  (register-core-function env 'get-in #'clojure-get-in)
+  (register-core-function env 'assoc-in #'clojure-assoc-in)
   (register-core-function env 'quot #'clojure-quot)
   (register-core-function env 'rem #'clojure-rem)
   (register-core-function env 'mod #'clojure-mod)
@@ -2671,6 +2682,7 @@
   (register-core-function env 'merge-with #'clojure-merge-with)
   (register-core-function env 'group-by #'clojure-group-by)
   (register-core-function env 'frequencies #'clojure-frequencies)
+  (register-core-function env 'zipmap #'clojure-zipmap)
   (register-core-function env 'reduce-kv #'clojure-reduce-kv)
 
   ;; Agent functions
@@ -2889,6 +2901,79 @@
 (defun clojure-abs (x)
   "Return the absolute value of x."
   (abs x))
+
+(defun clojure-compare (x y)
+  "Compare two values. Returns -1 if x < y, 0 if x = y, 1 if x > y.
+   Uses Clojure's comparison semantics."
+  (labels
+    ((compare-lists (x-list y-list)
+       "Compare two lists lexicographically."
+       (let ((len-x (length x-list))
+             (len-y (length y-list)))
+         (loop for xi in x-list
+               for yi in y-list
+               do (let ((cmp (compare-values xi yi)))
+                    (when (/= cmp 0)
+                      (return-from compare-lists cmp))))
+         (cond ((< len-x len-y) -1)
+               ((> len-x len-y) 1)
+               (t 0))))
+     (compare-values (a b)
+       "Compare two values without re-converting lazy ranges."
+       (cond
+         ;; Numbers - use numeric comparison
+         ((and (numberp a) (numberp b))
+          (cond ((< a b) -1)
+                ((> a b) 1)
+                (t 0)))
+         ;; Strings - lexicographic comparison
+         ((and (stringp a) (stringp b))
+          (cond ((string< a b) -1)
+                ((string> a b) 1)
+                (t 0)))
+         ;; Keywords - compare by name
+         ((and (keywordp a) (keywordp b))
+          (cond ((string< (symbol-name a) (symbol-name b)) -1)
+                ((string> (symbol-name a) (symbol-name b)) 1)
+                (t 0)))
+         ;; Symbols - compare by name
+         ((and (symbolp a) (symbolp b))
+          (cond ((string< (symbol-name a) (symbol-name b)) -1)
+                ((string> (symbol-name a) (symbol-name b)) 1)
+                (t 0)))
+         ;; Vectors - lexicographic comparison
+         ((and (vectorp a) (vectorp b))
+          (let ((len-a (length a))
+                (len-b (length b)))
+            (dotimes (i (min len-a len-b))
+              (let ((cmp (compare-values (aref a i) (aref b i))))
+                (when (/= cmp 0)
+                  (return-from compare-values cmp))))
+            (cond ((< len-a len-b) -1)
+                  ((> len-a len-b) 1)
+                  (t 0))))
+         ;; Lists - lexicographic comparison
+         ((and (listp a) (listp b))
+          (compare-lists a b))
+         ;; Mixed sequences - convert both to lists and compare
+         ((and (vectorp a) (listp b))
+          (compare-lists (coerce a 'list) b))
+         ((and (listp a) (vectorp b))
+          (compare-lists a (coerce b 'list)))
+         ;; nil is less than anything (except nil)
+         ((and (null a) (null b)) 0)
+         ((null a) -1)
+         ((null b) 1)
+         ;; Default - error for incomparable types
+         (t (error "Cannot compare ~A and ~A" a b)))))
+    ;; Convert lazy ranges to lists for comparison
+    (let ((x-val (if (lazy-range-p x)
+                     (lazy-range-to-list x 10000)
+                     x))
+          (y-val (if (lazy-range-p y)
+                     (lazy-range-to-list y 10000)
+                     y)))
+      (compare-values x-val y-val))))
 
 ;;; Collection functions
 (defun clojure-cons (x seq)
@@ -3945,20 +4030,24 @@
         ;; 3-argument form: (reduce f init coll)
         (if (null coll)
             init
-            (let ((coll-list (if (lazy-range-p coll)
-                                 (lazy-range-to-list coll (if (lazy-range-end coll)
-                                                               most-positive-fixnum
-                                                               10000))
-                                 coll)))
+            (let ((coll-list (cond
+                               ((lazy-range-p coll)
+                                (lazy-range-to-list coll (if (lazy-range-end coll)
+                                                              most-positive-fixnum
+                                                              10000)))
+                               ((vectorp coll) (coerce coll 'list))
+                               (t coll))))
               (reduce callable-f (cdr coll-list) :initial-value (funcall callable-f init (car coll-list)))))
         ;; 2-argument form: (reduce f coll)
         (if (null init)
             (error "Cannot reduce empty collection")
-            (let ((coll-list (if (lazy-range-p init)
-                                 (lazy-range-to-list init (if (lazy-range-end init)
-                                                               most-positive-fixnum
-                                                               10000))
-                                 init)))
+            (let ((coll-list (cond
+                               ((lazy-range-p init)
+                                (lazy-range-to-list init (if (lazy-range-end init)
+                                                              most-positive-fixnum
+                                                              10000)))
+                               ((vectorp init) (coerce init 'list))
+                               (t init))))
               (reduce callable-f (cdr coll-list) :initial-value (car coll-list)))))))
 
 (defun clojure-eval-fn (form)
@@ -4445,9 +4534,11 @@
 (defun clojure-pmap (f coll &rest more-colls)
   "Parallel map - apply f to items in collections in parallel.
    For SBCL, this is a stub that just uses regular map."
-  (if more-colls
-      (apply #'mapcar f coll more-colls)
-      (mapcar f coll)))
+  (let ((coll-list (if (vectorp coll) (coerce coll 'list) coll))
+        (more-lists (mapcar (lambda (c) (if (vectorp c) (coerce c 'list) c)) more-colls)))
+    (if more-lists
+        (apply #'mapcar f coll-list more-lists)
+        (mapcar f coll-list))))
 
 (defun clojure-new (class-name &rest args)
   "Java constructor call: (new Classname args...)
@@ -4842,6 +4933,19 @@
       (incf (gethash item result 0)))
     result))
 
+(defun clojure-zipmap (keys vals)
+  "Return a map with keys mapped to corresponding vals.
+   If there are more keys than vals, excess keys are ignored.
+   If there are more vals than keys, excess vals are ignored."
+  (let ((result (make-hash-table :test 'equal))
+        (keys-list (if (vectorp keys) (coerce keys 'list) keys))
+        (vals-list (if (vectorp vals) (coerce vals 'list) vals)))
+    (loop while (and keys-list vals-list)
+          do (setf (gethash (car keys-list) result) (car vals-list))
+             (setf keys-list (cdr keys-list))
+             (setf vals-list (cdr vals-list)))
+    result))
+
 (defun clojure-reduce-kv (f init coll)
   "Reduce a map by applying f to (init key val) pairs."
   (if (hash-table-p coll)
@@ -5150,6 +5254,85 @@
                  map)
         (nreverse vals))
       nil))
+
+(defun clojure-update-in (map keys f &rest args)
+  "Update a value in a nested map structure.
+   keys is a sequence of keys to navigate through the map.
+   f is a function to apply to the existing value (or nil if not found).
+   args are additional arguments to pass to f after the existing value."
+  (let ((keys-list (if (vectorp keys) (coerce keys 'list) keys)))
+    (if (null keys-list)
+        ;; No keys - just call f with args
+        (apply f nil args)
+        ;; Navigate through the map
+        (progn
+          (let ((current-map map))
+            ;; Navigate to the parent of the target key
+            (dolist (k (butlast keys-list) current-map)
+              (let ((next-val (if (hash-table-p current-map)
+                                 (gethash k current-map)
+                                 nil)))
+                (unless (hash-table-p next-val)
+                  (setf next-val (make-hash-table :test 'equal)))
+                (unless (hash-table-p current-map)
+                  (setf current-map (make-hash-table :test 'equal)))
+                (unless (gethash k current-map)
+                  (setf (gethash k current-map) next-val))
+                (setf current-map (gethash k current-map))))
+            ;; Now current-map is the parent map, update the target key
+            (let* ((target-key (car (last keys-list)))
+                   (old-value (if (hash-table-p current-map)
+                                (gethash target-key current-map)
+                                nil))
+                   (new-value (apply f old-value args)))
+              (unless (hash-table-p current-map)
+                (setf current-map (make-hash-table :test 'equal)))
+              (setf (gethash target-key current-map) new-value)
+              ;; Return the original map (modified in place)
+              map))))))
+
+(defun clojure-update (map key f &rest args)
+  "Update a value in map. Equivalent to (update-in map [key] f args...)."
+  (apply #'clojure-update-in map (list key) f args))
+
+(defun clojure-get-in (map keys &optional not-found)
+  "Get a value from a nested map structure using a sequence of keys."
+  (let ((keys-list (if (vectorp keys) (coerce keys 'list) keys)))
+    (let ((current map))
+      (dolist (k keys-list)
+        (if (hash-table-p current)
+            (let ((val (gethash k current)))
+              (if (eq val nil)
+                  (return-from clojure-get-in (or not-found nil))
+                  (setf current val)))
+            (return-from clojure-get-in (or not-found nil))))
+      current)))
+
+(defun clojure-assoc-in (map keys val)
+  "Associate a value in a nested map structure using a sequence of keys."
+  (let ((keys-list (if (vectorp keys) (coerce keys 'list) keys)))
+    (if (null keys-list)
+        val
+        (progn
+          (let ((current-map map))
+            ;; Navigate to the parent of the target key
+            (dolist (k (butlast keys-list) current-map)
+              (let ((next-val (if (hash-table-p current-map)
+                                 (gethash k current-map)
+                                 nil)))
+                (unless (hash-table-p next-val)
+                  (setf next-val (make-hash-table :test 'equal)))
+                (unless (hash-table-p current-map)
+                  (setf current-map (make-hash-table :test 'equal)))
+                (unless (gethash k current-map)
+                  (setf (gethash k current-map) next-val))
+                (setf current-map (gethash k current-map))))
+            ;; Now set the final key-value pair
+            (let ((target-key (car (last keys-list))))
+              (unless (hash-table-p current-map)
+                (setf current-map (make-hash-table :test 'equal)))
+              (setf (gethash target-key current-map) val)
+              map))))))
 
 ;;; ============================================================
 ;;; clojure.set functions
@@ -6062,6 +6245,18 @@
                (dolist (expr (butlast body))
                  (clojure-eval expr new-env))
                (clojure-eval last-expr new-env)))))
+
+      ;; Keyword as function - look itself up in the first argument (a map)
+      ;; In Clojure, (:key map) is equivalent to (get map :key)
+      (symbol
+       (if (keywordp actual-fn)
+           ;; Keyword used as function on a map
+           (if (hash-table-p (car unwrapped-args))
+               (gethash actual-fn (car unwrapped-args))
+               ;; For non-maps, return nil
+               nil)
+           ;; Not a keyword, fall through to error
+           (error "Cannot apply non-function: ~A" fn-value)))
 
       ;; Regular Lisp function
       (function (apply actual-fn unwrapped-args))

@@ -1122,6 +1122,31 @@
         (dolist (expr body result)
           (setf result (clojure-eval expr new-env)))))))
 
+(defun eval-with-local-vars (form env)
+  "Evaluate a with-local-vars form: (with-local-vars [name init*] body+).
+   Creates mutable local vars (like boxes) that can be modified with var-set.
+   The @ (deref) operator reads the current value."
+  (let* ((bindings-vec (cadr form))
+         (body (cddr form))
+         ;; Convert vector to list and process pairwise
+         (bindings-list (if (vectorp bindings-vec)
+                           (coerce bindings-vec 'list)
+                           bindings-vec)))
+    ;; Create new environment with mutable var bindings
+    ;; Each var is a cons cell where the car holds the current value
+    (let ((new-env env))
+      ;; Initialize each var as a cons cell (atom-like)
+      (loop for (var-sym init-expr) on bindings-list by #'cddr
+            while var-sym
+            do (let* ((init-value (clojure-eval init-expr env))
+                      ;; Create a cons cell to hold the mutable value
+                      (var-cell (cons init-value nil)))
+                 (setf new-env (env-extend-lexical new-env var-sym var-cell))))
+      ;; Evaluate body forms with the new environment
+      (let ((result nil))
+        (dolist (expr body result)
+          (setf result (clojure-eval expr new-env)))))))
+
 (defun eval-deftest (form env)
   "Evaluate a deftest form: (deftest name body+) - define a test."
   ;; For now, deftest just evaluates the body to check for errors
@@ -2623,6 +2648,7 @@
   (register-core-function env 'map #'clojure-map)
   (register-core-function env 'mapv #'clojure-mapv)
   (register-core-function env 'apply #'clojure-apply)
+  (register-core-function env 'eval #'clojure-eval-function)
   (register-core-function env 'str #'clojure-str)
   (register-core-function env 're-pattern #'clojure-re-pattern)
   (register-core-function env 're-find #'clojure-re-find)
@@ -2725,6 +2751,7 @@
   (register-core-function env 'swap! #'clojure-swap!)
   (register-core-function env 'reset! #'clojure-reset!)
   (register-core-function env 'reset-vals! #'clojure-reset-vals!)
+  (register-core-function env 'var-set #'clojure-var-set)
   (register-core-function env 'hash-set #'clojure-hash-set)
   (register-core-function env 'sorted-set #'clojure-sorted-set)
   (register-core-function env 'hash-map #'clojure-hash-map)
@@ -2826,7 +2853,6 @@
   (register-core-function env 'volatile! #'clojure-volatile!)
   (register-core-function env 'vreset! #'clojure-vreset!)
   (register-core-function env 'vswap! #'clojure-vswap!)
-  (register-core-function env 'with-local-vars #'clojure-with-local-vars)
   (register-core-function env 'ns-publics #'clojure-ns-publics)
   (register-core-function env 'make-hierarchy #'clojure-make-hierarchy)
   (register-core-function env 'ex-data #'clojure-ex-data)
@@ -4869,6 +4895,13 @@
          (car ref)
          ref))))
 
+(defun clojure-var-set (var new-value)
+  "Set the value of a local var created by with-local-vars.
+   Returns the new value."
+  (when (consp var)
+    (setf (car var) new-value))
+  new-value)
+
 (defun force-delay (delay-obj)
   "Force evaluation of a delay, caching the result."
   (unless (delay-forced-p delay-obj)
@@ -5230,13 +5263,6 @@
 (defun clojure-vswap! (vol fn-arg &rest args)
   "Swap the value of a volatile."
   (setf (car vol) (apply fn-arg (car vol) args)))
-
-(defun clojure-with-local-vars (bindings &rest body)
-  "Execute body with local var bindings.
-   For SBCL, this is like let but vars are mutable."
-  ;; Stub implementation - just evaluate body with bindings
-  ;; This should create a mutable scope but for now just use let
-  (eval `(let ,bindings ,@body)))
 
 (defun clojure-ns-publics (ns)
   "Return a map of public interns in a namespace.
@@ -6219,6 +6245,14 @@
       ;; If not a delay object, just return as-is (Clojure behavior)
       delay-obj))
 
+(defun clojure-eval-function (form)
+  "Evaluate a form at runtime. In Clojure, eval takes a form and evaluates it.
+   For our implementation, we evaluate the form in the global environment."
+  ;; The form should be unevaluated data - a quoted form or literal
+  ;; If it's a string, we treat it as a literal (not as code to read and eval)
+  ;; In Clojure, (eval "string") returns the string itself
+  (clojure-eval form *global-env*))
+
 ;;; ============================================================
 ;;; Test Helper Special Forms (from clojure.test)
 ;;; ============================================================
@@ -6746,6 +6780,7 @@
            ((and head-name (string= head-name "set!")) (eval-set-bang form env))
            ((and head-name (string= head-name "declare")) (eval-declare form env))
            ((and head-name (string= head-name "binding")) (eval-binding form env))
+           ((and head-name (string= head-name "with-local-vars")) (eval-with-local-vars form env))
            ((and head-name (string= head-name "new"))
             ;; Java constructor call: (new Classname args...)
             ;; For SBCL, this is a stub that returns nil
@@ -6808,6 +6843,17 @@
            ((and head-name (string= head-name "try"))
             ;; Try/catch/finally form
             (eval-try form env))
+           ((and head-name (string= head-name "throw"))
+            ;; Throw an exception
+            ;; (throw exception-expr)
+            (let ((exception (clojure-eval (cadr form) env)))
+              (typecase exception
+                ;; If it's already a CL condition, signal it
+                (condition (signal exception))
+                ;; If it's a string, create a simple-error
+                (string (signal 'simple-error :format-control "~a" :format-arguments (list exception)))
+                ;; Otherwise, convert to string and signal
+                (t (signal 'simple-error :format-control "~a" :format-arguments (list exception))))))
 
            ;; Function application (including when head is not a symbol)
            (t

@@ -3246,10 +3246,64 @@ The fix was to add explicit `hash-table-p` checks before attempting coercion. Wh
   - The error occurs in a `loop` or `destructuring-bind` that expects a sequence
   - Need to trace the exact source of this error
 - try_catch test: "The value |nil| is not of type LIST"
-- vars test: "The value #<FUNCTION ...> is not of type REAL"
+- vars test: "Undefined symbol: with-precision" (progressed past function error)
 
 **Next Steps:**
 1. Trace the vectors test hash table error to find its exact source
 2. Fix the try_catch nil type error
-3. Fix the vars test function type error
+3. Continue implementing more core functions as tests require them
+
+---
+
+### Iteration 54 - 2026-01-18
+
+**Focus:** Implement throw, eval, and with-local-vars special forms
+
+**Changes Made:**
+
+1. **Implemented `throw` special form** - cl-clojure-eval.lisp:6811-6821
+   - Throws exceptions using CL's `signal` function
+   - Handles conditions, strings, and other values appropriately
+   - Added to special form dispatch
+
+2. **Implemented `eval` function** - cl-clojure-eval.lisp:6222-6228, 2626
+   - `clojure-eval-function` evaluates forms at runtime
+   - Uses global environment for evaluation
+   - Registered as core function
+   - In Clojure, `eval` evaluates a form in the current context
+
+3. **Implemented `with-local-vars` special form** - cl-clojure-eval.lisp:1125-1148, 6783
+   - Creates mutable local vars as cons cells
+   - Each var is a cons cell where `car` holds the current value
+   - Supports `var-set` for mutation and `@` (deref) for reading
+   - Removed stub function implementation that was using `let`
+
+4. **Implemented `var-set` function** - cl-clojure-eval.lisp:4898-4903, 2754
+   - Sets the value of a local var created by with-local-vars
+   - Returns the new value
+   - Registered as core function
+
+**Errors Fixed:**
+- "Undefined symbol: throw" - FIXED ✅
+- "Undefined symbol: eval" - FIXED ✅
+- "FUNCTION is not of type REAL" in vars test - FIXED ✅ (with-local-vars now works correctly)
+
+**Test Results:**
+- Parse: 94 ok, 8 errors ✅
+- Eval: 53 ok, 49 errors (no change from iteration 53)
+- vars test now progresses past with-local-vars to with-precision
+- try_catch and vectors tests still have the same errors
+
+**Known Issues:**
+- try_catch: "nil is not of type LIST" - needs deeper investigation
+  - The error occurs during `are` form evaluation
+  - Related to how the `try` form parses and evaluates
+- vectors: hash table sequence type error - needs investigation
+  - A hash table is being passed where a sequence is expected
+  - Need to trace the exact source in the vectors test
+
+**Next Steps:**
+1. Debug the try_catch "nil is not of type LIST" error
+2. Trace the vectors test hash table error to find its exact source
+3. Implement `with-precision` for vars test
 4. Continue implementing more core functions as tests require them

@@ -2884,6 +2884,7 @@
 
   ;; Additional missing functions
   (register-core-function env 'lazy-seq #'clojure-lazy-seq)
+  (register-core-function env 'lazy-cat #'clojure-lazy-cat)
   (register-core-function env 'gensym #'clojure-gensym)
   (register-core-function env 'doc #'clojure-doc)
   (register-core-function env 'run-test #'clojure-run-test)
@@ -5380,6 +5381,24 @@
   "Create a lazy sequence from body-fn.
    For SBCL, this is a stub that just calls the function."
   (funcall body-fn))
+
+(defun clojure-lazy-cat (&rest colls)
+  "Creates a lazy sequence that concatenates the given collections.
+   In Clojure this is a macro, but we implement it as a function.
+   For SBCL, we evaluate all collections and concatenate them."
+  (let ((result (quote ())))
+    (dolist (coll (reverse colls))
+      (let ((coll-list (cond
+                         ;; Handle lazy ranges
+                         ((lazy-range-p coll) (lazy-range-to-list coll 10000))
+                         ;; Handle vectors
+                         ((vectorp coll) (coerce coll (quote list)))
+                         ;; Handle strings (convert to list of chars)
+                         ((stringp coll) (coerce coll (quote list)))
+                         ;; Already a list or nil
+                         (t coll))))
+        (setq result (append coll-list result))))
+    result))
 
 (defun clojure-gensym (&optional prefix)
   "Generate a unique symbol.

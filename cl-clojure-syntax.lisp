@@ -750,14 +750,49 @@
   "Create a stream from preprocessed Clojure source."
   (make-string-input-stream (preprocess-clojure-dots input-string)))
 
+(defun normalize-clojure-symbol (sym)
+  "Convert Clojure-specific symbols to CL equivalents.
+   In :preserve case mode, nil becomes |nil|, true becomes |true|, etc.
+   This converts them back to proper CL values."
+  (when (symbolp sym)
+    (let ((name (symbol-name sym)))
+      (cond
+        ((string= name "nil") (return-from normalize-clojure-symbol nil))
+        ((string= name "true") (return-from normalize-clojure-symbol t))
+        ((string= name "false") (return-from normalize-clojure-symbol nil)))))
+  sym)
+
+(defun normalize-clojure-form (form)
+  "Recursively normalize Clojure symbols in a form.
+   Converts |nil| -> NIL, |true| -> T, |false| -> NIL throughout the tree.
+   Only normalizes symbols that are lowercase nil/true/false (from :preserve mode)."
+  (typecase form
+    (null nil)
+    (symbol (normalize-clojure-symbol form))
+    (cons (cons (normalize-clojure-form (car form))
+                (normalize-clojure-form (cdr form))))
+    (hash-table
+     ;; Normalize keys and values in hash tables
+     (let ((new-table (make-hash-table :test (hash-table-test form))))
+       (maphash (lambda (k v)
+                  (setf (gethash (normalize-clojure-form k) new-table)
+                        (normalize-clojure-form v)))
+                form)
+       new-table))
+    ;; Don't process strings as vectors - they should pass through unchanged
+    (string form)
+    (vector (map 'vector #'normalize-clojure-form form))
+    (t form)))
+
 (defun read-clojure (stream &optional (eof-error-p t) (eof-value :eof))
-  "Read a Clojure form from STREAM, post-processing to handle number suffixes.
+  "Read a Clojure form from STREAM, post-processing to handle number suffixes
+   and normalizing Clojure symbols (nil, true, false) to CL equivalents.
    This wraps the standard READ function to handle Clojure-specific syntax like
    the N suffix for bigints and M suffix for decimals."
   (let* ((form (read stream eof-error-p eof-value))
          (processed (if (eq form :eof)
                        :eof
-                       (parse-suffixed-number form))))
+                       (normalize-clojure-form (parse-suffixed-number form)))))
     processed))
 
 ;;; Convert CL's quasiquote to Clojure's syntax-quote format

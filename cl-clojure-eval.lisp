@@ -1605,6 +1605,15 @@
   ;; For now, just return nil - records are not implemented
   nil)
 
+(defun eval-definterface (form env)
+  "Evaluate a definterface form: (definterface name [method-sig]+) - define a Java interface.
+   This is a stub - creates a placeholder symbol for the interface."
+  (declare (ignore env))
+  ;; Extract the interface name
+  (let ((name (cadr form)))
+    ;; For now, just return the name as a symbol
+    name))
+
 (defun eval-reify (form env)
   "Evaluate a reify form: (reify interfaces& methods&) - create an anonymous object.
    This is a stub - creates a hash table to represent the object."
@@ -8185,6 +8194,7 @@
            ((and head-name (string= head-name "defspec")) (eval-defspec form env))
            ((and head-name (string= head-name "defstruct")) (eval-defstruct form env))
            ((and head-name (string= head-name "defrecord")) (eval-defrecord form env))
+           ((and head-name (string= head-name "definterface")) (eval-definterface form env))
            ((and head-name (string= head-name "reify")) (eval-reify form env))
            ((and head-name (string= head-name "future")) (eval-future form env))
            ((and head-name (string= head-name "thrown-with-msg")) (eval-thrown-with-msg form env))

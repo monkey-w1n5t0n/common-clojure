@@ -4983,3 +4983,33 @@ The destructuring code was using `(t (coerce value 'list))` which would fail for
 1. Debug try_catch `|nil|` error (symbol reading issue)
 2. Debug vectors hash table SEQUENCE error (needs more investigation)
 3. Continue with other test failures
+
+---
+
+### Manual Intervention - 2026-01-18
+
+**Focus:** Fix `|nil|` symbol escaping issue
+
+**Problem:**
+With `:preserve` case mode, the reader was producing `|nil|` (escaped symbol) instead of CL's `NIL` value. Same issue with `|true|` and `|false|`. This caused the `try_catch` test to fail with "`|nil|` is not of type LIST".
+
+**Root Cause:**
+When using `:preserve` readtable case mode, reading `nil` creates a symbol with name "nil" (lowercase) in the current package, not CL's canonical `NIL` symbol.
+
+**Solution:**
+Added `normalize-clojure-symbol` and `normalize-clojure-form` functions to `read-clojure` that recursively convert:
+- `|nil|` → `NIL`
+- `|true|` → `T`  
+- `|false|` → `NIL`
+
+Also added special handling to NOT process strings as vectors (strings are vectors in CL but should pass through unchanged).
+
+**Test Results:**
+- Parse: 93 ok, 9 errors
+- Eval: 64 ok, 38 errors (+1 from previous!)
+- `try_catch` now passes ✅
+
+**Next Steps:**
+1. Continue with remaining test failures
+2. Many remaining failures are Java interop (StackTraceElement, UUID, etc.) - not solvable without Java bridge
+3. Focus on pure Clojure features that can be implemented

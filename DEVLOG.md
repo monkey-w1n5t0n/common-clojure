@@ -4164,3 +4164,57 @@ Changed to use `keyword-key` (the normalized keyword) and convert it back to a s
 - Implement namespaced keys destructuring (`{:a/keys [b c d]}`)
 - Investigate "Undefined symbol: catch" error in repl test
 - Continue implementing more core functions as tests require them
+
+---
+
+## Iteration 68 - Fix #(...) case grouping and case constant evaluation (2026-01-18)
+
+### Focus: Fix case special form in anonymous functions and constant value handling
+
+### Changes Made:
+
+1. **Added `case` to `group-special-forms` function** - cl-clojure-syntax.lisp:416-422
+   - The `case` special form was not being grouped inside `#(...)` anonymous functions
+   - When reading `#(case % 1 :number ...)`, the reader was treating `case` as a separate symbol
+   - Now all forms after `case` are grouped together as a single unit
+   - This fixes "Undefined symbol: case" error in control test
+
+2. **Fixed `case` to not evaluate test values** - cl-clojure-eval.lisp:7796-7825
+   - In Clojure, `case` test values are COMPILE-TIME CONSTANTS, not evaluated expressions
+   - The old implementation was evaluating test values like `pow`, causing "Undefined symbol: pow"
+   - Now test values are compared directly as literal constants
+   - Changed from using `equal` to using `clojure=` for comparison (Clojure semantics)
+   - For list test values `(2 \b "bar")`, uses `some` with `clojure=` to check for match
+
+### Root Cause Analysis
+
+The control test had TWO issues:
+
+1. **Reader grouping**: `#(case % ...)` was being parsed incorrectly. The reader treated `case` as a separate form, so when the anonymous function was called, it evaluated `case` as a symbol, causing "Undefined symbol: case".
+
+2. **Test value evaluation**: The `case` implementation was evaluating test values. In the test:
+   ```clojure
+   #(case % pow :symbol ...)
+   ```
+   When called with `(test-fn 'pow)`, the old implementation tried to evaluate `pow` to get its value, causing "Undefined symbol: pow". In Clojure, `pow` in the case clause is a literal symbol constant, not an expression to evaluate.
+
+### Errors Fixed:
+- "Undefined symbol: case" in control test - FIXED ✅ (reader grouping)
+- "Undefined symbol: pow" in control test - FIXED ✅ (constant test values)
+- `case` now correctly matches symbols, keywords, and other literal values
+
+### Test Results:
+- Parse: 94 ok, 8 errors ✅
+- Eval: 61 ok, 41 errors (no count change, but control test progresses further)
+- control test now fails on "Undefined symbol: should-print-err-message" instead of case errors
+
+### Known Issues:
+- sequences test still has "(UNSIGNED-BYTE 58)" error
+- vectors test has hash table sequence type error
+- try_catch test has nil type error
+- Many other tests still have Java interop and undefined symbol errors
+
+### Next Steps:
+- Implement `should-print-err-message` test helper
+- Continue with other test failures
+- Implement more core functions as tests require them

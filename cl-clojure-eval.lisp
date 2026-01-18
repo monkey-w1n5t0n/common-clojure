@@ -28,6 +28,7 @@
 (declaim (ftype (function (t) t) ensure-callable))
 (declaim (ftype (function (t t &rest t) t) eval-java-interop))
 (declaim (ftype (function (function t) t) safe-math-fn1))
+(declaim (ftype (function (t t t) t) extend-binding))
 (declaim (ftype (function (function t t) t) safe-math-fn2))
 (declaim (ftype (function (t t t &rest t) t) clojure-update-in))
 (declaim (ftype (function (t t t &rest t) t) clojure-update))
@@ -315,7 +316,8 @@
                            nil)))
         (if first-val
             ;; Bind first element and evaluate body
-            (let ((new-env (env-extend-lexical env bind-name first-val)))
+            ;; Use extend-binding to handle destructuring properly
+            (let ((new-env (extend-binding env bind-name first-val)))
               (if (null body)
                   nil
                   (let ((last-expr (car (last body))))
@@ -1219,6 +1221,24 @@
           (let ((result (clojure-eval last-expr new-env)))
             ;; TODO: Handle recur return value
             result)))))
+
+(defun eval-while (form env)
+  "Evaluate a while form: (while test body+) - repeatedly evaluate body while test is truthy.
+   Returns nil."
+  (let* ((test-expr (cadr form))
+         (body (cddr form)))
+    ;; Loop while test is truthy
+    (loop
+      (let ((test-result (clojure-eval test-expr env)))
+        (if (falsey? test-result)
+            (return)  ; exit loop when test is falsey
+            ;; Evaluate body forms
+            (when body
+              (dolist (expr (butlast body))
+                (clojure-eval expr env))
+              (when (car (last body))
+                (clojure-eval (car (last body)) env))))))
+    nil))  ; while always returns nil
 
 (defun eval-ns (form env)
   "Evaluate a ns form: (ns name & options) - set current namespace.
@@ -7667,6 +7687,7 @@
            ((and head-name (string= head-name "let")) (eval-let form env))
            ((and head-name (string= head-name "letfn")) (eval-letfn form env))
            ((and head-name (string= head-name "loop")) (eval-loop form env))
+           ((and head-name (string= head-name "while")) (eval-while form env))
            ((and head-name (string= head-name "if-let")) (eval-if-let form env))
            ((and head-name (string= head-name "when-let")) (eval-when-let form env))
            ((and head-name (string= head-name "when-first")) (eval-when-first form env))
@@ -7763,7 +7784,7 @@
                               for result = (nth (1+ i) clauses)
                               when (truthy? (clojure-eval test env))
                                 do (return-from clojure-eval (clojure-eval result env))
-                              finally (return-from clojure-eval (clojure-eval default-value env)))))
+                              finally (return-from clojure-eval (clojure-eval default-value env))))
                       ;; No default clause - process all as pairs
                       (loop for i from 0 below (length clauses) by 2
                             for test = (nth i clauses)
@@ -7771,11 +7792,13 @@
                                             (nth (1+ i) clauses))
                             when (truthy? (clojure-eval test env))
                               do (return-from clojure-eval (clojure-eval result env))
-                            finally (return-from clojure-eval nil)))))
+                            finally (return-from clojure-eval nil))))))
            ((and head-name (string= head-name "case"))
             ;; Case form: evaluate expr, then compare against each clause
             ;; (case expr test1 result1 test2 result2 ... default-result)
             ;; Tests can be lists of multiple values: (2 \b "bar") :one-of-many
+            ;; In Clojure, test values are COMPILE-TIME CONSTANTS, not evaluated expressions
+            ;; They are compared using clojure= (not equal)
             (let* ((expr-expr (cadr form))
                    (clauses (cddr form))
                    (expr-value (clojure-eval expr-expr env)))
@@ -7784,27 +7807,18 @@
               (loop with remaining = clauses
                     while remaining
                     do (let* ((test (car remaining))
-                              (test-value (if (consp test)
-                                             ;; If test is a list, check if expr-value matches any element
-                                             test
-                                             ;; Otherwise, test is a single value
-                                             test))
                               (result (cadr remaining)))
                          ;; Check for default clause (test is nil or :else)
-                         (when (or (null test) (eq test :else))
+                         (when (or (null test) (and (symbolp test) (string= (symbol-name test) "else")))
                            (return-from clojure-eval (clojure-eval result env)))
-                         ;; Evaluate the test value(s) and compare
-                         (let ((evaluated-test (if (consp test-value)
-                                                  ;; For a list of test values, evaluate each and check for match
-                                                  (mapcar (lambda (test-item) (clojure-eval test-item env)) test-value)
-                                                  ;; For a single test value, just evaluate it
-                                                  (clojure-eval test-value env))))
-                           (when (if (consp test-value)
-                                    ;; Check if expr-value matches any of the evaluated test values
-                                    (member expr-value evaluated-test :test #'equal)
-                                    ;; Single test value - direct comparison
-                                    (equal expr-value evaluated-test))
-                             (return-from clojure-eval (clojure-eval result env)))))
+                         ;; Test values are NOT evaluated - they are literal constants
+                         ;; For list of test values, check if expr-value matches any element
+                         (when (if (consp test)
+                                  ;; Check if expr-value matches any of the test values
+                                  (some (lambda (test-item) (clojure= expr-value test-item)) test)
+                                  ;; Single test value - direct comparison using clojure=
+                                  (clojure= expr-value test))
+                           (return-from clojure-eval (clojure-eval result env))))
                     ;; Move to next pair
                     (setf remaining (cddr remaining)))
               ;; No match found

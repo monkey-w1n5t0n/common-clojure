@@ -413,6 +413,13 @@
                       (progn
                         (push (list first) result)
                         (setf remaining rest))))
+                 ;; case: (case expr test-value* result+ default?)
+                 ;; All remaining forms belong to case
+                 ((and (symbolp first)
+                       (string= (symbol-name first) "case"))
+                  (let ((grouped (cons first rest)))
+                    (push grouped result)
+                    (setf remaining nil)))
                  ;; Default: just add the form as-is
                  (t
                   (push first result)

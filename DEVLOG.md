@@ -4251,3 +4251,47 @@ Added all special form symbols to the global environment in `setup-core-function
 - Implement `source-fn` function for repl test
 - Implement `should-print-err-message` test helper
 - Continue with other test failures
+
+---
+
+## Iteration 70 - Implement REPL/doc helper functions (2026-01-18)
+
+### Focus: Add stub functions for clojure.repl namespace
+
+### Changes Made
+
+1. **Added `source-fn` and `source` functions** - cl-clojure-eval.lisp:6572-6585
+   - `source-fn` returns the source code for a var (stub returns nil)
+   - `source` prints the source code (stub returns nil)
+
+2. **Added `platform-newlines` function** - cl-clojure-eval.lisp:5703-5706
+   - Test helper from clojure.test-helper
+   - On Linux, returns string unchanged since newlines are already \n
+
+3. **Added `dir-fn`, `dir`, `apropos` functions** - cl-clojure-eval.lisp:6590-6600
+   - `dir-fn` returns list of public vars in namespace (stub returns empty list)
+   - `dir` alias for dir-fn
+   - `apropos` returns vars matching pattern (stub returns empty list)
+
+4. **Added `the-ns` function** - cl-clojure-eval.lisp:6603-6606
+   - Returns namespace object (stub returns ns symbol as-is)
+
+5. **Added `call-ns-sym` function** - cl-clojure-eval.lisp:6608-6612
+   - Calls function in namespace (stub returns nil)
+
+### Errors Fixed:
+- "Undefined symbol: source-fn" in repl test - FIXED ✅
+- "Undefined symbol: platform-newlines" in repl test - FIXED ✅
+- "Undefined symbol: dir-fn" in repl test - FIXED ✅
+- "Undefined symbol: the-ns" in repl test - FIXED ✅
+- "Undefined symbol: call-ns-sym" in repl test - FIXED ✅
+
+### Test Results:
+- Parse: 94 ok, 8 errors ✅
+- Eval: 61 ok, 41 errors (no count change, but repl test progresses further)
+- repl test now fails on "invalid number of arguments: 0"
+
+### Next Steps:
+- Debug the "invalid number of arguments: 0" error in repl test
+- Implement `should-print-err-message` test helper
+- Continue with other test failures

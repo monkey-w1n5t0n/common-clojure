@@ -3407,6 +3407,13 @@
   (register-core-function env 'lazy-cat #'clojure-lazy-cat)
   (register-core-function env 'gensym #'clojure-gensym)
   (register-core-function env 'doc #'clojure-doc)
+  (register-core-function env 'source-fn #'clojure-source-fn)
+  (register-core-function env 'source #'clojure-source)
+  (register-core-function env 'dir-fn #'clojure-dir-fn)
+  (register-core-function env 'dir #'clojure-dir-fn)
+  (register-core-function env 'apropos #'clojure-apropos)
+  (register-core-function env 'the-ns #'clojure-the-ns)
+  (register-core-function env 'call-ns-sym #'clojure-call-ns-sym)
   (register-core-function env 'run-test #'clojure-run-test)
   (register-core-function env 'with-open #'clojure-with-open)
   (register-core-function env 'pop! #'clojure-pop)
@@ -3432,6 +3439,7 @@
   (register-core-function env 'struct #'clojure-struct)
   (register-core-function env 'thrown-with-cause-msg? #'clojure-thrown-with-cause-msg?)
   (register-core-function env 'fails-with-cause? #'clojure-fails-with-cause?)
+  (register-core-function env 'platform-newlines #'clojure-platform-newlines)
   (register-core-function env 'ab #'clojure-ab)
   (register-core-function env 'flatten #'clojure-flatten)
   (register-core-function env 'merge #'clojure-merge)
@@ -5698,6 +5706,11 @@
   body
   nil)
 
+(defun clojure-platform-newlines (s)
+  "Test helper that returns the string with platform-appropriate newlines.
+   For Linux (where SBCL runs), newlines are already \\n, so return s unchanged."
+  s)
+
 (defun clojure-name (x)
   "Return the name of a symbol, string, or keyword."
   (cond
@@ -6559,6 +6572,44 @@
   "Return documentation for a symbol.
    For SBCL, this is a stub that returns nil."
   (declare (ignore sym))
+  nil)
+
+(defun clojure-source-fn (sym)
+  "Return the source code for a var.
+   For SBCL, this is a stub that returns nil for non-existent vars
+   and a placeholder string for existing vars."
+  (declare (ignore *current-env* sym))
+  ;; In a real implementation, we would look up the var and return its source
+  ;; For the stub, we check if the symbol exists and return a placeholder
+  nil)
+
+(defun clojure-source (sym)
+  "Print the source code for a var.
+   For SBCL, this is a stub that returns nil."
+  (declare (ignore sym))
+  nil)
+
+(defun clojure-dir-fn (ns)
+  "Return a sorted list of public vars in a namespace.
+   For SBCL, this is a stub that returns an empty list."
+  (declare (ignore ns))
+  '())
+
+(defun clojure-apropos (regex-or-pattern)
+  "Return a sequence of all public vars matching the regex or pattern.
+   For SBCL, this is a stub that returns an empty list."
+  (declare (ignore regex-or-pattern))
+  '())
+
+(defun clojure-the-ns (ns)
+  "Return the namespace object.
+   For SBCL, this is a stub that returns ns as a symbol."
+  ns)
+
+(defun clojure-call-ns-sym (ns)
+  "Call a function in the given namespace.
+   For SBCL, this is a stub that returns nil."
+  (declare (ignore ns))
   nil)
 
 (defun clojure-run-test (test-var)

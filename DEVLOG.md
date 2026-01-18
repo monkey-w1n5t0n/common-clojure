@@ -4716,3 +4716,46 @@ Our implementation eagerly evaluates results (not lazy), so this generates ~10^1
 - The `for` comprehension functionality is working correctly for reasonable-sized inputs
 - Large-scale tests would require implementing true lazy sequence evaluation
 - Move on to implementing Java constructor interop for UUID/new (from iteration 77)
+
+---
+
+### Iteration 80 - Fix Nested Destructuring and Add Throwable Constructor (2026-01-18)
+
+**Focus:** Fix critical nested destructuring issue where map destructuring patterns with nested sequential and map destructuring were not working.
+
+**Problem:**
+The destructuring pattern `{[{:keys [data]}] :via data-top-level :data}` was failing because:
+1. The reader creates: `key=binding-form, value=key-to-extract`
+   - For `{[{...}] :via}`, key is the vector `[{...}]` and value is the keyword `:via`
+   - For `{data-top-level :data}`, key is the symbol `data-top-level` and value is the keyword `:data`
+2. The destructuring code was not handling this correctly
+3. Case sensitivity issue: CL uppercases keywords (`VIA`) while Clojure preserves case (`:via`)
+
+**Solution:**
+Modified `extend-map-binding` in cl-clojure-eval.lisp:
+- Added handling for regular keyword keys in binding-map
+- The VALUE from binding-map is the key to extract from value-map
+- The KEY from binding-map is the binding form (symbol, vector, or hash table)
+- Fixed case-insensitive keyword comparison using `string-equal` on `symbol-name`
+- Added `Throwable` constructor stub
+
+**Verification:**
+Test case `(let [{[{:keys [data]}] :via data-top-level :data} (Throwable->map (ex-info "ex-info" {:some "data"}))] data-top-level)` now correctly:
+- Extracts `:via` from the Throwable->map result
+- Destructures the vector's first element with `{:keys [data]}`
+- Extracts `:data` and binds to `data-top-level`
+- Returns the hash table `{:some "data"}`
+
+**Location of Fix:**
+- File: cl-clojure-eval.lisp:947-978
+- Function: `extend-map-binding`
+
+**Test Results:**
+- Nested destructuring now works correctly ✅
+- Throwable constructor added ✅
+- Some tests still have heap exhaustion (known limitation of eager evaluation)
+
+### Next Steps:
+- Fix compilation test NIL not of type REAL error
+- Fix clearing test SEQUENCE type error
+- Continue investigating remaining test errors

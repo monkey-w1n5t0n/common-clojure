@@ -20,6 +20,8 @@
 (declaim (ftype (function (&rest t) t) clojure-hash-set))
 (declaim (ftype (function (&rest t) t) clojure-sorted-set))
 (declaim (ftype (function (&rest t) t) clojure-sorted-map))
+(declaim (ftype (function (t &rest t) t) clojure-sorted-map-by))
+(declaim (ftype (function (t &rest t) t) clojure-sorted-set-by))
 (declaim (ftype (function (t) t) set-to-list))
 (declaim (ftype (function (t t) t) set-contains-p))
 (declaim (ftype (function (t) t) copy-set))
@@ -3304,9 +3306,11 @@
   (register-core-function env 'var-set #'clojure-var-set)
   (register-core-function env 'hash-set #'clojure-hash-set)
   (register-core-function env 'sorted-set #'clojure-sorted-set)
+  (register-core-function env 'sorted-set-by #'clojure-sorted-set-by)
   (register-core-function env 'hash-map #'clojure-hash-map)
   (register-core-function env 'array-map #'clojure-array-map)
   (register-core-function env 'sorted-map #'clojure-sorted-map)
+  (register-core-function env 'sorted-map-by #'clojure-sorted-map-by)
   (register-core-function env 'read-string #'clojure-read-string)
   (register-core-function env 'println #'clojure-println)
   (register-core-function env 'prn #'clojure-prn)
@@ -4580,8 +4584,11 @@
 
 ;; Class/type introspection stubs
 (defun clojure-class (x)
-  "Return the class of x. Stub for SBCL - returns a keyword or symbol representing the type."
+  "Return the class of x. Stub for SBCL - returns a keyword or symbol representing the type.
+   In Clojure, (type nil) returns nil."
   (cond
+    ;; nil has no type - return nil (Clojure behavior)
+    ((null x) nil)
     ;; For very large integers that would be BigInt in Clojure
     ((and (integerp x) (or (> x most-positive-fixnum) (< x most-negative-fixnum)))
      'clojure.lang.BigInt)
@@ -5569,6 +5576,16 @@
       (setf (gethash elem result) t))
     result))
 
+(defun clojure-sorted-set-by (comparator &rest elements)
+  "Create a sorted set using a comparator function.
+   The comparator is a function that takes two arguments and returns -1, 0, or 1.
+   For our stub, we ignore the comparator and create a regular hash set."
+  (declare (ignore comparator))
+  (let ((result (make-hash-table :test 'equal)))
+    (dolist (elem elements)
+      (setf (gethash elem result) t))
+    result))
+
 (defun clojure-hash-map (&rest keyvals)
   "Create a hash map from alternating keys and values."
   (let ((result (make-hash-table :test 'equal)))
@@ -5590,6 +5607,13 @@
           do (setf (gethash (car keyvals) result) (cadr keyvals))
              (setf keyvals (cddr keyvals)))
     result))
+
+(defun clojure-sorted-map-by (comparator &rest keyvals)
+  "Create a sorted map using a comparator function.
+   The comparator is a function that takes two arguments and returns -1, 0, or 1.
+   For our stub, we ignore the comparator and create a regular hash map."
+  (declare (ignore comparator))
+  (apply #'clojure-sorted-map keyvals))
 
 ;;; Metadata support
 ;;; We wrap values that have metadata in a special marker cons cell

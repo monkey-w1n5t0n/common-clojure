@@ -300,6 +300,108 @@
             when (= 0 (mod i n))
             collect elem)))
 
+;; Replace transducer
+(defun clojure-replace (smap &optional coll)
+  "Replace values in coll using smap (a map of from -> to).
+   When called with only smap, returns a transducer."
+  (if (null coll)
+      ;; Transducer arity
+      (lambda (reducing-function)
+        (lambda (result input)
+          (funcall reducing-function result
+                  (let ((val (gethash input smap)))
+                    (if val val input)))))
+      ;; Collection arity
+      (let ((result '()))
+        (dolist (item (if (listp coll) coll (coerce coll 'list)))
+          (push (let ((val (gethash item smap)))
+                   (if val val item))
+                result))
+        (nreverse result))))
+
+;; Interpose transducer
+(defun clojure-interpose (sep &optional coll)
+  "Insert sep between elements of coll.
+   When called with only sep, returns a transducer."
+  (if (null coll)
+      ;; Transducer arity
+      (let ((first-p t))
+        (lambda (reducing-function)
+          (lambda (result input)
+            (if first-p
+                (progn
+                  (setf first-p nil)
+                  (funcall reducing-function result input))
+                (funcall reducing-function
+                          (funcall reducing-function result sep)
+                          input)))))
+      ;; Collection arity
+      (when (and coll (not (null coll)))
+        (let ((result '()))
+          (let ((items (if (listp coll) coll (coerce coll 'list))))
+            (when items
+              (push (car items) result)
+              (dolist (item (cdr items))
+                (push sep result)
+                (push item result))))
+          (nreverse result)))))
+
+;; Keep-indexed transducer
+(defun clojure-keep-indexed (f &optional coll)
+  "Keep indices and items where (f index item) returns truthy.
+   When called with only f, returns a transducer."
+  (let ((callable-f (ensure-callable f)))
+    (if (null coll)
+        ;; Transducer arity
+        (let ((index -1))
+          (lambda (reducing-function)
+            (lambda (result input)
+              (incf index)
+              (let ((val (funcall callable-f index input)))
+                (if val
+                    (funcall reducing-function result val)
+                    result)))))
+        ;; Collection arity
+        (let ((result '())
+              (index -1))
+          (dolist (item (if (listp coll) coll (coerce coll 'list)))
+            (incf index)
+            (let ((val (funcall callable-f index item)))
+              (when val
+                (push val result))))
+          (nreverse result)))))
+
+;; Map-indexed transducer
+(defun clojure-map-indexed (f &optional coll)
+  "Map (f index item) over collection.
+   When called with only f, returns a transducer."
+  (let ((callable-f (ensure-callable f)))
+    (if (null coll)
+        ;; Transducer arity
+        (let ((index -1))
+          (lambda (reducing-function)
+            (lambda (result input)
+              (incf index)
+              (funcall reducing-function result
+                      (funcall callable-f index input)))))
+        ;; Collection arity
+        (let ((result '())
+              (index -1))
+          (dolist (item (if (listp coll) coll (coerce coll 'list)))
+            (incf index)
+            (push (funcall callable-f index item) result))
+          (nreverse result)))))
+
+;; Sequence with transducer support
+(defun clojure-sequence-xform (xform &rest colls)
+  "Apply transducer xform to collection(s) and return lazy sequence."
+  (let ((reducer (funcall xform #'cons)))
+    (if (null colls)
+        '()
+        (let* ((coll (car colls))
+               (items (if (listp coll) coll (coerce coll 'list))))
+          (reduce reducer items :initial-value '())))))
+
 ;; Register transducer functions
 (defun setup-transducer-functions (env)
   "Register transducer functions in the environment."
@@ -310,4 +412,9 @@
   (register-core-function env 'cat #'clojure-cat)
   (register-core-function env 'transduce #'clojure-transduce)
   (register-core-function env 'dedupe #'clojure-dedupe)
-  (register-core-function env 'take-nth #'clojure-take-nth))
+  (register-core-function env 'take-nth #'clojure-take-nth)
+  (register-core-function env 'replace #'clojure-replace)
+  (register-core-function env 'interpose #'clojure-interpose)
+  (register-core-function env 'keep-indexed #'clojure-keep-indexed)
+  (register-core-function env 'map-indexed #'clojure-map-indexed)
+  (register-core-function env 'sequence-xform #'clojure-sequence-xform))

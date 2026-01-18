@@ -4513,3 +4513,66 @@ The transducer takes a "reducing function" and returns a new reducing function t
 - Fix Clojure evaluation of transducer expressions (argument passing issue)
 - Investigate remaining 39 test errors
 - The transducer infrastructure is in place and working at the Lisp level
+
+---
+
+## Iteration 76 - Hash table as function and missing transducers (2026-01-18)
+
+### Focus: Fix hash table being used as function and add missing transducer functions
+
+### Changes Made
+
+1. **Added hash-table as callable type** - cl-clojure-eval.lisp:8170-8176
+   - In Clojure, hash tables (maps) can be used as functions
+   - `({:a 1 :b 2} :a)` returns `1`
+   - Added `hash-table` case to `apply-function` typecase before `symbol` case
+   - Uses `gethash` to look up the key argument in the map
+
+2. **Implemented `clojure-replace` transducer** - cl-clojure-transducers.lisp:304-320
+   - `(replace smap)` returns a transducer that replaces values using a map
+   - `(replace smap coll)` returns collection with values replaced
+   - Uses `gethash` to look up replacements; returns original if not found
+
+3. **Implemented `clojure-interpose` transducer** - cl-clojure-transducers.lisp:322-347
+   - `(interpose sep)` returns a transducer inserting sep between elements
+   - `(interpose sep coll)` returns collection with separator between elements
+   - Tracks first element to avoid leading separator
+
+4. **Implemented `clojure-keep-indexed` transducer** - cl-clojure-transducers.lisp:349-372
+   - `(keep-indexed f)` returns a transducer keeping (f index item) results
+   - Only includes non-nil results from the function
+   - Maintains index counter across reduction
+
+5. **Implemented `clojure-map-indexed` transducer** - cl-clojure-transducers.lisp:374-393
+   - `(map-indexed f)` returns a transducer mapping (f index item)
+   - Applies function with both index and item to each element
+
+6. **Implemented `clojure-sequence-xform` helper** - cl-clojure-transducers.lisp:395-403
+   - Applies transducer to collection and returns sequence
+   - Uses transducer with `cons` as the reducing function
+
+7. **Updated `setup-transducer-functions`** - cl-clojure-transducers.lisp:406-420
+   - Registered new transducer functions: replace, interpose, keep-indexed, map-indexed, sequence-xform
+
+### Root Cause Analysis
+
+The "Cannot apply non-function: #<HASH-TABLE...>" error occurred because:
+1. The transducers test calls `(gen/elements [ ... ])`
+2. The test.check `gen/elements` function expects a vector
+3. The test also uses `(replace map-val)` where map-val is a hash table
+4. In Clojure, hash tables ARE callable - they look up keys
+5. Our `apply-function` typecase didn't have a `hash-table` case
+
+### Errors Fixed:
+- "Cannot apply non-function: #<HASH-TABLE...>" - FIXED ✅ (hash-table callable type)
+- Hash tables can now be used as functions to look up keys
+
+### Test Results:
+- Parse: 94 ok, 8 errors ✅ (unchanged)
+- Eval: 63 ok, 39 errors (unchanged)
+- transducers test now fails on "Unsupported gen method: elements" instead of hash table error
+- This is progress - the test is now running deeper into test.check generators
+
+### Next Steps:
+- Add test.check generator stubs (elements, fmap, return, etc.)
+- Continue investigating remaining 39 test errors

@@ -8167,6 +8167,14 @@
                  (aref actual-fn index)
                  nil))))
 
+      ;; Hash table (map) as function - look up key in map
+      ;; In Clojure, ({:a 1 :b 2} :a) returns 1
+      (hash-table
+       (if (null unwrapped-args)
+           nil
+           (let ((key (first unwrapped-args)))
+             (gethash key actual-fn))))
+
       ;; Keyword as function - look itself up in the first argument (a map)
       ;; In Clojure, (:key map) is equivalent to (get map :key)
       (symbol

@@ -3996,3 +3996,66 @@ Implemented map destructuring for `& {:keys [x]}` patterns in function parameter
 - Fix reader to handle quoted symbols in map literals properly
 - Add more Java interop stubs as needed
 - Continue implementing more core functions as tests require them
+
+---
+
+## Iteration 65 - 2026-01-18
+
+### Focus: Fix defstruct to define struct name symbol
+
+### Problem
+The `data_structures` test was failing with "Undefined symbol: equality-struct". The test defined a struct using `(defstruct equality-struct :a :b)`, but the struct name was not being defined as a symbol that could be referenced later in the test.
+
+### Root Cause
+The `eval-defstruct` function was a stub that simply returned `nil` without defining the struct name in the environment. This meant that after `(defstruct equality-struct :a :b)`, the symbol `equality-struct` was undefined and could not be referenced.
+
+### Changes Made
+
+1. **Updated `eval-defstruct` to define the struct name** - cl-clojure-eval.lisp:1424-1447
+   - Extract the struct name from the form
+   - Create a stub function that returns a hash table (as a struct representation)
+   - Create a var holding the struct constructor function
+   - Store the var in the environment using `env-set-var`
+   - Return the struct name (not nil)
+
+2. **Updated `clojure-defstruct` to return the struct name** - cl-clojure-eval.lisp:6008-6016
+   - Changed from returning `nil` to returning the struct name
+   - Handles both symbol and list cases for `name-and-opts` parameter
+
+### Implementation Details
+
+The fix makes `defstruct` behave like `defn` - it defines the name in the environment:
+```lisp
+(let* ((name (when rest-form (car rest-form)))
+       (struct-fn (lambda (&rest init-vals)
+                    (declare (ignore init-vals))
+                    (make-hash-table :test 'equal))))
+  (when (and name (symbolp name))
+    (let ((var (make-var :name name
+                         :namespace *current-ns*
+                         :value struct-fn
+                         :metadata nil)))
+      (env-set-var env name var)))
+  name)
+```
+
+### Errors Fixed
+- "Undefined symbol: equality-struct" - FIXED ✅
+- `defstruct` now defines the struct name in the environment
+
+### Test Results
+- Parse: 94 ok, 8 errors ✅
+- Eval: 60 ok, 42 errors (no change from iteration 64)
+- data_structures test now progresses past struct definition to "Undefined symbol: sorted-map-by"
+
+### Known Issues
+- "Undefined symbol: try" in delays test - still investigating
+- "Undefined symbol: catch" in repl test
+- Many tests still have Java interop and type errors
+- The "try" special form dispatch looks correct, so the issue may be elsewhere
+
+### Next Steps
+- Investigate the "Undefined symbol: try" error in delays test
+- The `try` form is dispatched correctly in `clojure-eval`
+- The issue may be related to how `#(try ...)` anonymous functions are evaluated
+- Continue implementing more core functions as tests require them

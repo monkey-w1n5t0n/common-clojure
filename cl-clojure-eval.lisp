@@ -1423,10 +1423,26 @@
 
 (defun eval-defstruct (form env)
   "Evaluate a defstruct form: (defstruct name &keys) - define a struct.
-   This is a stub - struct support is not fully implemented."
-  (declare (ignore form env))
-  ;; For now, just return nil - structs are not fully implemented
-  nil)
+   This is a stub - struct support is not fully implemented.
+   Defines the struct name as a var (for reference in tests)."
+  ;; Extract struct name (first argument after 'defstruct')
+  (let* ((rest-form (cdr form))
+         (name (when rest-form (car rest-form)))
+         ;; Create a stub function that returns a hash table
+         (struct-fn (lambda (&rest init-vals)
+                      (declare (ignore init-vals))
+                      ;; Return a hash table as a stub struct representation
+                      (make-hash-table :test 'equal))))
+    ;; Store the struct name in the environment as a var
+    (when (and name (symbolp name))
+      ;; Create a var holding the struct constructor function
+      (let ((var (make-var :name name
+                           :namespace *current-ns*
+                           :value struct-fn
+                           :metadata nil)))
+        (env-set-var env name var)))
+    ;; Return the struct name
+    name))
 
 (defun eval-defrecord (form env)
   "Evaluate a defrecord form: (defrecord name fields&) - define a record type.
@@ -5990,9 +6006,13 @@
   nil)
 
 (defun clojure-defstruct (name-and-opts &rest fields)
-  "Define a struct type. Stub implementation that returns nil."
-  (declare (ignore name-and-opts fields))
-  nil)
+  "Define a struct type. Stub implementation that returns the struct name."
+  (declare (ignore fields))
+  ;; Return the struct name (it might be a symbol or a list with options)
+  (if (symbolp name-and-opts)
+      name-and-opts
+      ;; If it's a list, the first element should be the name
+      (car name-and-opts)))
 
 (defun clojure-struct (name-and-vals &rest vals)
   "Create a struct instance. Stub implementation that returns a hash table."

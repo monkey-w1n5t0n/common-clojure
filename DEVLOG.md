@@ -4109,3 +4109,58 @@ File: `cl-clojure-syntax.lisp`
 - Investigate "Undefined symbol: catch" error in repl test
 - Continue implementing more core functions as tests require them
 - Focus on errors that appear to be missing core functionality
+
+---
+
+## Iteration 67 - Fix :keys Destructuring Symbol Binding (2026-01-18)
+
+### Focus: Fix map destructuring to bind symbols instead of keywords
+
+### Problem
+When using `:keys` destructuring like `{:keys [:a :b]}`, the destructuring was binding the keywords `:A` and `:B` instead of the symbols `A` and `B`. This is because the `extend-map-binding` function was using `key` directly as the binding symbol when there was no slash in the name.
+
+### Root Cause
+In `extend-map-binding` (cl-clojure-eval.lisp:886-900), the code was:
+```lisp
+(bind-sym (let ((name (symbol-name key)))
+            (if (find #\/ name)
+                (let ((slash-pos (position #\/ name)))
+                  (intern (subseq name (1+ slash-pos))))
+                key)))  ; <-- BUG: Returns keyword when key is :A
+```
+
+When `key` is the keyword `:A` (from the vector `[:a :b]`), the `bind-sym` was set to `:A` (a keyword) instead of the symbol `A`.
+
+### Solution
+Changed to use `keyword-key` (the normalized keyword) and convert it back to a symbol:
+```lisp
+(bind-sym (let ((name (symbol-name keyword-key)))  ; Use keyword-key instead of key
+            (if (find #\/ name)
+                (let ((slash-pos (position #\/ name)))
+                  (intern (subseq name (1+ slash-pos))))
+                (intern name))))  ; <-- FIX: Convert to symbol
+```
+
+### Changes Made
+- Updated `extend-map-binding` function in cl-clojure-eval.lisp:886-900
+- Changed `(symbol-name key)` to `(symbol-name keyword-key)`
+- Changed `key` to `(intern name)` for the non-slash case to ensure we bind a symbol, not a keyword
+
+### Verification
+- Tested directly with `(let [m {:a 1 :b 2}] (let [{:keys [:a :b]} m] [a b]))` - returns `#(1 2)` correctly
+- The `keywords-in-destructuring` test form evaluates successfully
+- The bindings are correctly created as `((b . 2) (a . 1))` with symbols as keys
+
+### Test Results
+- Parse: 94 ok, 8 errors (unchanged)
+- Eval: 61 ok, 41 errors (unchanged)
+- Note: The special test still fails on `namespaced-keys-syntax` which uses `{:a/keys [b c d]}` - a different feature not yet implemented
+
+### Known Issues
+- Namespaced keys destructuring (`{:a/keys [b c d]}`) is not yet implemented
+- This is why the special test fails even though the basic `:keys` destructuring now works
+
+### Next Steps
+- Implement namespaced keys destructuring (`{:a/keys [b c d]}`)
+- Investigate "Undefined symbol: catch" error in repl test
+- Continue implementing more core functions as tests require them

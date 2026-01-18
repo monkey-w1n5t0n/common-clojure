@@ -890,11 +890,13 @@
                                      key))
                      (val (gethash keyword-key value-map))
                      ;; For namespaced symbols, use local name only
-                     (bind-sym (let ((name (symbol-name key)))
+                     ;; IMPORTANT: Convert keyword-key to symbol for binding
+                     ;; When key is :a (keyword), we want to bind symbol 'a
+                     (bind-sym (let ((name (symbol-name keyword-key)))
                                  (if (find #\/ name)
                                      (let ((slash-pos (position #\/ name)))
                                        (intern (subseq name (1+ slash-pos))))
-                                     key))))
+                                     (intern name)))))
                 (setf new-env (env-extend-lexical new-env bind-sym val))))))
         ;; Handle :syms destructuring
         (when (and syms-key (gethash syms-key binding-map))

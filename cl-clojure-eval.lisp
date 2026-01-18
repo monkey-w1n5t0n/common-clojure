@@ -969,7 +969,20 @@
            (let* ((regular-bindings (subseq binding-list 0 amp-pos))
                   (rest-binding (when (< (1+ amp-pos) (length binding-list))
                                 (nth (1+ amp-pos) binding-list)))
-                  (value-list (if (consp value) value (coerce value 'list)))
+                  ;; Handle hash tables, lazy ranges, vectors, and lists for value-list
+                  (value-list (cond
+                               ;; Hash table - convert to list of [k v] pairs
+                               ((hash-table-p value) (clojure-seq value))
+                               ;; Lazy range - convert with limit
+                               ((lazy-range-p value) (lazy-range-to-list value 10000))
+                               ;; Cons cell - use as-is
+                               ((consp value) value)
+                               ;; Vector - convert to list
+                               ((vectorp value) (coerce value 'list))
+                               ;; String - convert to list of chars
+                               ((stringp value) (coerce value 'list))
+                               ;; Otherwise try to coerce (may fail)
+                               (t (coerce value 'list))))
                   (new-env env)
                   (regular-count (min (length regular-bindings)
                                       (length value-list)))
@@ -988,7 +1001,20 @@
                  (setf new-env (extend-binding new-env rest-binding-sym rest-values))))
              new-env)
            ;; No rest parameter - simple destructuring
-           (let ((value-list (if (consp value) value (coerce value 'list))))
+           ;; Handle hash tables, lazy ranges, vectors, and lists for value-list
+           (let ((value-list (cond
+                              ;; Hash table - convert to list of [k v] pairs
+                              ((hash-table-p value) (clojure-seq value))
+                              ;; Lazy range - convert with limit
+                              ((lazy-range-p value) (lazy-range-to-list value 10000))
+                              ;; Cons cell - use as-is
+                              ((consp value) value)
+                              ;; Vector - convert to list
+                              ((vectorp value) (coerce value 'list))
+                              ;; String - convert to list of chars
+                              ((stringp value) (coerce value 'list))
+                              ;; Otherwise try to coerce (may fail)
+                              (t (coerce value 'list)))))
              (loop for sym in binding-list
                    for val in value-list
                    for binding-sym = (if (vectorp sym) (coerce sym 'list) sym)
@@ -1013,7 +1039,20 @@
            (let* ((regular-bindings (subseq binding-form 0 amp-pos))
                   (rest-binding (when (< (1+ amp-pos) (length binding-form))
                                 (nth (1+ amp-pos) binding-form)))
-                  (value-list (if (consp value) value (coerce value 'list)))
+                  ;; Handle hash tables, lazy ranges, vectors, and lists for value-list
+                  (value-list (cond
+                               ;; Hash table - convert to list of [k v] pairs
+                               ((hash-table-p value) (clojure-seq value))
+                               ;; Lazy range - convert with limit
+                               ((lazy-range-p value) (lazy-range-to-list value 10000))
+                               ;; Cons cell - use as-is
+                               ((consp value) value)
+                               ;; Vector - convert to list
+                               ((vectorp value) (coerce value 'list))
+                               ;; String - convert to list of chars
+                               ((stringp value) (coerce value 'list))
+                               ;; Otherwise try to coerce (may fail)
+                               (t (coerce value 'list))))
                   (new-env env)
                   (regular-count (min (length regular-bindings)
                                       (length value-list)))
@@ -1035,7 +1074,20 @@
              new-env)
            ;; No rest parameter - simple destructuring with recursive binding
            ;; Convert vector binding forms to lists for destructuring
-           (let ((value-list (if (consp value) value (coerce value 'list))))
+           ;; Handle hash tables, lazy ranges, vectors, and lists for value-list
+           (let ((value-list (cond
+                              ;; Hash table - convert to list of [k v] pairs
+                              ((hash-table-p value) (clojure-seq value))
+                              ;; Lazy range - convert with limit
+                              ((lazy-range-p value) (lazy-range-to-list value 10000))
+                              ;; Cons cell - use as-is
+                              ((consp value) value)
+                              ;; Vector - convert to list
+                              ((vectorp value) (coerce value 'list))
+                              ;; String - convert to list of chars
+                              ((stringp value) (coerce value 'list))
+                              ;; Otherwise try to coerce (may fail)
+                              (t (coerce value 'list)))))
              (loop for sym in binding-form
                    for val in value-list
                    for binding-sym = (if (vectorp sym) (coerce sym 'list) sym)
@@ -7702,12 +7754,14 @@
                   ((string= method-name "empty")
                    '())
                   ;; .cons adds an element to the front
-                  ;; If target is a vector, convert to list first
+                  ;; If target is a vector or hash table, convert to list first
                   ((string= method-name "cons")
                    (if evaluated-args
                        (let ((to-cons (car evaluated-args))
-                             (seq-target (if (vectorp target)
-                                           (coerce target 'list)
+                             ;; Use clojure-seq to convert vectors and hash tables to lists
+                             ;; clojure-seq already handles these conversions properly
+                             (seq-target (if (or (vectorp target) (hash-table-p target))
+                                           (clojure-seq target)
                                            target)))
                          (cons to-cons seq-target))
                        target))
@@ -7717,11 +7771,17 @@
                   ;; .index returns the index in a reversed sequence (stub)
                   ((string= method-name "index")
                    (clojure-count target))
-                  ;; .rseq returns reversed sequence for vectors
+                  ;; .rseq returns reversed sequence for vectors and hash tables
                   ((string= method-name "rseq")
-                   (if (vectorp target)
-                       (clojure-reverse target)
-                       target))
+                   (cond
+                     ;; Vector - reverse and return as list
+                     ((vectorp target)
+                      (clojure-reverse target))
+                     ;; Hash table - convert to list of [k v] pairs, then reverse
+                     ((hash-table-p target)
+                      (clojure-reverse (clojure-seq target)))
+                     ;; Otherwise return as-is
+                     (t target)))
                   ;; .start is a Thread method - stub that does nothing
                   ((string= method-name "start")
                    ;; For stub purposes, just return nil

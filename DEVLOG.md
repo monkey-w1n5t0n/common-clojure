@@ -4368,3 +4368,43 @@ The error occurred in `control.clj` test with `(let [^Object x (Long. 8589934591
 ### Next Steps:
 - Investigate remaining 39 test errors
 - Continue sequential fix approach
+
+---
+
+## Iteration 73 - Hash table destructuring improvements (2026-01-18)
+
+### Focus: Add hash-table handling in destructuring and Java interop methods
+
+### Changes Made
+
+1. **Fixed destructuring to handle hash tables** - cl-clojure-eval.lisp
+   - Added `hash-table-p` checks in vector destructuring (line 972)
+   - Added `hash-table-p` checks in list destructuring (line 1001, 1039, 1074)
+   - Hash tables are now converted to lists of `[k v]` pairs using `clojure-seq`
+   - This prevents `coerce` errors when destructuring hash tables
+
+2. **Fixed `.cons` Java interop method** - cl-clojure-eval.lisp:7757-7764
+   - Now uses `clojure-seq` to convert hash tables (and vectors) to lists
+   - Previously only handled vectors with `coerce`
+   - Prevents type errors when calling `.cons` on hash tables
+
+3. **Fixed `.rseq` Java interop method** - cl-clojure-eval.lisp:7774-7784
+   - Added hash table case - converts to list of `[k v]` pairs, then reverses
+   - Previously only handled vectors
+   - Returns reversed sequence for hash tables
+
+### Root Cause Analysis
+
+Many functions in the codebase were using `(coerce coll 'list)` as a fallback for handling collections. However, Common Lisp's `coerce` function cannot convert hash tables to lists - it signals a TYPE-ERROR.
+
+The fix was to add explicit `hash-table-p` checks before attempting coercion. When a hash table is encountered, we use `clojure-seq` which iterates over the hash table and returns a list of key-value pairs.
+
+### Test Results
+- Parse: 94 ok, 8 errors ✅
+- Eval: 63 ok, 39 errors (unchanged)
+- Code is now more robust for hash table handling
+- The changes are correct improvements even if they don't immediately fix a specific test
+
+### Next Steps:
+- Investigate remaining 39 test errors
+- Continue sequential fix approach

@@ -5113,3 +5113,48 @@ The issue appears to be related to how symbols like `String`, `Object`, etc. are
 1. Debug "invalid number of arguments: 1" error in array_symbols test
 2. Fix "JAVA.LANG.OBJECT is not of type SEQUENCE" error in clearing test
 3. Fix remaining test failures
+
+---
+
+## Iteration 87 - 2026-01-18
+
+**Focus:** Fix `clojure-print-str` function compilation error
+
+**Problem:**
+The `clojure-print-str` function implemented in iteration 86 had incorrect parentheses, causing a compilation error:
+```
+COND clause is not a CONS: ARGS
+```
+
+This error occurred because the `cond` form wasn't properly closed before the `args` parameter to `mapcar`.
+
+**Investigation:**
+- Traced the parenthesis structure through the nested `cond`, `let`, and `lambda` forms
+- Discovered that the outer `cond` needed 4 closing parens (close let, close t-branch, close cond, close lambda)
+- After `args`, needed 4 closing parens (close mapcar, close apply, close if, close defun)
+- Total needed: 8 closing parens from after `(get-output-stream-string s)`
+- Original code had mismatched counts causing the compilation error
+
+**Changes Made:**
+
+1. **Fixed `clojure-print-str` parenthesis structure** - cl-clojure-eval.lisp:7247-7251
+   - Line 7250: `))))` - closes let, t-branch, cond, lambda
+   - Line 7251: `args))))` - closes mapcar, apply, if, defun
+   - Verified 100 opens and 100 closes in the function
+
+**Test Results:**
+- Parse: 93 ok, 9 errors
+- Eval: 64 ok, 38 errors
+- Compilation error in `clojure-print-str` FIXED ✅
+- File now compiles without errors
+
+**Known Issues:**
+- array_symbols test still fails with "invalid number of arguments: 1" - runtime error, not compilation
+- This is likely a different issue in the test evaluation, not in `print-str`
+- clearing test fails with "JAVA.LANG.OBJECT is not of type SEQUENCE"
+- Many tests still have Java interop and other errors
+
+**Next Steps:**
+1. Investigate "invalid number of arguments: 1" runtime error in array_symbols test (likely in a different function)
+2. Fix "JAVA.LANG.OBJECT is not of type SEQUENCE" error in clearing test
+3. Continue fixing remaining test failures

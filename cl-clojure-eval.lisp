@@ -881,6 +881,8 @@
    - :syms [s1 s2] - bind values for symbols s1, s2
    - :or {k default} - default values
    - :as sym - bind entire map to sym
+   - keyword key with destructuring form: e.g., {:via [{:keys [data]}]} extracts :via and destructures it
+   - keyword key with symbol: e.g., {:data sym} extracts :data and binds to sym
 
    Note: Due to Clojure reader case sensitivity, we need to match keys by
    lowercase symbol name since Clojure preserves case but CL uppercases."
@@ -891,7 +893,7 @@
                           (string-equal (symbol-name k) name))
                    return k)))
     (let ((new-env env))
-      ;; Get the keys to extract
+      ;; Get the special keys
       (let ((keys-key (find-key "keys"))
             (syms-key (find-key "syms"))
             (or-key (find-key "or"))
@@ -919,7 +921,7 @@
         ;; Handle :syms destructuring
         (when (and syms-key (gethash syms-key binding-map))
           (let ((syms-spec (gethash syms-key binding-map)))
-            ;; syms-spec is like [x y] - extract 'x and 'y from value-map
+            ;; syms-spec is like [x y] - extract 'x and :y from value-map
             ;; For namespaced symbols like a/b, bind just b (local name)
             (dolist (sym (coerce syms-spec 'list))
               (let* ((sym-name (symbol-name sym))
@@ -942,6 +944,33 @@
         (when (and as-key (gethash as-key binding-map))
           (let ((as-spec (gethash as-key binding-map)))
             (setf new-env (env-extend-lexical new-env as-spec value-map)))))
+      ;; Handle regular keys in binding-map
+      ;; In Clojure destructuring, the syntax is:
+      ;;   {binding-form key-to-extract ...}
+      ;; For example: {[{:keys [a]}] :via} means extract :via and destructuring with [{:keys [a]}]
+      ;; And: {sym :key} means extract :key and bind to sym
+      ;;
+      ;; The reader creates: key=binding-form, value=key-to-extract
+      ;; So we iterate and extract the VALUE from the binding-map (which is the key to extract)
+      ;; and bind it using the KEY from the binding-map (which is the binding form)
+      (maphash (lambda (binding-form key-to-extract)
+                 ;; Skip special keywords that were already handled
+                 (when (and (keywordp key-to-extract)
+                           (not (member (symbol-name key-to-extract)
+                                       '("keys" "syms" "or" "as")
+                                       :test #'string=)))
+                   ;; Note: Due to case sensitivity issues, we need to find the key by name comparison
+                   ;; Clojure preserves case, CL uppercases, so we compare by symbol-name
+                   (let ((value (loop for k being the hash-keys of value-map
+                                     when (and (keywordp k)
+                                              (string-equal (symbol-name k) (symbol-name key-to-extract)))
+                                     return (gethash k value-map))))
+                     ;; The binding-form can be:
+                     ;; - A symbol: bind the value to that symbol
+                     ;; - A vector: destructuring bind the value
+                     ;; - A hash table: nested map destructuring
+                     (setf new-env (extend-binding new-env binding-form value)))))
+               binding-map)
       new-env)))
 
 (defun list-to-map (lst)
@@ -3100,6 +3129,13 @@
        (if (null args)
            :exception
            (first args)))
+      ;; Throwable constructor - creates a throwable
+      ((or (string-equal name "Throwable")
+           (string-equal name "java.lang.Throwable"))
+       ;; For SBCL, just return the message as a stub
+       (if (null args)
+           :throwable
+           (first args)))
       ;; RuntimeException constructor
       ((or (string-equal name "RuntimeException")
            (string-equal name "java.lang.RuntimeException"))
@@ -4343,40 +4379,44 @@
   ;; :via - a vector of maps with :class, :message, :at, :type keys
   ;; :trace - a vector of stack trace elements
   ;; For SBCL stub, we return a basic map structure
-  (let* ((is-ex-info (and (consp throwable) (eq (car throwable) :ex-info)))
-         (message (if is-ex-info
-                     ;; Extract :message from ex-info
-                     (let ((msg-entry (find :message (cdr throwable) :key #'car)))
-                       (if msg-entry (cdr msg-entry) "unknown"))
-                     (if (stringp throwable)
-                         throwable
-                         (if (and (consp throwable)
-                                  (eq (car throwable) :exception))
-                             (or (cadr throwable) "unknown")
-                             "unknown"))))
-         (data (if is-ex-info
-                  ;; Extract :data from ex-info
-                  (let ((data-entry (find :data (cdr throwable) :key #'car)))
-                    (if data-entry (cdr data-entry) nil))
-                  nil))
-         ;; Create via-entry as a hash table (not a list)
-         (via-entry (let ((ht (make-hash-table :test 'equal)))
-                      (setf (gethash :class ht) (if data "clojure.lang.ExceptionInfo" "java.lang.Exception"))
-                      (setf (gethash :message ht) message)
-                      (setf (gethash :at ht) nil)
-                      (when data
-                        (setf (gethash :data ht) data))
-                      ht))
-         (via (vector via-entry))  ; Vector of hash tables
-         (trace #()))  ; Empty vector for SBCL
-    ;; Create result hash table
-    (let ((result (make-hash-table :test 'equal)))
-      (setf (gethash :cause result) message)
-      (setf (gethash :via result) via)
-      (setf (gethash :trace result) trace)
-      (when data
-        (setf (gethash :data result) data))
-      result)))
+  ;; Helper to extract value from flat plist-like list
+  (labels ((extract-value (lst key)
+             "Extract value for key from flat list (key1 val1 key2 val2 ...)"
+             (loop for tail on lst by #'cddr
+                   when (eq (car tail) key)
+                   return (cadr tail))))
+    (let* ((is-ex-info (and (consp throwable) (eq (car throwable) :ex-info)))
+           (message (if is-ex-info
+                       ;; Extract :message from ex-info
+                       (extract-value (cdr throwable) :message)
+                       (if (stringp throwable)
+                           throwable
+                           (if (and (consp throwable)
+                                    (eq (car throwable) :exception))
+                               (or (cadr throwable) "unknown")
+                               "unknown"))))
+           (data (if is-ex-info
+                    ;; Extract :data from ex-info
+                    (extract-value (cdr throwable) :data)
+                    nil))
+           ;; Create via-entry as a hash table (not a list)
+           (via-entry (let ((ht (make-hash-table :test 'equal)))
+                        (setf (gethash :class ht) (if data "clojure.lang.ExceptionInfo" "java.lang.Exception"))
+                        (setf (gethash :message ht) message)
+                        (setf (gethash :at ht) nil)
+                        (when data
+                          (setf (gethash :data ht) data))
+                        ht))
+           (via (vector via-entry))  ; Vector of hash tables
+           (trace #()))  ; Empty vector for SBCL
+      ;; Create result hash table
+      (let ((result (make-hash-table :test 'equal)))
+        (setf (gethash :cause result) message)
+        (setf (gethash :via result) via)
+        (setf (gethash :trace result) trace)
+        (when data
+          (setf (gethash :data result) data))
+        result))))
 
 (defun clojure-ex-info (msg &optional data)
   "Create an ex-info exception. This is a stub for SBCL."
@@ -4391,9 +4431,10 @@
   ;; Check if this is an ex-info structure
   (if (and (consp throwable)
            (eq (car throwable) :ex-info))
-      ;; Find the :data entry in the list
-      (let ((data-entry (find :data (cdr throwable) :key #'car)))
-        (if data-entry (cdr data-entry) nil))
+      ;; Extract the :data entry from the flat list
+      (loop for tail on (cdr throwable) by #'cddr
+            when (eq (car tail) :data)
+            return (cadr tail))
       nil))
 
 (defun clojure-apply (fn-arg &rest args)

@@ -6639,3 +6639,57 @@ The remaining issue is with `:or` defaults for symbols that aren't found in the 
 - 68 test files can be parsed and evaluated successfully
 - 34 test files still have errors during evaluation
 - Focus on fixing specific evaluation errors in failing tests
+
+---
+## Iteration 113 - 2025-01-19
+
+**Context:** Continuing eval implementation, fixing destructuring issues
+
+**Work Done:**
+
+Fixed `:syms` destructuring to handle quoted symbols in map keys.
+
+**Problem:**
+The test `(let [{:syms [a/b]} {'a/b 1}] b)` was failing with "Undefined symbol: b".
+Debugging revealed that:
+1. The Clojure reader parses `{'a/b 1}` with the key as `(quote a/b)` (a cons cell), not just the symbol `a/b`
+2. The `:syms` destructuring code only searched for `(symbolp k)` in the value-map keys
+3. This caused it to not find the key `(quote a/b)` since it's a cons, not a symbol
+
+**Solution:**
+Modified the search loop in `extend-map-binding` (around line 1144-1152 in cl-clojure-eval.lisp):
+```lisp
+;; Before: only checked if k is a symbol
+(actual-sym-found (loop for k being the hash-keys of value-map
+                        when (and (symbolp k)
+                                 (string-equal (symbol-name k) sym-name))
+                        return k))
+
+;; After: unwraps (quote ...) forms and checks the quoted value
+(actual-sym-found (block search
+                     (loop for k being the hash-keys of value-map
+                           for key-to-check = (if (and (consp k) (eq (car k) 'quote))
+                                              (cadr k)
+                                              k)
+                           when (and (symbolp key-to-check)
+                                    (string-equal (symbol-name key-to-check) sym-name))
+                           do (return-from search k))))
+```
+
+**Tests Verified:**
+- `(let [{:syms [a/b]} {'a/b 1}] b)` → returns `1` ✓
+- `(let [{:syms [a/b c/d]} {'a/b 1 'c/d 2}] [b d])` → returns `#(1 2)` ✓  
+- `(let [{:syms [a/b c/d e/f] :or {f 3}} {'a/b 1 'c/d 2}] [b d f])` → returns `#(1 2 3)` ✓
+
+**Test Results:**
+- Before fix: 68 passed, 34 failed
+- After fix: 68 passed, 34 failed (same count, but specific test now works)
+- Note: The `special.clj` file still fails overall, likely due to other tests in the file requiring Java interop or other features
+
+**Key Files Modified:**
+- **cl-clojure-eval.lisp** - lines 1141-1152, added quoted symbol handling in `:syms` destructuring
+
+**Next Steps:**
+- The `special.clj` test file contains many tests that require Java interop (`thrown-with-cause-msg?`, `eval`, `should-not-reflect`, etc.)
+- These tests will fail until Java interop is implemented
+- Consider focusing on simpler test files that don't require Java features

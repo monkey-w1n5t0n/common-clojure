@@ -5879,3 +5879,54 @@ This preserves the quote wrapper when processing nested quotes in syntax-quote f
 - Consider adding `:namespace/keys` destructuring support
 - Or pick a different, simpler issue to work on
 
+
+### Iteration 102 - 2026-01-19
+
+**Focus:** Fix eval-fn to handle metadata-wrapped params vectors
+
+**Problem:**
+The `metadata` test was failing with "The value |x| is not of type LIST" when evaluating 
+functions with type hints on parameters, like `(defn f ^String [^String s] s)`.
+
+**Root Cause:**
+In Clojure, when a function has type hints on the params vector, the reader parses it as:
+```clojure
+(fn (with-meta #((with-meta s String)) String) s)
+```
+
+The `eval-fn` function was not handling this case. When it saw `(with-meta ...)` as the 
+first element after the function name, it incorrectly interpreted it as the function name 
+rather than a metadata-wrapped params vector.
+
+This caused:
+- `:NAME` to be set to `(with-meta ...)` instead of `nil`
+- `:PARAMS` to be set to the wrong value
+- `:BODY` to be incorrectly parsed
+
+**Fix Made:**
+Updated `eval-fn` (cl-clojure-eval.lisp:623-685) to:
+1. Detect when the first element after `fn` is a metadata-wrapped params vector
+   - Check for `(with-meta vector ...)` pattern
+2. Correctly extract the params vector from the metadata wrapper
+   - Use `(cadr ...)` to get the vector from `(with-meta vector meta)`
+3. Handle both named and anonymous functions with metadata-wrapped params
+4. Correctly extract the body based on whether there's a name and/or metadata
+
+**Functions Modified:**
+- `eval-fn` - cl-clojure-eval.lisp:623-685
+
+**Test Results:**
+- Before: Eval: 67 ok, 35 errors (for current test set)
+- After: Eval: 67 ok, 35 errors (same count, but different error in metadata test)
+- The metadata test error changed from "|x| is not of type LIST" to "NIL is not of type NUMBER"
+- This indicates the function definition now works, but there's a separate issue with reduce/arithmentic
+
+**Progress:**
+- Functions with type hints on params can now be defined and called
+- The error moved from function definition to function execution
+- Need to investigate the "NIL is not of type NUMBER" error in the metadata test
+
+**Next Steps:**
+1. Investigate the "NIL is not of type NUMBER" error in metadata test
+2. Continue fixing remaining 35 evaluation errors
+3. Address the 9 parse errors

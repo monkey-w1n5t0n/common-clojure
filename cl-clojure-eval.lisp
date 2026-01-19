@@ -622,7 +622,8 @@
 
 (defun eval-fn (form env)
   "Evaluate a fn form: (fn name? [args] body+) - returns a closure.
-   Also handles (fn name? docstring? [args] body+) - with optional docstring."
+   Also handles (fn name? docstring? [args] body+) - with optional docstring.
+   Handles metadata on params vector: (fn name ^meta [args] body+)"
   ;; Extract function parts
   (let* ((rest-form (cdr form))
          ;; Check if there's a docstring (string, followed by non-vector, followed by vector)
@@ -636,11 +637,51 @@
          (has-docstring (and first-is-string second-is-vector))
          (rest-after-doc (if has-docstring (cdr rest-form) rest-form))
          ;; has-name is for named functions: (fn name [params] body)
-         (has-name (and (not (null rest-after-doc))
-                        (not (typep (car rest-after-doc) 'simple-vector))))
-         (name (if has-name (car rest-after-doc) nil))
-         (params (if has-name (cadr rest-after-doc) (car rest-after-doc)))
-         (body (if has-name (cddr rest-after-doc) (cdr rest-after-doc))))
+         ;; Also handle metadata on params vector: (fn name (with-meta [params] meta) body)
+         ;; In this case, the params are wrapped in (with-meta ...)
+         (first-after-doc (if (not (null rest-after-doc)) (car rest-after-doc) nil))
+         ;; Check if first element is metadata-wrapped params vector
+         (first-is-meta-p (and (listp first-after-doc)
+                               (>= (length first-after-doc) 2)
+                               (symbolp (car first-after-doc))
+                               (string= (symbol-name (car first-after-doc)) "WITH-META")
+                               (vectorp (cadr first-after-doc))))
+         ;; has-name: we have a name if first is not a vector and not metadata-wrapped vector
+         (has-name (and first-after-doc
+                        (not (typep first-after-doc 'simple-vector))
+                        (not first-is-meta-p)))
+         (name (if has-name first-after-doc nil))
+         ;; Get params: either from metadata wrapper or directly
+         (params (cond
+                   (has-name
+                    ;; Named function: params are after the name
+                    (let ((after-name (cadr rest-after-doc)))
+                      ;; Check if params are metadata-wrapped
+                      (if (and (listp after-name)
+                              (>= (length after-name) 2)
+                              (symbolp (car after-name))
+                              (string= (symbol-name (car after-name)) "WITH-META")
+                              (vectorp (cadr after-name)))
+                          (cadr after-name)  ; Extract vector from (with-meta vector meta)
+                          after-name)))
+                   (first-is-meta-p
+                    ;; No name, but params are metadata-wrapped
+                    (cadr first-after-doc))  ; Extract vector from (with-meta vector meta)
+                   (t
+                    ;; No name, params are the first element
+                    first-after-doc)))
+         ;; Get body: skip name and params
+         (body (cond
+                 (has-name
+                  ;; Named function: skip name and params (metadata or direct)
+                  (let ((after-name (cadr rest-after-doc)))
+                    (cddr rest-after-doc)))
+                 (first-is-meta-p
+                  ;; Metadata-wrapped params but no name: skip params
+                  (cdr rest-after-doc))
+                 (t
+                  ;; No name: skip params
+                  (cdr rest-after-doc)))))
     (make-closure :params params :body body :env env :name name)))
 
 (defun eval-defn (form env)

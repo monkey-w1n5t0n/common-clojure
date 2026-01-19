@@ -5844,3 +5844,38 @@ This preserves the quote wrapper when processing nested quotes in syntax-quote f
 1. Fix remaining 44 evaluation errors (down from 49)
 2. Address the 12 parse errors
 3. Continue test-driven development approach - pick one error, fix it, move to next
+
+### Iteration 101 - 2026-01-19
+
+**Focus:** Investigate test failures and identify which are expected behavior
+
+**Findings:**
+
+1. **test-quote-macro and test-syntax-quote correctly fail**
+   - These tests contain macros that return bare symbols which get evaluated as variables
+   - Verified with real Clojure (via Docker) that these tests also fail with the same error
+   - Example: `(defmacro return-quote [] (quote foo))` expands to `foo`, which tries to resolve as a variable
+   - Our implementation matches real Clojure behavior - this is expected, not a bug
+
+2. **test-return-list correctly fails**
+   - Contains `(defmacro return-list [] '(1 2 3))` which expands to `(1 2 3)`
+   - Evaluating `(1 2 3)` tries to call `1` as a function
+   - Verified with real Clojure - this also fails with "ClassCastException"
+   - Not a bug in our implementation
+
+3. **special.clj failure is due to unimplemented destructuring feature**
+   - The test `namespaced-keys-syntax` uses `{:a/keys [b c d]}` destructuring
+   - This pattern means: extract keywords from namespace `:a` (e.g., `:a/b`, `:a/c`)
+   - Our `extend-map-binding` doesn't handle this `:namespace/keys` pattern
+   - This is a legitimate missing feature, not a bug
+
+**Test Results:**
+- Parse: 159 ok, 12 errors
+- Eval: 127 ok, 44 errors
+- Identified that some "failing" tests are expected to fail (match real Clojure behavior)
+
+**Next Steps:**
+- Focus on implementing missing features rather than "fixing" correct behavior
+- Consider adding `:namespace/keys` destructuring support
+- Or pick a different, simpler issue to work on
+

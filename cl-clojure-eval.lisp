@@ -1804,6 +1804,41 @@
     ;; Call the function (should take no args for the basic case)
     (funcall (ensure-callable fn-value))))
 
+(defun eval-with-open (form env)
+  "Evaluate a with-open form: (with-open [binding value+] body+).
+   binding is a symbol that will be bound to the value.
+   The binding is closed after body execution (for resources).
+   For SBCL, we evaluate the bindings and body but don't actually close resources."
+  (let* ((bindings-vec (cadr form))
+         (body-forms (cddr form))
+         ;; Convert vector to list and process pairwise
+         (bindings-list (if (vectorp bindings-vec)
+                           (coerce bindings-vec 'list)
+                           bindings-vec)))
+    ;; Create new environment with bindings
+    (let ((new-env env)
+          (bound-values nil))
+      ;; Bind each var to its value
+      (loop for (var-sym value-expr) on bindings-list by #'cddr
+            while var-sym
+            do (let* ((value (clojure-eval value-expr env))
+                      (name (if (symbolp var-sym)
+                                var-sym
+                                var-sym)))
+                 ;; Store as lexical binding
+                 (setf new-env (env-extend-lexical new-env name value))
+                 (push (cons name value) bound-values)))
+      ;; Evaluate body forms with the new environment
+      ;; Return the result of the last expression
+      (let ((result nil))
+        (unwind-protect
+            (dolist (expr body-forms)
+              (setf result (clojure-eval expr new-env)))
+          ;; Cleanup: In real Clojure, would call .close on each binding
+          ;; For SBCL stub, we just cleanup the bound-values list
+          (declare (ignore bound-values))))
+      result)))
+
 (defun eval-deftest (form env)
   "Evaluate a deftest form: (deftest name body+) - define a test."
   ;; For now, deftest just evaluates the body to check for errors
@@ -3997,7 +4032,7 @@
   (register-core-function env 'call-ns-sym #'clojure-call-ns-sym)
   (register-core-function env 'alias #'clojure-alias)
   (register-core-function env 'run-test #'clojure-run-test)
-  (register-core-function env 'with-open #'clojure-with-open)
+  ;; with-open is now handled as a special form (eval-with-open), not a core function
   (register-core-function env 'pop! #'clojure-pop)
   (register-core-function env 'acc #'clojure-acc)
   (register-core-function env 'volatile? #'clojure-volatile-p)
@@ -7690,11 +7725,7 @@
   (declare (ignore test-var))
   nil)
 
-(defun clojure-with-open (bindings &rest body)
-  "Execute body with bindings that are automatically closed.
-   For SBCL, this is a stub that just evaluates body."
-  (declare (ignore bindings))
-  (eval `(progn ,@body)))
+;; with-open is now handled as a special form (eval-with-open)
 
 (defun clojure-pop (coll)
   "Remove the last element from a transient collection.
@@ -9081,6 +9112,7 @@
            ((and head-name (string= head-name "set!")) (eval-set-bang form env))
            ((and head-name (string= head-name "declare")) (eval-declare form env))
            ((and head-name (string= head-name "binding")) (eval-binding form env))
+           ((and head-name (string= head-name "with-open")) (eval-with-open form env))
            ((and head-name (string= head-name "with-local-vars")) (eval-with-local-vars form env))
            ((and head-name (string= head-name "with-precision")) (eval-with-precision form env))
            ((and head-name (string= head-name "with-redefs")) (eval-with-redefs form env))

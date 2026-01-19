@@ -6344,3 +6344,63 @@ The codebase had forward reference warnings because structs and functions were b
 - Consider running actual test assertions (not just evaluation) to check correctness
 - The project has reached a significant milestone: full parse and eval capability for all 68 Clojure test files
 
+
+---
+### Iteration 110 - 2026-01-19
+
+**Focus:** Implement with-open special form to fix symbol binding
+
+**Problem Identified:**
+
+The `with-open` macro was implemented as a core function (`clojure-with-open`) instead of a special form. This caused issues in tests like `serialization.clj` which use:
+
+```clojure
+(with-open [bout (ByteArrayOutputStream.)
+            oos (ObjectOutputStream. bout)]
+  ...)
+```
+
+The function implementation was ignoring bindings and using `eval` on the body, which meant:
+1. Symbols like `bout` and `oos` were not bound in the environment
+2. When the body tried to reference these symbols, they were "undefined"
+3. Error: "Undefined symbol: oos"
+
+**Changes Made:**
+
+1. **Added `eval-with-open` special form** - cl-clojure-eval.lisp:1808-1850
+   - Added new special form evaluator after `eval-with-redefs-fn`
+   - Parses binding vector: `[name value-expr ...]`
+   - Evaluates each value-expr and binds to name in a new environment
+   - Evaluates body forms with the new environment
+   - Uses `unwind-protect` to ensure cleanup (though actual close is stubbed)
+   - Returns the result of the last body expression
+
+2. **Registered `with-open` in main eval dispatch** - cl-clojure-eval.lisp:9087
+   - Added dispatch: `((and head-name (string= head-name "with-open")) (eval-with-open form env))`
+   - Placed after `binding` and before `with-local-vars` for logical grouping
+
+3. **Removed old core function implementation**
+   - Removed `(register-core-function env 'with-open #'clojure-with-open)` - line 4035
+   - Removed `clojure-with-open` function definition - line 7728
+
+**Technical Notes:**
+- In Clojure, `with-open` is a macro, not a function
+- Macros expand at compile time, but our system evaluates at runtime
+- By making it a special form, we intercept it before function application
+- The binding pattern matches `let`: vector of name-value pairs, then body forms
+
+**Test Results:**
+- Before: 68 ok, 34 errors (including "Undefined symbol: oos" in serialization)
+- After: 68 ok, 25 errors (serialization now fails on Java constructor, not with-open)
+- Errors reduced: 34 → 25 (-9 errors)
+- The `with-open` bindings now work correctly
+- serialization test error changed from "Undefined symbol: oos" to "Unsupported Java constructor: ObjectOutputStream"
+
+**Key Files Modified:**
+- **cl-clojure-eval.lisp** - Added `eval-with-open` special form, registered in dispatch, removed old core function
+
+**Next Steps:**
+- The `with-open` special form is now working correctly
+- Serialization test now fails on Java interop (expected, as we don't have full Java support)
+- Consider implementing other missing special forms or Java interop features
+- 25 tests still have errors - focus on the simpler ones that don't require full Java interop

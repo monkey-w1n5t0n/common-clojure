@@ -6065,4 +6065,52 @@ Added auto-gensym handling to `process-syntax-quote` (cl-clojure-eval.lisp:489-5
 
 **Next Steps:**
 - Continue fixing remaining 34 evaluation errors
-- The auto-gensym fix may help other tests that use syntax-quote with auto-gensym
+
+
+---
+### Iteration 106 - 2026-01-19
+
+**Focus:** Fix reduce arity detection for 2-arg vs 3-arg forms
+
+**Problem Identified:**
+
+1. **`reduce` function cannot distinguish 2-arg from 3-arg calls when 3rd arg is nil**
+   - The function signature was `(defun clojure-reduce (f init &optional coll))`
+   - When called as `(reduce f init nil)`, the `coll` parameter is `nil`
+   - The check `(if coll ...)` treats `nil` as "not provided", falling into 2-arg form
+   - This causes incorrect behavior when reducing with an explicit `nil` collection
+
+**Changes Made:**
+
+1. **Fixed reduce arity detection** - cl-clojure-eval.lisp:5665-5713
+   - Changed from `&optional coll` to `&rest more`
+   - Check `(= (length more) 1)` to detect 3-arg form
+   - When 3 args: `(reduce f init coll)` - use init as initial value
+   - When 2 args: `(reduce f coll)` - init is actually the collection
+
+**Technical Details:**
+- The `&optional` parameter cannot distinguish between "not provided" and "provided as nil"
+- Using `&rest` with length check allows proper arity detection
+- The 2-arg form uses the first element of the collection as initial value
+- The 3-arg form uses the provided initial value
+
+**Attempted Additional Work:**
+- Started implementing `dorun`, `doall`, `tag`, and hierarchy functions (`ancestors`, `parents`, `descendants`, `isa?`)
+- Encountered significant complexity with paren counting in nested `let`/`loop`/`maphash` forms
+- Due to time constraints, deferred full hierarchy implementation to future iteration
+
+**Test Results:**
+- Before: Eval: 68 ok, 34 errors
+- After: Eval: 68 ok, 34 errors
+- No immediate change in passing test count - the tests needing reduce also need other missing functions
+
+**Key Fix:**
+- **clojure-reduce** - cl-clojure-eval.lisp:5665
+  - Changed from `(defun clojure-reduce (f init &optional coll))`
+  - To `(defun clojure-reduce (f init &rest more))`
+
+**Next Steps:**
+- Complete implementation of `dorun`, `doall` functions
+- Implement `tag` function for multimethod dispatch
+- Implement hierarchy functions: `ancestors`, `parents`, `descendants`, `isa?`
+- Fix the `isa?` arity to support both `(isa? child parent)` and `(isa? hierarchy child parent)`

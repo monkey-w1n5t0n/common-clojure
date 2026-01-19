@@ -5662,35 +5662,35 @@
   (declare (ignore env))
   form)
 
-(defun clojure-reduce (f init &optional coll)
+(defun clojure-reduce (f init &rest more)
   "Reduce a collection with a function."
   ;; Ensure f is callable (wrap closures if needed)
   ;; Defensive: if f is nil, return init (for empty collection case)
   (if (null f)
       init
       (let ((callable-f (ensure-callable f)))
-        (if coll
+        (if (= (length more) 1)
             ;; 3-argument form: (reduce f init coll)
-            (if (null coll)
-                init
-                (let ((coll-list (cond
-                                   ((lazy-range-p coll)
-                                    (lazy-range-to-list coll (if (lazy-range-end coll)
-                                                                  most-positive-fixnum
-                                                                  10000)))
-                                   ((vectorp coll) (coerce coll 'list))
-                                   ((hash-table-p coll)
-                                    ;; Convert hash table to list of key-value vectors
-                                    (let ((result '()))
-                                      (maphash (lambda (k v)
-                                                 (push (vector k v) result))
-                                               coll)
-                                      (nreverse result)))
-                                   ((listp coll) coll)
-                                   (t (coerce coll 'list)))))
-                  (if (null coll-list)
-                      init
-                      (reduce callable-f (cdr coll-list) :initial-value (funcall callable-f init (car coll-list))))))
+            (let ((coll (car more)))
+              (if (null coll)
+                  init
+                  (let ((coll-list (cond
+                                     ((lazy-range-p coll)
+                                      (lazy-range-to-list coll (if (lazy-range-end coll)
+                                                                    most-positive-fixnum
+                                                                    10000)))
+                                     ((vectorp coll) (coerce coll 'list))
+                                     ((hash-table-p coll)
+                                      (let ((result '()))
+                                        (maphash (lambda (k v)
+                                                   (push (vector k v) result))
+                                                 coll)
+                                        (nreverse result)))
+                                     ((listp coll) coll)
+                                     (t (coerce coll 'list)))))
+                    (if (null coll-list)
+                        init
+                        (reduce callable-f (cdr coll-list) :initial-value (funcall callable-f init (car coll-list)))))))
             ;; 2-argument form: (reduce f coll)
             (if (null init)
                 (error "Cannot reduce empty collection")
@@ -5701,7 +5701,6 @@
                                                                   10000)))
                                    ((vectorp init) (coerce init 'list))
                                    ((hash-table-p init)
-                                    ;; Convert hash table to list of key-value vectors
                                     (let ((result '()))
                                       (maphash (lambda (k v)
                                                  (push (vector k v) result))

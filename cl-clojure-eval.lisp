@@ -499,7 +499,8 @@
                          (string= (symbol-name (car quoted-form)) "UNQUOTE-SPLICING")))
                 ;; (quote (unquote x)) -> evaluate x and quote the result
                 (list 'quote (clojure-eval (cadr quoted-form) env))
-                quoted-form)))
+                ;; Preserve the quote for other cases
+                form)))
          ;; Handle unquote - evaluate and return the value
          ((and (symbolp head) (string= (symbol-name head) "UNQUOTE"))
           (clojure-eval (cadr form) env))

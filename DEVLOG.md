@@ -5731,3 +5731,48 @@ The project has made significant progress:
 1. Fix remaining 59 evaluation errors
 2. Address the 12 parse errors
 3. Continue test-driven development approach - pick one error, fix it, move to next
+
+---
+
+### Iteration 99 - 2026-01-19
+
+**Focus:** Fix syntax-quote handling for nested quotes
+
+**Problem:**
+The `test-debug`, `test-debug-require`, and `test-debug-flow` tests were failing with "Undefined symbol: foo" error.
+
+**Root Cause:**
+The issue was in `process-syntax-quote` function (cl-clojure-eval.lisp:494-502). When processing a syntax-quote containing a nested quote like ``(syntax-quote (quote foo))``, the function was returning just the quoted form (`foo`) instead of preserving the quote wrapper and returning `(quote foo)`.
+
+In the test:
+```clojure
+(defmacro return-symbol []
+  `'foo)
+```
+
+The macro body `'foo` is read as `(syntax-quote (quote foo))`. When the macro was called, `process-syntax-quote` was processing `(quote foo)` and returning `foo` (the symbol) instead of `(quote foo)` (the quoted form). This caused the macro to return `foo`, which when evaluated tried to look up `foo` as a variable, resulting in "Undefined symbol: foo".
+
+**Fix Made:**
+Changed line 502 in `process-syntax-quote` from:
+```lisp
+quoted-form  ; returns just "foo"
+```
+to:
+```lisp
+form  ; returns (quote foo)
+```
+
+This preserves the quote wrapper when processing nested quotes in syntax-quote forms.
+
+**Test Results:**
+- Before: Parse: 159 ok, 12 errors; Eval: 112 ok, 59 errors
+- After: Parse: 159 ok, 12 errors; Eval: **122 ok, 49 errors**
+- **10 new tests passing:** test-debug, test-debug-require, test-debug-flow (plus 7 other tests that were affected by the same issue)
+
+**Functions Fixed:**
+- `process-syntax-quote` - cl-clojure-eval.lisp:494-503
+
+**Next Steps:**
+1. Fix remaining 49 evaluation errors (down from 59)
+2. Address the 12 parse errors
+3. Continue test-driven development approach - pick one error, fix it, move to next

@@ -1296,26 +1296,50 @@
                                     (when (< results-count result-limit)
                                       (push nr results)
                                       (incf results-count)))))))))
-            ;; Hash table (map) - convert to list of [key value] vectors
+            ;; Hash table - check if it's a set or map
             ((hash-table-p first-coll)
-             (let ((entries '()))
-               (maphash (lambda (k v)
-                         (push (coerce (list k v) 'vector) entries))
-                       first-coll)
-               (let ((first-coll-list (nreverse entries)))
-                 (dolist (elem first-coll-list)
-                   (when (< results-count result-limit)
-                     (let* ((new-env (extend-binding env first-binding elem))
-                            (filtered-env (apply-local-modifiers new-env local-modifiers)))
-                       (when filtered-env
-                         (let ((nested-results (eval-for-nested rest-bindings
-                                                                 body-expr
-                                                                 filtered-env
-                                                                 (- result-limit results-count))))
-                           (dolist (nr nested-results)
-                             (when (< results-count result-limit)
-                               (push nr results)
-                               (incf results-count)))))))))))
+             (cond
+               ;; Set - iterate over keys only (not [key value] pairs)
+               ((is-set first-coll)
+                (let ((keys '()))
+                  (maphash (lambda (k v)
+                            (declare (ignore v))
+                            (push k keys))
+                          first-coll)
+                  (let ((first-coll-list (nreverse keys)))
+                    (dolist (elem first-coll-list)
+                      (when (< results-count result-limit)
+                        (let* ((new-env (extend-binding env first-binding elem))
+                               (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                          (when filtered-env
+                            (let ((nested-results (eval-for-nested rest-bindings
+                                                                    body-expr
+                                                                    filtered-env
+                                                                    (- result-limit results-count))))
+                              (dolist (nr nested-results)
+                                (when (< results-count result-limit)
+                                  (push nr results)
+                                  (incf results-count)))))))))))
+               ;; Map - convert to list of [key value] vectors
+               (t
+                (let ((entries '()))
+                  (maphash (lambda (k v)
+                            (push (coerce (list k v) 'vector) entries))
+                          first-coll)
+                  (let ((first-coll-list (nreverse entries)))
+                    (dolist (elem first-coll-list)
+                      (when (< results-count result-limit)
+                        (let* ((new-env (extend-binding env first-binding elem))
+                               (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                          (when filtered-env
+                            (let ((nested-results (eval-for-nested rest-bindings
+                                                                    body-expr
+                                                                    filtered-env
+                                                                    (- result-limit results-count))))
+                              (dolist (nr nested-results)
+                                (when (< results-count result-limit)
+                                  (push nr results)
+                                  (incf results-count)))))))))))))
             ;; Regular collection - convert to list with limit
             (t
              (let ((first-coll-list (if (listp first-coll)
@@ -1386,18 +1410,34 @@
                                    (filtered-env (apply-local-modifiers new-env local-modifiers)))
                               (when filtered-env
                                 (eval-doseq-nested rest-bindings body-exprs filtered-env)))))))
-            ;; Hash table (map) - convert to list of [key value] vectors
+            ;; Hash table - check if it's a set or map
             ((hash-table-p first-coll)
-             (let ((entries '()))
-               (maphash (lambda (k v)
-                         (push (coerce (list k v) 'vector) entries))
-                       first-coll)
-               (let ((first-coll-list (nreverse entries)))
-                 (dolist (elem first-coll-list)
-                   (let* ((new-env (env-extend-lexical env first-binding elem))
-                          (filtered-env (apply-local-modifiers new-env local-modifiers)))
-                     (when filtered-env
-                       (eval-doseq-nested rest-bindings body-exprs filtered-env)))))))
+             (cond
+               ;; Set - iterate over keys only (not [key value] pairs)
+               ((is-set first-coll)
+                (let ((keys '()))
+                  (maphash (lambda (k v)
+                            (declare (ignore v))
+                            (push k keys))
+                          first-coll)
+                  (let ((first-coll-list (nreverse keys)))
+                    (dolist (elem first-coll-list)
+                      (let* ((new-env (env-extend-lexical env first-binding elem))
+                             (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                        (when filtered-env
+                          (eval-doseq-nested rest-bindings body-exprs filtered-env)))))))
+               ;; Map - convert to list of [key value] vectors
+               (t
+                (let ((entries '()))
+                  (maphash (lambda (k v)
+                            (push (coerce (list k v) 'vector) entries))
+                          first-coll)
+                  (let ((first-coll-list (nreverse entries)))
+                    (dolist (elem first-coll-list)
+                      (let* ((new-env (env-extend-lexical env first-binding elem))
+                             (filtered-env (apply-local-modifiers new-env local-modifiers)))
+                        (when filtered-env
+                          (eval-doseq-nested rest-bindings body-exprs filtered-env)))))))))
             ;; Regular collection
             (t
              (let ((first-coll-list (if (listp first-coll)
@@ -2124,6 +2164,18 @@
   end
   step
   (current 0))
+
+(defun is-set (coll)
+  "Check if a collection is a set (hash table with all values = t).
+   In Clojure, sets are represented as hash tables where every value is t."
+  (and (hash-table-p coll)
+       (let ((all-t t))
+         (maphash (lambda (k v)
+                    (declare (ignore k))
+                    (unless (eq v t)
+                      (setf all-t nil)))
+                  coll)
+         all-t)))
 
 ;;; ============================================================
 ;;; Delay (lazy evaluation) representation

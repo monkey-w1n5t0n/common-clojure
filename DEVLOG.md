@@ -6195,3 +6195,75 @@ Added auto-gensym handling to `process-syntax-quote` (cl-clojure-eval.lisp:489-5
 - Sets are represented as hash tables with all values = `t`
 - The `for` loop needs to check `is-set` before deciding how to iterate
 
+
+---
+### Iteration 108 - 2026-01-19
+
+**Focus:** Fix `for` and `doseq` loops to distinguish sets from maps
+
+**Problems Identified:**
+
+1. **`for` loop treats all hash tables as maps**
+   - When iterating over a hash table, `for` always creates `[key value]` pairs
+   - For sets (hash tables with all values = t), it should only bind the keys (not `[key value]` pairs)
+   - This causes errors like `:|user/bird| is not of type HASH-TABLE` when the loop variable
+     expects a single element but receives a vector
+
+2. **`doseq` loop has the same issue**
+   - Needs the same fix as `for` loop
+
+**Changes Made:**
+
+1. **Implemented `is-set` helper function** - cl-clojure-eval.lisp:2128-2138
+   - Detects if a hash table represents a set (all values = t)
+   - Returns `t` if all values are `t`, `nil` otherwise
+   - Uses `maphash` to efficiently check all values
+
+2. **Fixed `for` loop to handle sets correctly** - cl-clojure-eval.lisp:1299-1342
+   - Changed hash table handling from single branch to `cond` with two cases:
+     - Set: iterate over keys only (not `[key value]` pairs)
+     - Map: iterate over `[key value]` vectors
+   - For sets: extract keys via `maphash`, bind each key to the loop variable
+   - For maps: create `[key value]` vectors as before
+
+3. **Fixed `doseq` loop similarly** - cl-clojure-eval.lisp:1413-1440
+   - Same `cond` structure as `for` loop
+   - Set case: iterate over keys only
+   - Map case: iterate over `[key value]` vectors
+
+**Technical Notes:**
+- In Clojure, sets are represented as hash tables where every value is `t`
+- The `for` macro binding pattern `[k v]` is only for maps
+- For sets, the binding should be a single variable bound to each element
+
+**Test Results:**
+- Before: Eval: 68 ok, 34 errors
+- After: Eval: 68 ok, 34 errors
+- No immediate change in test count - the multimethods test failure is due to other
+  missing functions (clojure.set functions like `set/select`, `set/difference`, etc.)
+
+**Key Fixes:**
+- **is-set** - cl-clojure-eval.lisp:2128
+  ```lisp
+  (defun is-set (coll)
+    (and (hash-table-p coll)
+         (let ((all-t t))
+           (maphash (lambda (k v)
+                      (declare (ignore k))
+                      (unless (eq v t)
+                        (setf all-t nil)))
+                    coll)
+           all-t)))
+  ```
+
+- **eval-for-nested** - cl-clojure-eval.lisp:1299-1342
+  - Added `(is-set first-coll)` check before treating hash table as map
+
+- **eval-doseq-nested** - cl-clojure-eval.lisp:1413-1440
+  - Same pattern as `for` loop
+
+**Next Steps:**
+- The set iteration fix is correct and in place
+- Multimethods test still fails due to missing `clojure.set` library functions
+- Consider implementing core `clojure.set` functions: `select`, `difference`, `union`, `intersection`
+- Work on other failing evaluation errors (34 remaining)

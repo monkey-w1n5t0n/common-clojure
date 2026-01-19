@@ -6830,3 +6830,127 @@ Changed line 8051 from `args)))))` (5 closes) to `args))))` (4 closes) to match 
 **Next Steps:**
 - Continue fixing failing tests
 - Focus on issues that don't require Java interop
+
+---
+
+## Iteration 117 - 2026-01-19
+
+**Focus:** Verify current state after git checkout and cleanup
+
+**Actions Taken:**
+1. Restored `cl-clojure-eval.lisp` from git to get a clean working state
+2. Verified test suite runs: 68 passed, 34 failed
+3. Cleaned up temporary test files from previous iterations
+4. Committed cleanup: `chore: remove temporary test files`
+
+**Current Status:**
+- Reader: ✅ Complete - All 68 test files parse successfully
+- Eval: 68/102 tests pass (66.7%)
+- No compilation errors
+- Tests run in ~10 seconds
+
+**Key Observations:**
+- The `clojure-print-str` parenthesis issues from iterations 114-116 were resolved in commit 71b3813
+- The current codebase is in a clean, working state
+- Many failing tests are Java interop related (agents, array_symbols, java_interop, etc.)
+
+**Test Failures Analysis:**
+Failing tests (34):
+- agents - Java interop (agent system)
+- array_symbols - Array class symbols like String/1, int/2
+- clearing - Java interop
+- clojure_walk - Walk functionality
+- clojure_xml - XML parsing
+- compilation - Compiler features
+- data_structures - Java interop (transients, primitive vectors)
+- errors - Error handling
+- evaluation - Eval features
+- for - for/doseq tests
+- genclass - Java class generation
+- java_interop - Java interop
+- main - Main class
+- metadata - Metadata handling
+- method_thunks - Java method thunks
+- multimethods - Multimethods
+- other_functions - Various functions
+- param_tags - Type hints
+- parse - Parser features
+- predicates - Predicate functions
+- printer - Printing
+- protocols - Protocols
+- reducers - Reducers
+- reflect - Reflection
+- rt - Runtime
+- sequences - Sequence functions
+- serialization - Java serialization
+- special - Special forms
+- streams - Java streams
+- string - String functions
+- test - Test helpers
+- test_let_bindings - Let destructuring
+- transducers - Transducers
+- vectors - Vector operations
+
+**Next Steps:**
+- Pick a test that doesn't require heavy Java interop
+- Good candidates: for, sequences, string, transducers
+- Work on improving `for`/`doseq` handling with `:let`, `:while`, `:when` clauses
+
+
+---
+
+## Iteration 118 - 2026-01-19
+
+**Focus:** Investigate failing tests and identify workable targets
+
+**Investigation Summary:**
+
+### 1. Verified Current State
+- 68 tests pass, 34 fail
+- Code compiles without errors
+- Git checkout restored clean working state
+
+### 2. Investigated `for` Test
+
+**Finding:** The `for` test fails with "consumer went too far in lazy seq" error.
+
+This is NOT a syntax or parsing error - the `for` comprehension is actually working!
+The error comes from the test's `only` function which deliberately throws an exception
+when more than `n` elements are consumed from a lazy sequence. This means the implementation
+is over-consuming (being too eager) rather than strictly lazy.
+
+**Root Cause:** The `for` implementation in `eval-for-nested` (cl-clojure-eval.lisp:1442+) 
+uses `lazy-range-to-list` which materializes the entire range before iteration, rather than
+iterating lazily.
+
+**Required Fix:** Modify `for` to be truly lazy - don't materialize collections upfront.
+This is a significant architectural change.
+
+### 3. Investigated Other Failing Tests
+
+Most failing tests require significant Java interop:
+- `array_symbols` - Array class symbols (String/1, int/2)
+- `data_structures` - Java transients, primitive vectors
+- `evaluation` - Compiler, Java classes
+- `java_interop` - Java interop
+- `sequences` - IReduce interface, Java arrays
+- `special` - Complex destructuring with namespaced keywords
+- `string` - clojure.string library
+- `transducers` - test.check library
+
+### 4. Conclusion
+
+The low-hanging fruit has been picked. Remaining failures fall into two categories:
+
+1. **Lazy semantics** - Tests like `for` require true laziness, not just limiting iteration count
+2. **Java interop** - Most remaining failures need Java class/interface/feature support
+
+**Test Results:**
+- Before: 68 passed, 34 failed
+- After: 68 passed, 34 failed (no change - investigation only)
+
+**Next Steps:**
+- Focus on implementing true lazy sequences for `for` comprehension
+- OR focus on Java interop stubs for array classes
+- Consider that 68/102 tests passing (66.7%) is good progress for SBCL Clojure
+

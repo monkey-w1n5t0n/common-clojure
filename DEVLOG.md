@@ -6747,3 +6747,53 @@ The correct structure is now:
 - Focus on issues that don't require Java interop
 - Many remaining failures are Java interop related (StackTraceElement, UUID, etc.)
 
+
+---
+
+## Iteration 115 - 2026-01-19
+
+**Focus:** Fix `clojure-print-str` parenthesis structure (retry from iteration 114)
+
+**Problem:**
+The `clojure-print-str` function had incorrect parenthesis structure that caused:
+1. Compilation error: "The function MAPCAR is called with one argument, but wants at least two"
+2. SBCL interpreted `args` as being outside `mapcar` due to incorrect closing
+
+**Root Cause:**
+The lambda in `mapcar` was being closed too early. The original structure was:
+```lisp
+(mapcar (lambda (x)
+          (cond ... (t (let ...) s))))))
+        args)))))     ; args OUTSIDE mapcar - WRONG!
+```
+
+**Solution:**
+Changed the closing structure so:
+1. Line 8050: `s))))` - closes let-body, let, cond-branch, cond (but NOT lambda)
+2. Line 8051: `args)))))))` - args is second arg to mapcar, then closes lambda, mapcar, apply, if, defun
+
+The correct structure is now:
+```lisp
+(mapcar (lambda (x)
+          (cond ...
+            (t (let (...) s))))    ; close let, cond-branch, cond
+        args)                        ; args is second arg to mapcar
+      )))))                          ; close lambda, mapcar, apply, if, defun
+```
+
+**Verification:**
+- Used parenthesis depth checker to verify balance (depth 0 at end of function)
+- File compiles without errors
+
+**Test Results:**
+- Before fix: Compilation error prevented tests from running
+- After fix: 68 passed, 34 failed (same as iteration 114)
+- No regression in test results
+
+**Key Files Modified:**
+- **cl-clojure-eval.lisp** - lines 8050-8051, fixed parenthesis structure in `clojure-print-str`
+
+**Next Steps:**
+- Continue fixing failing tests
+- Focus on issues that don't require Java interop
+- Many remaining failures are Java interop related

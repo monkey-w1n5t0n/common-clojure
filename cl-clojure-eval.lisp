@@ -8047,8 +8047,8 @@
                         (t
                          (let ((s (make-string-output-stream)))
                            (princ x s)
-                           (get-output-stream-string s))))))
-                  args)))))
+                           (get-output-stream-string s))))
+                  args)))))))
 ;;; Map/Hash operations
 (defun clojure-get (map key &optional default)
   "Get the value for key in map, returning default if not found."

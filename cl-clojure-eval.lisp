@@ -1141,10 +1141,15 @@
                            ;; We need to search for the symbol case-insensitively
                            (sym-name (symbol-name actual-sym))
                            ;; Find the actual symbol in the value-map by case-insensitive comparison
-                           (actual-sym-found (loop for k being the hash-keys of value-map
-                                                   when (and (symbolp k)
-                                                            (string-equal (symbol-name k) sym-name))
-                                                   return k))
+                           ;; Handle both plain symbols and (quote symbol) forms
+                           (actual-sym-found (block search
+                                                (loop for k being the hash-keys of value-map
+                                                      for key-to-check = (if (and (consp k) (eq (car k) 'quote))
+                                                                           (cadr k)
+                                                                           k)
+                                                      when (and (symbolp key-to-check)
+                                                               (string-equal (symbol-name key-to-check) sym-name))
+                                                      do (return-from search k))))
                            ;; Use multiple-value-bind to check if key was found
                            (val-found-p (if actual-sym-found
                                           (multiple-value-list (gethash actual-sym-found value-map))

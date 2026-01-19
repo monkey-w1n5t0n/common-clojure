@@ -1719,11 +1719,62 @@
     name))
 
 (defun eval-defrecord (form env)
-  "Evaluate a defrecord form: (defrecord name fields&) - define a record type.
-   This is a stub - record support is not implemented."
-  (declare (ignore form env))
-  ;; For now, just return nil - records are not implemented
-  nil)
+  "Evaluate a defrecord form: (defrecord name [fields] & opts+) - define a record type.
+   Creates a constructor function ->name and a map->name factory.
+   Records are implemented as hash tables with a :__record__ marker."
+  (let* ((name-sym (cadr form))
+         (fields-vec (caddr form))
+         ;; Extract field names from vector
+         (fields (if (vectorp fields-vec)
+                    (coerce fields-vec 'list)
+                    '()))
+         ;; Create constructor name ->RecordName
+         (constructor-name (intern (concatenate 'string "->" (symbol-name name-sym))))
+         ;; Create map constructor name map->RecordName
+         (map-constructor-name (intern (concatenate 'string "map->" (symbol-name name-sym))))
+         ;; Create the record type marker
+         (record-type (intern (concatenate 'string (symbol-name name-sym) "."))))
+    ;; Register the record name symbol itself
+    (env-set-var env name-sym name-sym)
+    ;; Create and register the constructor function ->RecordName
+    (env-set-var env constructor-name
+                (lambda (&rest field-values)
+                  ;; Create a record as a hash table with field values
+                  (let ((record (make-hash-table :test 'equal)))
+                    ;; Mark this as a record
+                    (setf (gethash :__record__ record) record-type)
+                    (setf (gethash :__type__ record) name-sym)
+                    ;; Set field values
+                    (loop for field in fields
+                          for value in field-values
+                          do (setf (gethash field record) value))
+                    record)))
+    ;; Create and register the map constructor map->RecordName
+    (env-set-var env map-constructor-name
+                (lambda (map)
+                  ;; Create a record from a map
+                  (let ((record (make-hash-table :test 'equal)))
+                    ;; Mark this as a record
+                    (setf (gethash :__record__ record) record-type)
+                    (setf (gethash :__type__ record) name-sym)
+                    ;; Copy all key-value pairs from map
+                    (when (hash-table-p map)
+                      (maphash (lambda (k v)
+                                (setf (gethash k record) v))
+                              map))
+                    record)))
+    ;; Also register a factory function RecordName. (with dot)
+    (env-set-var env record-type
+                (lambda (&rest field-values)
+                  (let ((record (make-hash-table :test 'equal)))
+                    (setf (gethash :__record__ record) record-type)
+                    (setf (gethash :__type__ record) name-sym)
+                    (loop for field in fields
+                          for value in field-values
+                          do (setf (gethash field record) value))
+                    record)))
+    ;; Return the record name
+    name-sym))
 
 (defun eval-definterface (form env)
   "Evaluate a definterface form: (definterface name [method-sig]+) - define a Java interface.

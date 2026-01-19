@@ -6518,3 +6518,67 @@ Clojure supports two forms of namespaced destructuring:
 - Debug why namespaced symbol destructuring doesn't find keywords in value-map
 - The search loop should find `:|a/b|` when searching for `a/b`, but doesn't
 - Check if `string-equal` is working correctly across different keyword representations
+
+---
+
+### Iteration N - 2026-01-19 (Current)
+
+**Focus:** Fix keyword destructuring with `{:keys [:a :b]}` syntax
+
+**Changes Made:**
+
+1. **Fixed keyword-to-symbol conversion in `:keys` destructuring** - cl-clojure-eval.lisp:1098-1124
+   - When `:keys [:a :b]` is used, the `keys-spec` contains keywords `:a`, `:b`
+   - Previously only handled symbols in `keys-spec`, not keywords
+   - Added `keywordp` branch to convert keywords to symbols for binding
+   - For `:a` (keyword): creates symbol `a` via `(intern "a")`
+   - For namespaced keywords `:a/b`: creates symbol `b` via `(intern "b")`
+   - Uses `cond` instead of `if` to handle three cases: keyword, symbol, fallback
+
+**Debugging Process:**
+
+1. **Identified the issue** through extensive debugging:
+   - Added debug output to trace destructuring
+   - Found that `{:keys [:a :b]}` was being read as hash table with `:keys => (:a :b)`
+   - The `:a`, `:b` were keywords, not symbols
+   - Old code only had `symbolp` check, so `actual-key` remained as keyword
+   - This caused `bind-sym` to be a keyword instead of a symbol
+
+2. **Fixed the binding symbol creation:**
+   - When `actual-key` is a keyword (e.g., `:a`):
+     - Extract its name: `(symbol-name :|a|)` = `"a"`
+     - Create a symbol: `(intern "a")` = `|a|`
+   - The interned symbol is in the current package (CLOJURE-TEST-RUNNER during test)
+   - Since `env-get-lexical` uses string comparison, package doesn't matter for lookup
+
+3. **Fixed compilation error:**
+   - Accidentally removed a line with `sed` which broke the file
+   - Had to restore from git and reapply changes
+
+**Test Results:**
+- Before: 68 ok, 34 errors
+- After: 68 ok, 34 errors (same count, but different errors fixed)
+- `keywords-in-destructuring` test now works correctly (bindings are created)
+
+**Remaining Issues:**
+
+1. **`namespaced-syms-in-destructuring` test** - `:syms` with `:or` not working
+   - Test: `(let [{:syms [a/b c/d e/f] :or {f 3}} {'a/b 1 'c/d 2}] [b d f])`
+   - `b` and `d` are bound correctly (from `a/b` and `c/d`)
+   - `f` should be bound to 3 via `:or {f 3}` but isn't
+   - The `:or` handling needs to be checked
+
+2. **`or-doesnt-create-bindings` test** expects different error message
+   - Test expects: "Unable to resolve symbol: b"
+   - We produce: "Undefined symbol: b"
+   - This is expected behavior - `:or` in `:keys` shouldn't create bindings
+   - But the test assertion pattern doesn't match
+
+**Key Insight:**
+The keyword destructuring fix worked - symbols ARE being created and bound correctly.
+The remaining issue is with `:or` defaults for symbols that aren't found in the value-map.
+
+**Next Steps:**
+- Debug why `:or {f 3}` doesn't create a binding for `f` when `e/f` isn't in value-map
+- Check if the `:or` handling is being called after `:syms` destructuring
+- Verify that `env-get-lexical` correctly reports `found-p=NIL` for unboud symbols

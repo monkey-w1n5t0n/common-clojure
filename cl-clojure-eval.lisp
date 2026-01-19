@@ -1099,15 +1099,28 @@
                            ;; Two cases:
                            ;; 1. {:a/keys [b]} -> bind b to value of :a/b
                            ;; 2. {:keys [a/b]} -> bind b to value of :a/b
-                           (bind-sym (if (symbolp actual-key)
+                           ;; 3. {:keys [:a]} -> bind a to value of :a (keyword to symbol)
+                           (bind-sym (cond
+                                       ;; actual-key is a keyword (e.g., :a, :a/b) -> convert to symbol
+                                       ((keywordp actual-key)
                                         (let ((name (symbol-name actual-key)))
-                                          ;; If key is namespaced (e.g., a/b), bind to local name (b)
+                                          ;; If keyword is namespaced (e.g., :a/b), bind to local name (b)
+                                          ;; Otherwise bind to symbol with same name (a)
+                                          (if (find #\/ name)
+                                              (let ((slash-pos (position #\/ name)))
+                                                (intern (subseq name (1+ slash-pos))))
+                                              (intern name))))
+                                       ;; actual-key is a symbol (e.g., a/b from {:keys [a/b]})
+                                       ((symbolp actual-key)
+                                        (let ((name (symbol-name actual-key)))
+                                          ;; If symbol is namespaced (e.g., a/b), bind to local name (b)
                                           ;; Otherwise bind to key itself
                                           (if (find #\/ name)
                                               (let ((slash-pos (position #\/ name)))
                                                 (intern (subseq name (1+ slash-pos))))
-                                              actual-key))
-                                        actual-key)))
+                                              actual-key)))
+                                       ;; fallback (shouldn't happen)
+                                       (t actual-key))))
                       ;; Only bind if the key was found in the value map
                       ;; Otherwise, :or will provide the default
                       (when found-p

@@ -69,6 +69,75 @@
   (parent nil)                             ; parent environment for nesting
   (letfn-table nil))                       ; hash table for letfn mutual recursion (avoid circular refs)
 
+(defstruct lazy-range
+  "A lazy range - generates numbers on demand to avoid heap exhaustion."
+  start
+  end
+  step
+  (current 0))
+
+(defstruct delay
+  "A delay - holds a thunk for delayed evaluation and a cached value."
+  thunk
+  (value nil)
+  (forced-p nil))
+
+(defstruct closure
+  "A Clojure function closure - captures params, body, and environment."
+  params
+  body
+  env
+  (name nil)
+  (macro-p nil)  ; true if this is a macro
+  (letfn-table nil))  ; hash table for letfn mutual recursion (shared across closures)
+
+(defun lazy-range-to-list (lr &optional (limit most-positive-fixnum))
+  "Convert a lazy range to a list, up to limit elements."
+  (if (not (lazy-range-p lr))
+      lr
+      (let ((start (lazy-range-start lr))
+            (end (lazy-range-end lr))
+            (step (lazy-range-step lr)))
+        (if end
+            ;; Bounded range
+            (loop for i from start below end by step
+                  while (> limit 0)
+                  collect i
+                  do (decf limit))
+            ;; Infinite range - use limit
+            (loop for i from start by step
+                  repeat limit
+                  collect i)))))
+
+(defun realize-range (lr)
+  "Realize a lazy range to a concrete list. For infinite ranges, limit to 1000."
+  (if (lazy-range-p lr)
+      (lazy-range-to-list lr (if (lazy-range-end lr) most-positive-fixnum 1000))
+      lr))
+
+(defun clojure-seq (coll)
+  "Return a sequence from collection."
+  (when coll
+    (cond
+      ((lazy-range-p coll) coll)
+      ((listp coll) coll)
+      ;; For hash tables (maps), convert to list of [key value] vectors
+      ;; Clojure's (seq map) returns a sequence of MapEntry objects
+      ((hash-table-p coll)
+       (let ((result '()))
+         (maphash (lambda (k v)
+                    (push (vector k v) result))
+                  coll)
+         (nreverse result)))
+      ;; For vectors, convert to list
+      ((vectorp coll)
+       (coerce coll 'list))
+      ;; For strings, convert to list of characters
+      ((stringp coll)
+       (coerce coll 'list))
+      ;; For other types, try to coerce to list
+      (t (coerce coll 'list)))))
+
 (defparameter *current-env* nil
   "The current evaluation environment.")
 
@@ -2154,17 +2223,6 @@
             (clojure-eval expr env))))
       result)))
 
-;;; ============================================================
-;;; Lazy Range representation
-;;; ============================================================
-
-(defstruct lazy-range
-  "A lazy range - generates numbers on demand to avoid heap exhaustion."
-  start
-  end
-  step
-  (current 0))
-
 (defun is-set (coll)
   "Check if a collection is a set (hash table with all values = t).
    In Clojure, sets are represented as hash tables where every value is t."
@@ -2176,29 +2234,6 @@
                       (setf all-t nil)))
                   coll)
          all-t)))
-
-;;; ============================================================
-;;; Delay (lazy evaluation) representation
-;;; ============================================================
-
-(defstruct delay
-  "A delay - holds a thunk for delayed evaluation and a cached value."
-  thunk
-  (value nil)
-  (forced-p nil))
-
-;;; ============================================================
-;;; Closure (function) representation
-;;; ============================================================
-
-(defstruct closure
-  "A Clojure function closure - captures params, body, and environment."
-  params
-  body
-  env
-  (name nil)
-  (macro-p nil)  ; true if this is a macro
-  (letfn-table nil))  ; hash table for letfn mutual recursion (shared across closures)
 
 ;; Make closures callable via funcall by wrapping them in a lambda
 ;; This allows closures to be used directly as function objects in CL functions
@@ -4869,29 +4904,6 @@
                          (t last-arg))))
       (apply callable-fn (append all-but-last last-as-list)))))
 
-(defun clojure-seq (coll)
-  "Return a sequence from collection."
-  (when coll
-    (cond
-      ((lazy-range-p coll) coll)
-      ((listp coll) coll)
-      ;; For hash tables (maps), convert to list of [key value] vectors
-      ;; Clojure's (seq map) returns a sequence of MapEntry objects
-      ((hash-table-p coll)
-       (let ((result '()))
-         (maphash (lambda (k v)
-                    (push (vector k v) result))
-                  coll)
-         (nreverse result)))
-      ;; For vectors, convert to list
-      ((vectorp coll)
-       (coerce coll 'list))
-      ;; For strings, convert to list of characters
-      ((stringp coll)
-       (coerce coll 'list))
-      ;; For other types, try to coerce to list
-      (t (coerce coll 'list)))))
-
 (defun clojure-into (to from)
   "Conjoin elements from `from` into `to`.
    (into [] coll) returns a vector with coll's elements
@@ -5032,30 +5044,6 @@
     (t
      (let ((actual-step (if (null step) 1 step)))
        (make-lazy-range :start start :end end :step actual-step :current start)))))
-
-(defun lazy-range-to-list (lr &optional (limit most-positive-fixnum))
-  "Convert a lazy range to a list, up to limit elements."
-  (if (not (lazy-range-p lr))
-      lr
-      (let ((start (lazy-range-start lr))
-            (end (lazy-range-end lr))
-            (step (lazy-range-step lr)))
-        (if end
-            ;; Bounded range
-            (loop for i from start below end by step
-                  while (> limit 0)
-                  collect i
-                  do (decf limit))
-            ;; Infinite range - use limit
-            (loop for i from start by step
-                  repeat limit
-                  collect i)))))
-
-(defun realize-range (lr)
-  "Realize a lazy range to a concrete list. For infinite ranges, limit to 1000."
-  (if (lazy-range-p lr)
-      (lazy-range-to-list lr (if (lazy-range-end lr) most-positive-fixnum 1000))
-      lr))
 
 (defun clojure-into-array (aseq &optional type)
   "Convert a sequence to a Java array. For SBCL, we return a vector instead.

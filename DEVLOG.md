@@ -6114,3 +6114,84 @@ Added auto-gensym handling to `process-syntax-quote` (cl-clojure-eval.lisp:489-5
 - Implement `tag` function for multimethod dispatch
 - Implement hierarchy functions: `ancestors`, `parents`, `descendants`, `isa?`
 - Fix the `isa?` arity to support both `(isa? child parent)` and `(isa? hierarchy child parent)`
+
+---
+### Iteration 107 - 2026-01-19
+
+**Focus:** Implement sequence operations and hierarchy functions
+
+**Changes Made:**
+
+1. **Implemented `dorun` function** - cl-clojure-eval.lisp:4662-4691
+   - Iterates through collection for side effects, returns nil
+   - Supports 1-arg form `(dorun coll)` - process all elements
+   - Supports 2-arg form `(dorun n coll)` - process only first n elements
+   - Handles lazy ranges, lists, vectors, hash tables (as sets), strings
+   - Limits lazy ranges to 10000 elements to avoid heap exhaustion
+
+2. **Implemented `doall` function** - cl-clojure-eval.lisp:4693-4722
+   - Forces evaluation of lazy sequence and returns the realized sequence
+   - Supports 1-arg form `(doall coll)` - realize all elements
+   - Supports 2-arg form `(doall n coll)` - realize only first n elements
+   - Returns the list of elements (not a hash table even for sets)
+
+3. **Implemented `tag` function** - cl-clojure-eval.lisp:5258-5270
+   - Returns the dispatch tag of a value for multimethod use
+   - For keywords: returns the keyword itself
+   - For symbols: returns the symbol itself  
+   - For other objects: returns their class
+
+4. **Implemented hierarchy functions:**
+   - **`clojure-ancestors`** - cl-clojure-eval.lisp:6930-6952
+     - Takes `(ancestors hierarchy tag)` - returns transitive closure of parents
+     - Returns hash table (set-like) or nil if no ancestors
+   
+   - **`clojure-parents`** - cl-clojure-eval.lisp:6954-6969
+     - Takes `(parents hierarchy tag)` - returns immediate parents
+     - Returns hash table (set-like) or nil if no parents
+   
+   - **`clojure-descendants`** - cl-clojure-eval.lisp:6971-6997
+     - Takes `(descendants hierarchy tag)` - returns transitive closure of children
+     - Returns hash table (set-like) or nil if no descendants
+   
+   - **`clojure-isa?`** - cl-clojure-eval.lisp:6897-6914 (updated)
+     - Takes `(isa? hierarchy child parent)` - checks derivation relationship
+     - Supports both direct parent check and transitive ancestor check
+   
+   - **`clojure-derive`** - cl-clojure-eval.lisp:6865-6876 (updated)
+     - Takes `(derive tag parent hierarchy)` - adds parent relationship
+     - Stores hierarchy as hash table: `hierarchy[tag] = {parent: t, ...}`
+     - Returns updated hierarchy
+
+5. **Registered new functions** - cl-clojure-eval.lisp:3599-3601, 3795, 3933-3935
+   - `dorun`, `doall`
+   - `tag`
+   - `ancestors`, `parents`, `descendants`
+
+**Known Issues:**
+
+1. **`for` loop doesn't distinguish sets from maps**
+   - When iterating over a hash table, `for` always creates `[key value]` pairs
+   - For sets (hash tables with all values = t), it should only bind the keys
+   - This causes multimethods test to fail with `:|user/bird| is not of type HASH-TABLE`
+   - The `for` loop at `cl-clojure-eval.lisp:1299-1337` needs set detection
+   - The `doseq` loop at `cl-clojure-eval.lisp:1414-1435` also needs the same fix
+
+**Test Results:**
+- Before: Eval: 68 ok, 34 errors
+- After: Eval: 68 ok, 34 errors
+- Test count unchanged - the `for` loop fix is needed for hierarchy tests to pass
+
+**Next Steps:**
+1. Fix `for` loop to detect and handle sets differently from maps
+   - Detect set: `(loop for v being each hash-value of coll always (eq v t))`
+   - For sets: iterate over keys only (not [key value] pairs)
+   - For maps: iterate over [key value] pairs
+2. Fix `doseq` loop similarly
+3. Consider fixing `into` to properly handle hash table to set conversion
+
+**Technical Notes:**
+- Hierarchy structure: `{tag: {parent1: t, parent2: t}, ...}`
+- Sets are represented as hash tables with all values = `t`
+- The `for` loop needs to check `is-set` before deciding how to iterate
+

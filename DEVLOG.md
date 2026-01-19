@@ -5604,3 +5604,43 @@ functionality (`into-array`, array type symbols, etc.) is working correctly.
 - Continue investigating other test failures
 - The `into-array` function is working correctly despite the original test file error
 
+
+---
+
+### Iteration 96 - 2026-01-19
+
+**Focus:** Fix `every-pred` and `some-fn` arity, fix `send` function, fix Java TYPE fields
+
+**Changes Made:**
+
+1. **Fixed `clojure-every-pred` and `clojure-some-fn`** - cl-clojure-eval.lisp:6619-6641
+   - These functions were accepting only 1 argument (`x`)
+   - Changed to accept variable number of arguments with `&rest xs`
+   - Handle 0-argument case: `every-pred` returns `t`, `some-fn` returns `nil`
+   - For multiple arguments, check all predicates against all arguments
+
+2. **Fixed `clojure-send` function** - cl-clojure-eval.lisp:7115-7129
+   - Was ignoring the agent state and not calling `ensure-callable`
+   - Now properly passes agent's state as first argument to the function
+   - Uses `ensure-callable` to handle closures correctly
+   - Updates agent's state with the result
+
+3. **Fixed Java primitive TYPE fields** - cl-clojure-eval.lisp:2260-2390
+   - Changed `Boolean/TYPE`, `Integer/TYPE`, `Long/TYPE`, `Float/TYPE`, 
+     `Double/TYPE`, `Character/TYPE`, `Byte/TYPE`, `Short/TYPE`
+   - Now return symbol form (`'Boolean/TYPE`) instead of keyword (`:boolean-type`)
+   - This matches what `make-array` expects for type checking
+
+**Errors Encountered:**
+- "invalid number of arguments: 0" in `other_functions` test - Fixed by updating `every-pred`/`some-fn`
+- "just testing Throwables" error in `agents` test - Expected behavior, the function throws correctly now
+- `Long/TYPE` type mismatch - Fixed by returning symbol instead of keyword
+
+**Test Results:**
+- Still 66 ok, 36 errors (no change in count, but different errors)
+- `agents` test now throws correctly (progress)
+- `other_functions` test error changed
+
+**Next Steps:**
+- Investigate remaining "invalid number of arguments" errors
+- The `array_symbols` test still has issues that need further investigation

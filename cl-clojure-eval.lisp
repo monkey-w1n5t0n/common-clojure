@@ -2260,14 +2260,14 @@
     ((string-equal class-name "Boolean")
      (cond
        ((string-equal member-name "TYPE")
-        :boolean-type)
+        'Boolean/TYPE)
        (t
         (error "Unsupported Boolean field: ~A" member-name))))
     ;; Integer class fields
     ((string-equal class-name "Integer")
      (cond
        ((string-equal member-name "TYPE")
-        :int-type)
+        'Integer/TYPE)
        ((string-equal member-name "MAX_VALUE")
         most-positive-fixnum)
        ((string-equal member-name "MIN_VALUE")
@@ -2278,7 +2278,7 @@
     ((string-equal class-name "Long")
      (cond
        ((string-equal member-name "TYPE")
-        :long-type)
+        'Long/TYPE)
        ((string-equal member-name "MAX_VALUE")
         most-positive-fixnum)
        ((string-equal member-name "MIN_VALUE")
@@ -2301,7 +2301,7 @@
     ((string-equal class-name "Float")
      (cond
        ((string-equal member-name "TYPE")
-        :float-type)
+        'Float/TYPE)
        ((string-equal member-name "MAX_VALUE")
         most-positive-single-float)
        ((string-equal member-name "MIN_VALUE")
@@ -2323,7 +2323,7 @@
     ((string-equal class-name "Double")
      (cond
        ((string-equal member-name "TYPE")
-        :double-type)
+        'Double/TYPE)
        ((string-equal member-name "MAX_VALUE")
         most-positive-double-float)
        ((string-equal member-name "MIN_VALUE")
@@ -2365,14 +2365,14 @@
     ((string-equal class-name "Character")
      (cond
        ((string-equal member-name "TYPE")
-        :char-type)
+        'Character/TYPE)
        (t
         (error "Unsupported Character field: ~A" member-name))))
     ;; Byte class fields
     ((string-equal class-name "Byte")
      (cond
        ((string-equal member-name "TYPE")
-        :byte-type)
+        'Byte/TYPE)
        ((string-equal member-name "MAX_VALUE")
         127)
        ((string-equal member-name "MIN_VALUE")
@@ -2383,7 +2383,7 @@
     ((string-equal class-name "Short")
      (cond
        ((string-equal member-name "TYPE")
-        :short-type)
+        'Short/TYPE)
        ((string-equal member-name "MAX_VALUE")
         32767)
        ((string-equal member-name "MIN_VALUE")
@@ -6617,14 +6617,28 @@
   (apply f (coerce coll 'list)))
 
 (defun clojure-every-pred (&rest preds)
-  "Create a predicate that returns true if all predicates return true."
-  (lambda (x)
-    (every (lambda (p) (funcall p x)) preds)))
+  "Create a predicate that returns true if all predicates return true.
+   Takes any number of arguments (including zero)."
+  (lambda (&rest xs)
+    (if (null xs)
+        ;; No arguments: return true (vacuously true)
+        t
+        ;; Check that all predicates return true for all arguments
+        (every (lambda (p)
+                 (every (lambda (x) (funcall p x)) xs))
+               preds))))
 
 (defun clojure-some-fn (&rest preds)
-  "Create a predicate that returns true if any predicate returns true."
-  (lambda (x)
-    (some (lambda (p) (funcall p x)) preds)))
+  "Create a predicate that returns true if any predicate returns true.
+   Takes any number of arguments (including zero)."
+  (lambda (&rest xs)
+    (if (null xs)
+        ;; No arguments: return false (vacuously false)
+        nil
+        ;; Check that any predicate returns true for at least one argument
+        (some (lambda (p)
+               (some (lambda (x) (funcall p x)) xs))
+             preds))))
 
 (defun clojure-partial (f &rest args)
   "Partial application - returns a function that calls f with additional args.
@@ -7100,9 +7114,19 @@
 
 (defun clojure-send (agent f &rest args)
   "Send a function to an agent for async application.
-   For SBCL, this is a stub that applies the function synchronously."
-  (declare (ignore agent))
-  (apply f args))
+   For SBCL, this is a stub that applies the function synchronously.
+   The function is called with the agent's state as the first argument,
+   followed by any additional args."
+  ;; Agents are represented as cons cells: (state . actions-queue)
+  ;; Get the current state (car of the agent)
+  (let* ((state (if (consp agent) (car agent) nil))
+         (callable-f (ensure-callable f))
+         ;; Call f with state as first argument, followed by any additional args
+         (result (apply callable-f (cons state args))))
+    ;; Update the agent's state with the result
+    (when (consp agent)
+      (setf (car agent) result))
+    result))
 
 (defun clojure-await (agent &rest args)
   "Wait for an agent to complete processing.

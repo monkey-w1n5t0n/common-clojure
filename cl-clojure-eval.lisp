@@ -1913,16 +1913,16 @@
           (remaining (cdr forms)))
       ;; Chain each method call
       (dolist (form-item remaining)
-        (let ((method-form (if (consp form-item)
-                              ;; If it's a list, it's (method-name args...)
-                              ;; We need to prepend a dot to make it a method call
-                              (cons (intern (concatenate 'string "." (string (car form-item))))
-                                    (cdr form-item))
-                              ;; If it's a symbol, it's just a method-name with no args
-                              (intern (concatenate 'string "." (string form-item)))))
+        (let* ((method-form (if (consp form-item)
+                               ;; If it's a list, it's (method-name args...)
+                               ;; We need to prepend a dot to make it a method call
+                               (cons (intern (concatenate 'string "." (string (car form-item))))
+                                     (cdr form-item))
+                               ;; If it's a symbol, it's just a method-name with no args
+                               (intern (concatenate 'string "." (string form-item))))))
           ;; Evaluate the method call with current result
-          (setq result (clojure-eval (list method-form result) env))))
-      result))))
+          (setf result (clojure-eval (list method-form result) env))))
+      result)))
 
 (defun eval-try (form env)
   "Evaluate a try form: (try body catch* finally?)

@@ -5644,3 +5644,46 @@ functionality (`into-array`, array type symbols, etc.) is working correctly.
 **Next Steps:**
 - Investigate remaining "invalid number of arguments" errors
 - The `array_symbols` test still has issues that need further investigation
+
+---
+
+### Iteration 97 - 2026-01-19
+
+**Focus:** Fix compilation error in eval-dot-dot function
+
+**Problem:**
+The `eval-dot-dot` function had a let binding with `setq` as the binding form, which is invalid syntax:
+```lisp
+(let ((method-form ...))
+  (setq result (clojure-eval ...))))  ; <-- ERROR: let binding using setq
+```
+
+This caused "unmatched close parenthesis" compilation error at line 1925.
+
+**Root Cause:**
+In my previous edit, I mistakenly tried to fix a bug by using `setq` inside the `let` binding list. The correct fix was to:
+1. Use `let*` instead of `let` to allow sequential bindings
+2. Use `setf` instead of `setq` for updating the result
+3. Fix the paren structure
+
+**Changes Made:**
+
+1. **Fixed `eval-dot-dot` function** - cl-clojure-eval.lisp:1904-1925
+   - Changed from `let` to `let*` for the inner binding
+   - Changed from `(setq result ...)` to `(setf result ...)`
+   - Fixed parenthesis structure: method-form `let` now has correct closing parens
+   - The `setf` is now in the body of the `let`, not in the binding list
+
+**Errors Fixed:**
+- "unmatched close parenthesis" in eval-dot-dot - FIXED ✅
+- Compilation errors in eval-dot-dot - FIXED ✅
+
+**Test Results:**
+- Parse: 93 ok, 9 errors ✅
+- Eval: 66 ok, 36 errors ✅
+- File now loads and compiles successfully
+- All tests run in ~9 seconds
+
+**Next Steps:**
+- Investigate remaining "invalid number of arguments" errors
+- The `array_symbols` test still has issues that need further investigation

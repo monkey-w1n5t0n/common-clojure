@@ -3597,6 +3597,8 @@
   (register-core-function env 'list #'clojure-list)
   (register-core-function env 'map #'clojure-map)
   (register-core-function env 'mapv #'clojure-mapv)
+  (register-core-function env 'dorun #'clojure-dorun)
+  (register-core-function env 'doall #'clojure-doall)
   (register-core-function env 'refer #'clojure-refer)
   (register-core-function env 'Throwable->map #'clojure-throwable-map)
   (register-core-function env 'ex-info #'clojure-ex-info)
@@ -3789,6 +3791,7 @@
   (register-core-function env 'bigdec #'clojure-bigdec)
   (register-core-function env 'class #'clojure-class)
   (register-core-function env 'type #'clojure-type)
+  (register-core-function env 'tag #'clojure-tag)
   (register-core-function env 'instance? #'clojure-instance?)
 
   ;; Test helper stubs
@@ -3927,6 +3930,9 @@
   (register-core-function env 'derive #'clojure-derive)
   (register-core-function env 'underive #'clojure-underive)
   (register-core-function env 'isa? #'clojure-isa?)
+  (register-core-function env 'ancestors #'clojure-ancestors)
+  (register-core-function env 'parents #'clojure-parents)
+  (register-core-function env 'descendants #'clojure-descendants)
   (register-core-function env 'defstruct #'clojure-defstruct)
   (register-core-function env 'struct #'clojure-struct)
   (register-core-function env 'tagged-literal #'clojure-tagged-literal)
@@ -4657,6 +4663,68 @@
                   into result
                   finally (return (coerce result 'vector))))))))
 
+(defun clojure-dorun (coll &rest n-arg)
+  "Iterate through coll for side effects, returns nil.
+   When called with 2 args: (dorun n coll) - only process first n elements.
+   When called with 1 arg: (dorun coll) - process all elements.
+   For lazy ranges, limits to 10000 elements to avoid heap exhaustion."
+  (let ((n (if n-arg (car n-arg) nil))
+        (coll-list (cond
+                     ((null coll) '())
+                     ((lazy-range-p coll)
+                      (lazy-range-to-list coll (if (lazy-range-end coll)
+                                                   most-positive-fixnum
+                                                   10000)))
+                     ((listp coll) coll)
+                     ((hash-table-p coll)
+                      ;; Convert hash table to list of keys (for sets)
+                      (let ((result '()))
+                        (maphash (lambda (k v)
+                                   (push k result))
+                                 coll)
+                        (nreverse result)))
+                     ((vectorp coll) (coerce coll 'list))
+                     ((stringp coll) (coerce coll 'list))
+                     (t (coerce coll 'list)))))
+    ;; Process elements for side effects only
+    (if n
+        ;; Process only first n elements
+        (loop for i from 0 below (min n (length coll-list))
+              do (nth i coll-list))
+        ;; Process all elements
+        (dolist (item coll-list)
+          (declare (ignore item))))
+    nil))
+
+(defun clojure-doall (coll &rest n-arg)
+  "Force evaluation of lazy sequence and return the fully realized sequence.
+   When called with 2 args: (doall n coll) - only realize first n elements.
+   When called with 1 arg: (doall coll) - realize all elements.
+   For lazy ranges, limits to 10000 elements to avoid heap exhaustion."
+  (let ((n (if n-arg (car n-arg) nil))
+        (coll-list (cond
+                     ((null coll) '())
+                     ((lazy-range-p coll)
+                      (lazy-range-to-list coll (if (lazy-range-end coll)
+                                                   most-positive-fixnum
+                                                   10000)))
+                     ((listp coll) coll)
+                     ((hash-table-p coll)
+                      ;; Convert hash table to list of keys (for sets)
+                      (let ((result '()))
+                        (maphash (lambda (k v)
+                                   (push k result))
+                                 coll)
+                        (nreverse result)))
+                     ((vectorp coll) (coerce coll 'list))
+                     ((stringp coll) (coerce coll 'list))
+                     (t (coerce coll 'list)))))
+    (if n
+        ;; Return only first n elements
+        (subseq coll-list 0 (min n (length coll-list)))
+        ;; Return all elements
+        coll-list)))
+
 (defun clojure-refer (ns-symbol &rest kwargs)
   "Refer to symbols in another namespace. This is a stub implementation.
    In Clojure, refer is used to import symbols from other namespaces.
@@ -5188,6 +5256,20 @@
   "Return the type of x. Same as class for our stub."
   (clojure-class x))
 
+(defun clojure-tag (x)
+  "Return the tag of x for multimethod dispatch.
+   In Clojure, tag returns:
+   - For keywords: the keyword itself
+   - For symbols: the symbol itself
+   - For other objects: their class/type
+   This is used by multimethods to extract dispatch values."
+  (cond
+    ;; Keywords and symbols return themselves as tags
+    ((keywordp x) x)
+    ((symbolp x) x)
+    ;; For objects, return their class
+    (t (clojure-class x))))
+
 (defun clojure-instance? (class-name obj)
   "Check if obj is an instance of the given class. Stub for SBCL.
    For atoms (cons cells), they act as instances of functional interfaces."
@@ -5662,35 +5744,35 @@
   (declare (ignore env))
   form)
 
-(defun clojure-reduce (f init &rest more)
+(defun clojure-reduce (f init &optional coll)
   "Reduce a collection with a function."
   ;; Ensure f is callable (wrap closures if needed)
   ;; Defensive: if f is nil, return init (for empty collection case)
   (if (null f)
       init
       (let ((callable-f (ensure-callable f)))
-        (if (= (length more) 1)
+        (if coll
             ;; 3-argument form: (reduce f init coll)
-            (let ((coll (car more)))
-              (if (null coll)
-                  init
-                  (let ((coll-list (cond
-                                     ((lazy-range-p coll)
-                                      (lazy-range-to-list coll (if (lazy-range-end coll)
-                                                                    most-positive-fixnum
-                                                                    10000)))
-                                     ((vectorp coll) (coerce coll 'list))
-                                     ((hash-table-p coll)
-                                      (let ((result '()))
-                                        (maphash (lambda (k v)
-                                                   (push (vector k v) result))
-                                                 coll)
-                                        (nreverse result)))
-                                     ((listp coll) coll)
-                                     (t (coerce coll 'list)))))
-                    (if (null coll-list)
-                        init
-                        (reduce callable-f (cdr coll-list) :initial-value (funcall callable-f init (car coll-list)))))))
+            (if (null coll)
+                init
+                (let ((coll-list (cond
+                                   ((lazy-range-p coll)
+                                    (lazy-range-to-list coll (if (lazy-range-end coll)
+                                                                  most-positive-fixnum
+                                                                  10000)))
+                                   ((vectorp coll) (coerce coll 'list))
+                                   ((hash-table-p coll)
+                                    ;; Convert hash table to list of key-value vectors
+                                    (let ((result '()))
+                                      (maphash (lambda (k v)
+                                                 (push (vector k v) result))
+                                               coll)
+                                      (nreverse result)))
+                                   ((listp coll) coll)
+                                   (t (coerce coll 'list)))))
+                  (if (null coll-list)
+                      init
+                      (reduce callable-f (cdr coll-list) :initial-value (funcall callable-f init (car coll-list))))))
             ;; 2-argument form: (reduce f coll)
             (if (null init)
                 (error "Cannot reduce empty collection")
@@ -5701,6 +5783,7 @@
                                                                   10000)))
                                    ((vectorp init) (coerce init 'list))
                                    ((hash-table-p init)
+                                    ;; Convert hash table to list of key-value vectors
                                     (let ((result '()))
                                       (maphash (lambda (k v)
                                                  (push (vector k v) result))
@@ -6785,22 +6868,112 @@
 (defun clojure-derive (tag parent &optional hierarchy)
   "Add a relationship between tag and parent in the hierarchy.
    Returns the updated hierarchy."
-  (declare (ignore tag parent))
-  ;; Stub implementation - just return hierarchy or create a new one
-  (or hierarchy (make-hash-table :test 'equal)))
+  (let ((h (or hierarchy (make-hash-table :test 'equal))))
+    ;; Get or create the parents set for this tag
+    (let ((parents (gethash tag h)))
+      (unless parents
+        (setf parents (make-hash-table :test 'equal))
+        (setf (gethash tag h) parents))
+      ;; Add the parent to the tag's parents set
+      (setf (gethash parent parents) t))
+    h))
 
 (defun clojure-underive (tag parent &optional hierarchy)
   "Remove a relationship between tag and parent in the hierarchy.
    Returns the updated hierarchy."
-  (declare (ignore tag parent))
-  ;; Stub implementation - just return hierarchy or create a new one
-  (or hierarchy (make-hash-table :test 'equal)))
+  (let ((h (or hierarchy (make-hash-table :test 'equal))))
+    ;; Get the parents set for this tag
+    (let ((parents (gethash tag h)))
+      (when parents
+        ;; Remove the parent from the tag's parents set
+        (remhash parent parents)
+        ;; If no more parents, remove the tag entry
+        (when (= (hash-table-count parents) 0)
+          (remhash tag h))))
+    h))
 
 (defun clojure-isa? (child parent &optional hierarchy)
-  "Check if child is derived from parent in the hierarchy."
-  (declare (ignore child parent hierarchy))
-  ;; Stub implementation - return nil for now
-  nil)
+  "Check if child is derived from parent in the hierarchy.
+   If no hierarchy provided, uses the global hierarchy (stubbed as nil)."
+  (unless hierarchy
+    (return-from clojure-isa? nil))
+  ;; Direct parent check
+  (let ((parents (gethash child hierarchy)))
+    (when (and parents (gethash parent parents))
+      (return-from clojure-isa? t)))
+  ;; Indirect ancestor check (transitive closure)
+  (let ((ancestors-set (clojure-ancestors child hierarchy)))
+    (when (and ancestors-set (gethash parent ancestors-set))
+      t)))
+
+(defun clojure-ancestors (hierarchy &rest rest)
+  "Return all ancestors of tag in the hierarchy (transitive closure of parents).
+   Arity 2: (ancestors hierarchy tag) - returns ancestors of tag
+   Returns a hash table (set-like) or nil if no ancestors."
+  (if (null rest)
+      (return-from clojure-ancestors nil))
+  (let ((tag (car rest)))
+    (unless hierarchy
+      (return-from clojure-ancestors nil))
+    (let ((result (make-hash-table :test 'equal))
+          (to-visit (list tag)))
+      (loop while to-visit
+            do (let* ((current (pop to-visit))
+                      (parents (gethash current hierarchy)))
+                   (when parents
+                     (maphash (lambda (parent p)
+                                (declare (ignore p))
+                                (unless (gethash parent result)
+                                  (setf (gethash parent result) t)
+                                  (push parent to-visit)))
+                              parents))))
+      ;; Remove the original tag from the result (we only want ancestors)
+      (remhash tag result)
+      (when (> (hash-table-count result) 0)
+        result))))
+
+(defun clojure-parents (hierarchy &rest rest)
+  "Return the immediate parents of tag in the hierarchy.
+   Arity 2: (parents hierarchy tag) - returns parents of tag
+   Returns a hash table (set-like) or nil if no parents."
+  (if (null rest)
+      (return-from clojure-parents nil))
+  (let ((tag (car rest)))
+    (unless hierarchy
+      (return-from clojure-parents nil))
+    (let ((parents (gethash tag hierarchy)))
+      (when (and parents (> (hash-table-count parents) 0))
+        ;; Return a copy to avoid mutation
+        (let ((result (make-hash-table :test 'equal)))
+          (maphash (lambda (k v)
+                     (setf (gethash k result) v))
+                   parents)
+          result)))))
+
+(defun clojure-descendants (hierarchy &rest rest)
+  "Return all descendants of tag in the hierarchy (transitive closure of children).
+   Arity 2: (descendants hierarchy tag) - returns descendants of tag
+   Returns a hash table (set-like) or nil if no descendants."
+  (if (null rest)
+      (return-from clojure-descendants nil))
+  (let ((tag (car rest)))
+    (unless hierarchy
+      (return-from clojure-descendants nil))
+    (let ((result (make-hash-table :test 'equal))
+          (to-visit (list tag)))
+      (loop while to-visit
+            do (let* ((current (pop to-visit)))
+                   (maphash (lambda (child parents)
+                            (declare (ignore parents))
+                            (when (gethash current parents)
+                              (unless (gethash child result)
+                                (setf (gethash child result) t)
+                                (push child to-visit))))
+                          hierarchy)))
+      ;; Remove the original tag from the result (we only want descendants)
+      (remhash tag result)
+      (when (> (hash-table-count result) 0)
+        result))))
 
 (defun clojure-defstruct (name-and-opts &rest fields)
   "Define a struct type. Stub implementation that returns the struct name."

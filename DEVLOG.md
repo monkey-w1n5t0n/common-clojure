@@ -6693,3 +6693,57 @@ Modified the search loop in `extend-map-binding` (around line 1144-1152 in cl-cl
 - The `special.clj` test file contains many tests that require Java interop (`thrown-with-cause-msg?`, `eval`, `should-not-reflect`, etc.)
 - These tests will fail until Java interop is implemented
 - Consider focusing on simpler test files that don't require Java features
+
+**Next Steps:**
+- The `special.clj` test file contains many tests that require Java interop (`thrown-with-cause-msg?`, `eval`, `should-not-reflect`, etc.)
+- These tests will fail until Java interop is implemented
+
+---
+
+## Iteration 114 - 2026-01-19
+
+**Focus:** Fix `clojure-print-str` compilation error
+
+**Problem:**
+The `clojure-print-str` function had incorrect parenthesis structure, causing:
+1. Compilation error: "COND clause is not a CONS: ARGS"
+2. The issue was that `args` was being treated as part of the `cond` form instead of as the second argument to `mapcar`
+
+**Root Cause:**
+The lambda in the `mapcar` was being closed too early. The structure was:
+```lisp
+(mapcar (lambda (x)
+         (cond ...
+           (t (let ...) )))    ; 5 closes: let, cond-branch, cond, lambda, mapcar
+        args)))))              ; args OUTSIDE mapcar - WRONG!
+```
+
+**Solution:**
+Changed the closing structure so:
+1. Line 8050: `... s)))))` - closes let, cond-branch, cond, lambda (NOT mapcar)
+2. Line 8051: `args)))))` - args is second arg to mapcar, then closes mapcar, apply, if, defun
+
+The correct structure is now:
+```lisp
+(mapcar (lambda (x)
+         (cond ...
+           (t (let ...)       ; let body
+               s))))          ; close let, cond, lambda
+        args)                 ; args is second arg to mapcar, closes mapcar
+      )))                     ; closes apply, if, defun
+```
+
+**Test Results:**
+- Before fix: Compilation error prevented tests from running
+- After fix: 68 passed, 34 failed
+- The file now compiles without errors
+- Test results are the same as iteration 113 (as expected, this was just a compilation fix)
+
+**Key Files Modified:**
+- **cl-clojure-eval.lisp** - lines 8046-8051, fixed parenthesis structure in `clojure-print-str`
+
+**Next Steps:**
+- Continue fixing failing tests
+- Focus on issues that don't require Java interop
+- Many remaining failures are Java interop related (StackTraceElement, UUID, etc.)
+

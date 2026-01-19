@@ -1449,32 +1449,42 @@
 (defun eval-require (form env)
   "Evaluate a require form: (require & args) - load Clojure libraries.
    Since we're on SBCL without file loading, this is a stub that validates arguments.
-   The test expects (require) and (require :foo) to throw exceptions."
+   The test expects (require) and (require :foo) to throw exceptions.
+   Symbols like 'user should be accepted (for test-require-symbol and test-require-gensym)."
   (declare (ignore env))
   (let* ((args (cdr form)))
     (cond
       ;; No arguments - should throw
       ((null args)
        (signal 'simple-error :format-control "require requires at least one argument"))
-      ;; Single non-vector argument - e.g., (require :foo) - should throw
-      ((and (null (cdr args)) (not (vectorp (car args))))
+      ;; Keyword argument - e.g., (require :foo) - should throw
+      ((and (null (cdr args)) (keywordp (car args)))
        (signal 'simple-error :format-control "Invalid argument to require"))
+      ;; Symbols are accepted - e.g., (require 'user) - return nil (stub)
+      ;; Vectors are accepted - e.g., (require [clojure.string :as str])
+      ((null (cdr args))
+       nil)
       ;; Otherwise return nil (stub - don't actually load anything)
       (t nil))))
 
 (defun eval-use (form env)
   "Evaluate a use form: (use & args) - refer to symbols in namespaces.
    Since we're on SBCL without file loading, this is a stub that validates arguments.
-   The test expects (use) and (use :foo) to throw exceptions."
+   The test expects (use) and (use :foo) to throw exceptions.
+   Symbols like 'user are accepted."
   (declare (ignore env))
   (let* ((args (cdr form)))
     (cond
       ;; No arguments - should throw
       ((null args)
        (signal 'simple-error :format-control "use requires at least one argument"))
-      ;; Single non-vector argument - e.g., (use :foo) - should throw
-      ((and (null (cdr args)) (not (vectorp (car args))))
+      ;; Keyword argument - e.g., (use :foo) - should throw
+      ((and (null (cdr args)) (keywordp (car args)))
        (signal 'simple-error :format-control "Invalid argument to use"))
+      ;; Symbols are accepted - e.g., (use 'user) - return nil (stub)
+      ;; Vectors are accepted - e.g., (use [clojure.string :as str])
+      ((null (cdr args))
+       nil)
       ;; Otherwise return nil (stub - don't actually load anything)
       (t nil))))
 
@@ -1679,6 +1689,15 @@
    This is a stub - creates a placeholder symbol for the interface."
   (declare (ignore env))
   ;; Extract the interface name
+  (let ((name (cadr form)))
+    ;; For now, just return the name as a symbol
+    name))
+
+(defun eval-defprotocol (form env)
+  "Evaluate a defprotocol form: (defprotocol name [method-sig]+) - define a protocol.
+   This is a stub - creates a placeholder symbol for the protocol."
+  (declare (ignore env))
+  ;; Extract the protocol name
   (let ((name (cadr form)))
     ;; For now, just return the name as a symbol
     name))
@@ -3595,8 +3614,10 @@
   (register-core-function env 'read-string #'clojure-read-string)
   (register-core-function env 'println #'clojure-println)
   (register-core-function env 'prn #'clojure-prn)
+  (register-core-function env 'pr #'clojure-pr)
   (register-core-function env 'pr-str #'clojure-pr-str)
   (register-core-function env 'print-str #'clojure-print-str)
+  (register-core-function env 'print #'clojure-print)
   (register-core-function env 'constantly #'clojure-constantly)
   (register-core-function env 'complement #'clojure-complement)
   (register-core-function env 'comp #'clojure-comp)
@@ -3758,6 +3779,7 @@
   ;; lazy-seq is now a special form (see clojure-eval)
   (register-core-function env 'lazy-cat #'clojure-lazy-cat)
   (register-core-function env 'gensym #'clojure-gensym)
+  (register-core-function env 'intern #'clojure-intern)
   (register-core-function env 'doc #'clojure-doc)
   (register-core-function env 'source-fn #'clojure-source-fn)
   (register-core-function env 'source #'clojure-source)
@@ -7238,6 +7260,14 @@
       (gensym (princ-to-string prefix))
       (gensym)))
 
+(defun clojure-intern (ns-or-sym &optional sym val)
+  "Intern a symbol in a namespace.
+   (intern ns sym) - find or create var in namespace
+   (intern ns sym val) - find or create var with root value
+   For SBCL, this is a stub that returns the value."
+  (declare (ignore ns-or-sym sym))
+  val)
+
 (defun clojure-doc (sym)
   "Return documentation for a symbol.
    For SBCL, this is a stub that returns nil."
@@ -7427,11 +7457,24 @@
   (terpri)
   nil)
 
+(defun clojure-print (&rest args)
+  "Print arguments to standard output (no newline).
+   Each argument is converted to a string via str."
+  (dolist (arg args)
+    (princ (clojure-str arg)))
+  nil)
+
 (defun clojure-prn (&rest args)
   "Print arguments to standard output in readable form, followed by a newline."
   (dolist (arg args)
     (prin1 arg))
   (terpri)
+  nil)
+
+(defun clojure-pr (&rest args)
+  "Print arguments to standard output in readable form (no newline)."
+  (dolist (arg args)
+    (prin1 arg))
   nil)
 
 (defun string-prefix-p (prefix string)
@@ -8662,6 +8705,7 @@
            ((and head-name (string= head-name "defstruct")) (eval-defstruct form env))
            ((and head-name (string= head-name "defrecord")) (eval-defrecord form env))
            ((and head-name (string= head-name "definterface")) (eval-definterface form env))
+           ((and head-name (string= head-name "defprotocol")) (eval-defprotocol form env))
            ((and head-name (string= head-name "reify")) (eval-reify form env))
            ((and head-name (string= head-name "future")) (eval-future form env))
            ((and head-name (string= head-name "thrown-with-msg")) (eval-thrown-with-msg form env))

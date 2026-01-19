@@ -479,12 +479,16 @@
 (defun eval-syntax-quote (form env)
   "Evaluate a syntax-quote form: `(syntax-quote form) - like quote but with unquote support."
   ;; Syntax-quote returns its form, but processes any nested unquote/unquote-splicing
-  (let ((form-to-quote (cadr form)))
-    ;; Process the form, handling unquote and unquote-splicing
-    (process-syntax-quote form-to-quote env)))
+  (let ((form-to-quote (cadr form))
+        ;; Create a new gensym table for this syntax-quote expansion
+        ;; This tracks auto-gensym symbols like a# -> a__1234__auto__
+        (gensym-table (make-hash-table :test #'equal)))
+    ;; Process the form, handling unquote, unquote-splicing, and auto-gensym
+    (process-syntax-quote form-to-quote env gensym-table)))
 
-(defun process-syntax-quote (form env)
-  "Process a syntax-quote form, expanding unquote and unquote-splicing."
+(defun process-syntax-quote (form env &optional (gensym-table (make-hash-table :test #'equal)))
+  "Process a syntax-quote form, expanding unquote, unquote-splicing, and auto-gensym.
+   GENSYM-TABLE tracks auto-gensym mappings (e.g., a# -> a__1234__auto__)."
   (typecase form
     ;; Handle unquote - evaluate and return the value
     (cons
@@ -508,7 +512,7 @@
          ((and (symbolp head) (string= (symbol-name head) "UNQUOTE-SPLICING"))
           (list :splice (clojure-eval (cadr form) env)))
          ;; Regular list - recursively process elements and build list
-         (t (let ((processed (mapcar (lambda (x) (process-syntax-quote x env)) form)))
+         (t (let ((processed (mapcar (lambda (x) (process-syntax-quote x env gensym-table)) form)))
               ;; Flatten any :splice markers
               (let ((result nil))
                 (dolist (elem processed)
@@ -516,19 +520,19 @@
                       ;; Splice the elements, but process each through process-syntax-quote
                       ;; to convert hash-tables to forms
                       (dolist (spliced-elem (cdr elem))
-                        (push (process-syntax-quote spliced-elem env) result))
+                        (push (process-syntax-quote spliced-elem env gensym-table) result))
                       (push elem result)))
                 (nreverse result)))))))
     ;; For vectors, process each element and return as vector
     (vector
-     (let ((processed (mapcar (lambda (x) (process-syntax-quote x env)) (coerce form 'list))))
+     (let ((processed (mapcar (lambda (x) (process-syntax-quote x env gensym-table)) (coerce form 'list))))
        ;; Flatten any :splice markers in vectors too
        (let ((result nil))
          (dolist (elem processed)
            (if (and (consp elem) (eq (car elem) :splice))
                ;; Splice the elements, but process each through process-syntax-quote
                (dolist (spliced-elem (cdr elem))
-                 (push (process-syntax-quote spliced-elem env) result))
+                 (push (process-syntax-quote spliced-elem env gensym-table) result))
                (push elem result)))
          (coerce (nreverse result) 'vector))))
     ;; For hash tables (maps), return a form that creates the map
@@ -543,10 +547,27 @@
        (cons 'hash-map
              (loop for (k v) on pairs by #'cddr
                    collect k
-                   collect (process-syntax-quote v env)))))
-    ;; For symbols, return them as-is (will be resolved when final code is evaluated)
-    ;; In a real implementation, symbols would be namespace-qualified
-    (symbol form)
+                   collect (process-syntax-quote v env gensym-table)))))
+    ;; For symbols, check for auto-gensym (ending with #)
+    ;; In Clojure, symbols like a# within syntax-quote are expanded to unique symbols
+    (symbol
+     (let ((name (symbol-name form)))
+       (if (and (> (length name) 0)
+                (char= (char name (1- (length name))) #\#))
+           ;; Auto-gensym: generate or retrieve unique symbol
+           (let* ((base-name (subseq name 0 (1- (length name))))
+                  (key (string base-name))
+                  (existing (gethash key gensym-table)))
+             (if existing
+                 existing
+                 ;; Generate a new unique symbol using CL gensym
+                 ;; Clojure uses format like: name__1234__auto__
+                 (let ((new-sym (gensym (concatenate 'string (string base-name) "__"))))
+                   ;; Store in gensym table for reuse within this syntax-quote
+                   (setf (gethash key gensym-table) new-sym)
+                   new-sym)))
+           ;; Regular symbol - return as-is
+           form)))
     ;; Everything else just return as-is
     (t form)))
 

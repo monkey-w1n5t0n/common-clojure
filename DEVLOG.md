@@ -5973,3 +5973,46 @@ from regular maps.
 1. Continue fixing remaining 35 evaluation errors
 2. The data_structures test now has a type error - investigate next
 3. Address the 9 parse errors
+
+### Iteration 104 - 2026-01-19
+
+**Focus:** Investigate and fix the "invalid number of arguments: 0" error in repl test
+
+**Problem:**
+The `repl` test was failing with "invalid number of arguments: 0". This error occurs
+during the evaluation of `(deftest test-dynamic-ns ...)` which contains macro calls
+to `(call-ns)`.
+
+**Analysis:**
+1. The test file `clojure-tests/repl.clj` defines two macros:
+   - `(defmacro call-ns [] `(ns a#))` - calls ns with auto-gensym'd namespace
+   - `(defmacro call-ns-sym [] `(do (ns a#...)` - returns the gensym symbol
+
+2. When these macros are expanded, the auto-gensym syntax (symbols ending with `#`)
+   needs to be converted to unique symbols (gensyms).
+
+3. The `process-syntax-quote` function was NOT handling auto-gensym - it just
+   returned symbols ending with `#` as-is.
+
+**Fix Attempted:**
+Added auto-gensym handling to `process-syntax-quote` (cl-clojure-eval.lisp:489-572):
+1. Added a `gensym-table` parameter to track auto-gensym mappings within a single
+   syntax-quote expansion
+2. Modified `eval-syntax-quote` to create a new gensym table for each expansion
+3. Updated all recursive calls to pass the gensym table
+4. Added logic to detect symbols ending with `#` and generate unique symbols
+
+**Test Results:**
+- Simple macro expansion test works: `(defmacro m [] `(ns x#))` expands correctly
+- The gensym is created as an uninterned symbol (e.g., `#:|a__100|`)
+- However, the full repl test still fails with "invalid number of arguments: 0"
+
+**Outstanding Issues:**
+- The error occurs during evaluation of the `deftest` form in the actual test
+- The backtrace shows the error happens during compilation, not runtime
+- Further investigation is needed to trace the exact source of the error
+
+**Next Steps:**
+1. Debug the "invalid number of arguments: 0" error more specifically
+2. The error might be in `deftest` evaluation, not macro expansion
+3. Consider whether there's an issue with how the test forms are being evaluated

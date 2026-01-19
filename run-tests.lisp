@@ -1,4 +1,5 @@
-#!/bin/sbcl --script
+;; Run tests - load with sbcl --load run-tests.lisp
+;; Or use ./tests.sh
 
 (load "package.lisp")
 (load "cl-clojure-syntax.lisp")

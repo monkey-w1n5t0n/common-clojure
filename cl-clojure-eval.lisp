@@ -6599,14 +6599,16 @@
                    1000)))
     (make-list limit :initial-element x)))
 
-(defun clojure-repeat (x &optional (n nil))
+(defun clojure-repeat (n &optional (x nil x-provided-p))
   "Return a lazy sequence of repeated xs.
-   If n is provided, repeat n times. Otherwise infinite."
-  (if n
-      (make-list n :initial-element x)
-      ;; Infinite repetition - return a lazy range-like marker
-      ;; For now, just return a limited list
-      (make-list 1000 :initial-element x)))
+   If only n is provided, repeat n times (returns list of nils).
+   If n is an integer and x is provided, repeat x n times.
+   If only x is provided (n is nil or not an integer), return infinite (1000 elements).
+   Clojure signature: (repeat [n] x) - note that x can be omitted for infinite."
+  (declare (optimize (speed 1) (safety 1) (debug 1)))
+  (let ((count (if (and n (integerp n)) n 1000))
+        (val (if x-provided-p x n)))  ; If x provided, use it, otherwise use n (the only arg)
+    (make-list count :initial-element val)))
 
 (defun clojure-read-string (string &optional (eof-error-p t) (eof-value :eof))
   "Read a single Clojure form from a string.
@@ -7057,7 +7059,7 @@
         t
         ;; Check that all predicates return true for all arguments
         (every (lambda (p)
-                 (every (lambda (x) (funcall p x)) xs))
+                 (every (lambda (x) (apply-function p (list x))) xs))
                preds))))
 
 (defun clojure-some-fn (&rest preds)
@@ -7069,7 +7071,7 @@
         nil
         ;; Check that any predicate returns true for at least one argument
         (some (lambda (p)
-               (some (lambda (x) (funcall p x)) xs))
+               (some (lambda (x) (apply-function p (list x))) xs))
              preds))))
 
 (defun clojure-partial (f &rest args)
@@ -9611,7 +9613,8 @@
        (error "Cannot apply non-function symbol: ~A" fn-value))
 
       ;; Regular Lisp function
-      (function (apply actual-fn unwrapped-args))
+      (function
+        (apply actual-fn unwrapped-args))
 
       ;; Error
       (t (error "Cannot apply non-function: ~A" fn-value)))))

@@ -6954,3 +6954,59 @@ The low-hanging fruit has been picked. Remaining failures fall into two categori
 - OR focus on Java interop stubs for array classes
 - Consider that 68/102 tests passing (66.7%) is good progress for SBCL Clojure
 
+
+---
+
+## Iteration 119 - 2026-01-19
+
+**Focus:** Fix `clojure-repeat` function signature issue
+
+**Problem Identified:**
+
+The `other_functions` test was failing with an argument order mismatch. Investigation revealed
+that `clojure-repeat` had its parameters in the wrong order for Clojure compatibility.
+
+**Root Cause:**
+
+The original implementation had:
+```lisp
+(defun clojure-repeat (x &optional (n nil))
+```
+
+But Clojure's `repeat` has signature:
+- `(repeat x)` - infinite sequence of x
+- `(repeat n x)` - n repetitions of x (count FIRST, value SECOND)
+
+This meant `(repeat 3 identity)` was being called as `x=3, n=identity` instead of
+`n=3, x=identity`, causing the wrong values to be returned.
+
+**Fix Applied:**
+
+Changed signature to:
+```lisp
+(defun clojure-repeat (n &optional (x nil x-provided-p))
+```
+
+With logic to handle both cases:
+- If `n` is an integer, use it as count and `x` as value
+- If only one arg provided, use it as the value (infinite repetition)
+
+**Outcome:**
+
+- `repeat` function now works correctly with Clojure semantics
+- `(repeat 3 identity)` correctly returns 3 copies of the identity function
+
+**Remaining Issue in `other_functions`:**
+
+The test now progresses further but fails with "Undefined symbol: and" - this is
+a separate issue in the `fn*` macro where `and` is being treated as a function instead
+of a macro. This requires fixing the `fn*` macro to properly expand special forms like
+`and`, `or`, etc.
+
+**Test Results:**
+- Still 68 tests passing, 34 failing
+- `repeat` function fixed, but `fn*` macro issue blocks `other_functions` test completion
+
+**Next Steps:**
+1. Fix `fn*` macro to handle special forms (`and`, `or`, etc.) properly
+2. OR focus on a different test that doesn't require the `fn*` macro fix

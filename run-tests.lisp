@@ -3,6 +3,7 @@
 (load "package.lisp")
 (load "cl-clojure-syntax.lisp")
 (load "cl-clojure-eval.lisp")
+(load "cl-clojure-transducers.lisp")
 
 (defpackage #:clojure-test-runner
   (:use #:cl #:cl-clojure-syntax #:cl-clojure-eval))
@@ -44,10 +45,12 @@
       (if (eq status :ok)
           (push name passed)
           (push name failed))))
+  (setf passed (nreverse passed))
+  (setf failed (nreverse failed))
   (format t "~&=== Passed Tests ===~%")
-  (dolist (name (nreverse passed))
+  (dolist (name passed)
     (format t "  ~A~%" name))
   (format t "~&=== Failed Tests ===~%")
-  (dolist (name (nreverse failed))
+  (dolist (name failed)
     (format t "  ~A~%" name))
   (format t "~&Total: ~D passed, ~D failed~%" (length passed) (length failed)))

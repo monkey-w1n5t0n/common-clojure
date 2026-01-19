@@ -6582,3 +6582,60 @@ The remaining issue is with `:or` defaults for symbols that aren't found in the 
 - Debug why `:or {f 3}` doesn't create a binding for `f` when `e/f` isn't in value-map
 - Check if the `:or` handling is being called after `:syms` destructuring
 - Verify that `env-get-lexical` correctly reports `found-p=NIL` for unboud symbols
+
+---
+
+### Iteration 112 - 2026-01-19
+
+**Focus:** Fix test runner to load transducers module and fix test counting
+
+**Problems Identified:**
+
+1. **`setup-transducer-functions` undefined**
+   - The `cl-clojure-transducers.lisp` file defines `setup-transducer-functions` 
+   - This function is called from `setup-core-functions` in `cl-clojure-eval.lisp`
+   - But `run-tests.lisp` was not loading `cl-clojure-transducers.lisp`
+   - This caused "Undefined function: SETUP-TRANSDUCER-FUNCTIONS" error
+
+2. **Test runner count bug**
+   - The test summary showed "Total: 1 passed, 1 failed" which was clearly wrong
+   - The lists showed many tests in both categories
+   - The issue was that `nreverse` returns the reversed list but doesn't update the variable
+   - So `(length passed)` was called on the original pre-reverse list
+
+**Changes Made:**
+
+1. **Fixed run-tests.lisp to load transducers** - run-tests.lisp:3-6
+   - Added `(load "cl-clojure-transducers.lisp")` after loading cl-clojure-eval.lisp
+   - The transducers file must be loaded AFTER cl-clojure-eval.lisp because:
+     - It uses `in-package :cl-clojure-eval` (extends the existing package)
+     - It references symbols like `+transducer-sentinel+` defined in cl-clojure-eval.lisp
+
+2. **Fixed test runner counting** - run-tests.lisp:48-56
+   - Changed from `(dolist (name (nreverse passed)) ...)` to:
+     ```lisp
+     (setf passed (nreverse passed))
+     (setf failed (nreverse failed))
+     (dolist (name passed) ...)
+     ```
+   - Now `length passed` and `length failed` return correct counts
+
+**Technical Notes:**
+- `nreverse` is a destructive operation that reverses the list in place
+- It returns the reversed list, but if you don't capture the return value,
+  the original variable still points to the original (now corrupted) list head
+- In Common Lisp, you must use `setf` to update the variable with the reversed list
+
+**Test Results:**
+- Before: Tests failed to run (undefined function error)
+- After: 68 passed, 34 failed
+- The test runner now correctly loads all dependencies and reports accurate counts
+
+**Key Files Modified:**
+- **run-tests.lisp** - Added transducers load order, fixed list counting
+
+**Next Steps:**
+- The evaluation system is now fully functional with all modules loaded
+- 68 test files can be parsed and evaluated successfully
+- 34 test files still have errors during evaluation
+- Focus on fixing specific evaluation errors in failing tests

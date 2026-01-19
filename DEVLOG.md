@@ -6797,3 +6797,36 @@ The correct structure is now:
 - Continue fixing failing tests
 - Focus on issues that don't require Java interop
 - Many remaining failures are Java interop related
+
+---
+
+## Iteration 116 - 2026-01-19
+
+**Focus:** Fix `clojure-print-str` parenthesis structure (third attempt)
+
+**Problem:**
+The `clojure-print-str` function still had incorrect parenthesis structure from previous attempts, causing:
+1. Compilation error: "end of file" - unclosed parentheses
+2. The function spans lines 7992-8051, and the parenthesis count was off by 1
+
+**Root Cause:**
+Previous attempts had miscounted the closing parentheses. The correct structure requires:
+- Line 8050: `(get-output-stream-string s)))))` - closes get-output-stream-string, let, t-branch, cond, lambda (5 closes)
+- Line 8051: `args))))` - args is second arg to mapcar, then closes mapcar, apply, if, defun (4 closes)
+
+**Verification:**
+Created test file `test_structure.lisp` with simplified version of the function to verify correct parenthesis balance (16 opens, 16 closes, compiles successfully).
+
+**Solution:**
+Changed line 8051 from `args)))))` (5 closes) to `args))))` (4 closes) to match the working test structure.
+
+**Test Results:**
+- Before fix: Compilation error prevented tests from running
+- After fix: File compiles, tests run: 68 passed, 34 failed (same as iteration 115)
+
+**Key Files Modified:**
+- **cl-clojure-eval.lisp** - line 8051, fixed parenthesis count in `clojure-print-str`
+
+**Next Steps:**
+- Continue fixing failing tests
+- Focus on issues that don't require Java interop

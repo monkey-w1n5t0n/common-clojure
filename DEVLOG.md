@@ -6461,3 +6461,60 @@ Clojure supports two forms of namespaced destructuring:
 1. Debug the vector-as-symbol error in namespaced destructuring
 2. The error occurs in `extend-map-binding` when processing `:keys` or `:syms`
 3. Need to trace through `bind-sym` computation to find where vector is introduced
+
+---
+### Iteration 111 - 2025-01-19
+
+**Focus:** Fix destructuring with metadata-wrapped symbols and maphash argument order
+
+**Problems Identified:**
+
+1. **Metadata-wrapped symbols in destructuring** - In function parameters like `[^{:tag ...} o]`, 
+   the reader creates `#((WITH-META O {:TAG ...}))` where the vector contains a list, not a symbol.
+   This caused errors like "The value #(|x|) is not of type SYMBOL".
+
+2. **maphash argument order bug** - In `extend-map-binding` at line 1171, the lambda was defined as
+   `(lambda (binding-form key-to-extract) ...)` but maphash passes `(key value)`, so the arguments
+   were swapped. This caused vectors to be treated as keywords.
+
+**Changes Made:**
+
+1. **Unwrap metadata-wrapped symbols in vector/list destructuring** - cl-clojure-eval.lisp:1247-1297
+   - Added check for `(WITH-META sym metadata)` patterns in vector destructuring
+   - Extract actual symbol name from metadata-wrapped forms before binding
+   - Applied to both regular parameters and rest parameter handling
+
+2. **Unwrap metadata-wrapped symbols in map destructuring** - cl-clojure-eval.lisp:1076-1114
+   - For `:keys` destructuring, unwrap `(WITH-META X TYPE)` to get `X`
+   - For `:syms` destructuring, same unwrapping
+   - Search case-insensitively for keywords in value-map (CL uppercases, Clojure preserves case)
+
+3. **Fixed maphash argument order** - cl-clojure-eval.lisp:1172
+   - Changed from `(lambda (binding-form key-to-extract) ...)` to `(lambda (key-to-extract binding-form) ...)`
+   - maphash passes `(key value)`, so first arg is the keyword (key-to-extract), second is the binding-form
+
+**Test Results:**
+- Before: 68 ok, 34 errors
+- After: 68 ok, 34 errors (but errors changed)
+
+**Error Changes:**
+- `special`: "The value #(|x|) is not of type SYMBOL" → "Undefined symbol: b"
+- `errors`: "The value #(|cause| |via| |trace|) is not of type SYMBOL" → "The value #(#<HASH-TABLE>) is not of type SYMBOL"
+
+**Progress Made:**
+- Metadata-wrapped symbols are now correctly unwrapped in destructuring
+- The maphash argument order bug is fixed
+- Destructuring now parses correctly but some symbols aren't being bound
+
+**Remaining Issues:**
+- Namespaced symbol destructuring (`a/b` in `{:keys [a/b c/d]}`) doesn't bind correctly
+- The symbol `b` should be bound to the value of `:a/b` but isn't found
+- Likely issue: case sensitivity or keyword lookup in value-map
+
+**Key Files Modified:**
+- **cl-clojure-eval.lisp** - Fixed destructuring to unwrap metadata-wrapped symbols and correct maphash args
+
+**Next Steps:**
+- Debug why namespaced symbol destructuring doesn't find keywords in value-map
+- The search loop should find `:|a/b|` when searching for `a/b`, but doesn't
+- Check if `string-equal` is working correctly across different keyword representations

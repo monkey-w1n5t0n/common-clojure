@@ -1072,33 +1072,42 @@
                   ;; keys-spec is like [x y] - extract :x and :y from value-map
                   ;; If keys-ns is set (e.g., "a"), look for :a/x, :a/y instead
                   (dolist (key (coerce keys-spec 'list))
-                    (let* ((;; Create the keyword to look up
-                            keyword-key (if keys-ns
-                                          ;; Namespaced: :a/x -> look for :a/x
-                                          (intern (concatenate 'string keys-ns "/" (symbol-name key)) "KEYWORD")
-                                          (if (symbolp key)
-                                              ;; Unnamespaced: x -> look for :x
-                                              ;; Namespaced symbol in vector: a/b -> look for :a/b
-                                              (intern (symbol-name key) "KEYWORD")
-                                              key)))
+                    ;; First, unwrap metadata-wrapped symbols: (WITH-META X TYPE) -> X
+                    (let* ((actual-key (if (and (listp key)
+                                                 (>= (length key) 2)
+                                                 (symbolp (car key))
+                                                 (string= (symbol-name (car key)) "WITH-META"))
+                                          (cadr key)
+                                          key))
+                           ;; We need to search for the key case-insensitively because:
+                           ;; - CL uppercases symbol names (CAUSE)
+                           ;; - Clojure preserves case (cause)
+                           ;; - We need to find the actual keyword in the value-map
+                           (keyword-name (symbol-name actual-key))
+                           ;; Find the actual keyword in the value-map by case-insensitive comparison
+                           (actual-kw (loop for k being the hash-keys of value-map
+                                           when (and (keywordp k)
+                                                    (string-equal (symbol-name k) keyword-name))
+                                           return k))
                            ;; Use multiple-value-bind to check if key was found
-                           ;; gethash returns (values value found-p)
-                           (val-found-p (multiple-value-list (gethash keyword-key value-map)))
+                           (val-found-p (if actual-kw
+                                          (multiple-value-list (gethash actual-kw value-map))
+                                          (list nil nil)))
                            (val (first val-found-p))
                            (found-p (second val-found-p))
                            ;; For binding, use the local name only (not namespaced)
                            ;; Two cases:
                            ;; 1. {:a/keys [b]} -> bind b to value of :a/b
                            ;; 2. {:keys [a/b]} -> bind b to value of :a/b
-                           (bind-sym (if (symbolp key)
-                                        (let ((name (symbol-name key)))
+                           (bind-sym (if (symbolp actual-key)
+                                        (let ((name (symbol-name actual-key)))
                                           ;; If key is namespaced (e.g., a/b), bind to local name (b)
                                           ;; Otherwise bind to key itself
                                           (if (find #\/ name)
                                               (let ((slash-pos (position #\/ name)))
                                                 (intern (subseq name (1+ slash-pos))))
-                                              key))
-                                        (intern (symbol-name keyword-key)))))
+                                              actual-key))
+                                        actual-key)))
                       ;; Only bind if the key was found in the value map
                       ;; Otherwise, :or will provide the default
                       (when found-p
@@ -1109,22 +1118,33 @@
                   ;; syms-spec is like [x y] - extract 'x and 'y from value-map
                   ;; If syms-ns is set (e.g., "a"), look for a/x, a/y instead
                   (dolist (sym (coerce syms-spec 'list))
-                    (let* ((;; Create the symbol to look up
-                            lookup-sym (if syms-ns
-                                          ;; Namespaced: x -> look for a/x
-                                          (intern (symbol-name sym) syms-ns)
+                    ;; First, unwrap metadata-wrapped symbols: (WITH-META X TYPE) -> X
+                    (let* ((actual-sym (if (and (listp sym)
+                                                 (>= (length sym) 2)
+                                                 (symbolp (car sym))
+                                                 (string= (symbol-name (car sym)) "WITH-META"))
+                                          (cadr sym)
                                           sym))
+                           ;; We need to search for the symbol case-insensitively
+                           (sym-name (symbol-name actual-sym))
+                           ;; Find the actual symbol in the value-map by case-insensitive comparison
+                           (actual-sym-found (loop for k being the hash-keys of value-map
+                                                   when (and (symbolp k)
+                                                            (string-equal (symbol-name k) sym-name))
+                                                   return k))
                            ;; Use multiple-value-bind to check if key was found
-                           (val-found-p (multiple-value-list (gethash lookup-sym value-map)))
+                           (val-found-p (if actual-sym-found
+                                          (multiple-value-list (gethash actual-sym-found value-map))
+                                          (list nil nil)))
                            (val (first val-found-p))
                            (found-p (second val-found-p))
                            ;; For binding, use the local name only (not namespaced)
                            ;; e.g., a/x binds to symbol x, not a/x
-                           (bind-sym (let ((name (symbol-name sym)))
+                           (bind-sym (let ((name (symbol-name actual-sym)))
                                        (if (find #\/ name)
                                            (let ((slash-pos (position #\/ name)))
                                              (intern (subseq name (1+ slash-pos))))
-                                           sym))))
+                                           actual-sym))))
                       ;; Only bind if the key was found in the value map
                       ;; Otherwise, :or will provide the default
                       (when found-p
@@ -1154,7 +1174,8 @@
       ;; The reader creates: key=binding-form, value=key-to-extract
       ;; So we iterate and extract the VALUE from the binding-map (which is the key to extract)
       ;; and bind it using the KEY from the binding-map (which is the binding form)
-      (maphash (lambda (binding-form key-to-extract)
+      ;; Note: maphash passes (key value), not (value key)
+      (maphash (lambda (key-to-extract binding-form)
                  ;; Skip special keywords that were already handled
                  ;; Check both unnamespaced and namespaced variants
                  (let ((key-name (symbol-name key-to-extract))
@@ -1244,13 +1265,28 @@
              (loop for i below regular-count
                    for sym in regular-bindings
                    for val in value-list
-                   for binding-sym = (if (vectorp sym) (coerce sym 'list) sym)
+                   ;; Extract the actual binding symbol, handling metadata-wrapped symbols
+                   ;; e.g., (WITH-META X {:TAG ...}) -> X
+                   for binding-sym = (cond
+                                      ((vectorp sym) (coerce sym 'list))
+                                      ((and (listp sym)
+                                            (>= (length sym) 2)
+                                            (symbolp (car sym))
+                                            (string= (symbol-name (car sym)) "WITH-META"))
+                                       (cadr sym))  ; Unwrap metadata
+                                      (t sym))
                    do (setf new-env (extend-binding new-env binding-sym val)))
              ;; Bind rest parameter
              (when rest-binding
-               (let ((rest-binding-sym (if (vectorp rest-binding)
-                                          (coerce rest-binding 'list)
-                                          rest-binding)))
+               (let ((rest-binding-sym (cond
+                                         ((vectorp rest-binding)
+                                          (coerce rest-binding 'list))
+                                         ((and (listp rest-binding)
+                                               (>= (length rest-binding) 2)
+                                               (symbolp (car rest-binding))
+                                               (string= (symbol-name (car rest-binding)) "WITH-META"))
+                                          (cadr rest-binding))  ; Unwrap metadata
+                                         (t rest-binding))))
                  (setf new-env (extend-binding new-env rest-binding-sym rest-values))))
              new-env)
            ;; No rest parameter - simple destructuring
@@ -1270,7 +1306,16 @@
                               (t (coerce value 'list)))))
              (loop for sym in binding-list
                    for val in value-list
-                   for binding-sym = (if (vectorp sym) (coerce sym 'list) sym)
+                   ;; Extract the actual binding symbol, handling metadata-wrapped symbols
+                   ;; e.g., (WITH-META X {:TAG ...}) -> X
+                   for binding-sym = (cond
+                                      ((vectorp sym) (coerce sym 'list))
+                                      ((and (listp sym)
+                                            (>= (length sym) 2)
+                                            (symbolp (car sym))
+                                            (string= (symbol-name (car sym)) "WITH-META"))
+                                       (cadr sym))  ; Unwrap metadata
+                                      (t sym))
                    with new-env = env
                    do (setf new-env (extend-binding new-env binding-sym val))
                    finally (return new-env))))))
@@ -1317,14 +1362,29 @@
              (loop for i below regular-count
                    for sym in regular-bindings
                    for val in value-list
-                   for binding-sym = (if (vectorp sym) (coerce sym 'list) sym)
+                   ;; Extract the actual binding symbol, handling metadata-wrapped symbols
+                   ;; e.g., (WITH-META X {:TAG ...}) -> X
+                   for binding-sym = (cond
+                                      ((vectorp sym) (coerce sym 'list))
+                                      ((and (listp sym)
+                                            (>= (length sym) 2)
+                                            (symbolp (car sym))
+                                            (string= (symbol-name (car sym)) "WITH-META"))
+                                       (cadr sym))  ; Unwrap metadata
+                                      (t sym))
                    do (setf new-env (extend-binding new-env binding-sym val)))
              ;; Bind rest parameter if present - recursively if it's a list/vector
              ;; Convert vector binding forms to lists for destructuring
              (when rest-binding
-               (let ((rest-binding-sym (if (vectorp rest-binding)
-                                          (coerce rest-binding 'list)
-                                          rest-binding)))
+               (let ((rest-binding-sym (cond
+                                         ((vectorp rest-binding)
+                                          (coerce rest-binding 'list))
+                                         ((and (listp rest-binding)
+                                               (>= (length rest-binding) 2)
+                                               (symbolp (car rest-binding))
+                                               (string= (symbol-name (car rest-binding)) "WITH-META"))
+                                          (cadr rest-binding))  ; Unwrap metadata
+                                         (t rest-binding))))
                  (setf new-env (extend-binding new-env rest-binding-sym rest-values))))
              new-env)
            ;; No rest parameter - simple destructuring with recursive binding
@@ -1345,7 +1405,16 @@
                               (t (coerce value 'list)))))
              (loop for sym in binding-form
                    for val in value-list
-                   for binding-sym = (if (vectorp sym) (coerce sym 'list) sym)
+                   ;; Extract the actual binding symbol, handling metadata-wrapped symbols
+                   ;; e.g., (WITH-META X {:TAG ...}) -> X
+                   for binding-sym = (cond
+                                      ((vectorp sym) (coerce sym 'list))
+                                      ((and (listp sym)
+                                            (>= (length sym) 2)
+                                            (symbolp (car sym))
+                                            (string= (symbol-name (car sym)) "WITH-META"))
+                                       (cadr sym))  ; Unwrap metadata
+                                      (t sym))
                    with new-env = env
                    do (setf new-env (extend-binding new-env binding-sym val))
                    finally (return new-env))))))

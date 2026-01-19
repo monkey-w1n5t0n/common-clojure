@@ -6016,3 +6016,53 @@ Added auto-gensym handling to `process-syntax-quote` (cl-clojure-eval.lisp:489-5
 1. Debug the "invalid number of arguments: 0" error more specifically
 2. The error might be in `deftest` evaluation, not macro expansion
 3. Consider whether there's an issue with how the test forms are being evaluated
+
+
+---
+### Iteration 105 - 2026-01-19
+
+**Focus:** Fix auto-gensym inside quoted forms and clojure-call-ns-sym arity issue
+
+**Problems Identified:**
+
+1. **Auto-gensym not processed inside quoted forms in syntax-quote**
+   - When processing ``( `a#)` which is `(syntax-quote (quote a#))`, the `a#` symbol
+     inside the quote was not being converted to a gensym
+   - The `process-syntax-quote` function detected `QUOTE` forms but returned them
+     as-is without processing the quoted form for auto-gensym
+
+2. **clojure-call-ns-sym called with 0 arguments**
+   - The `clojure-call-ns-sym` function was defined with a required parameter `(ns)`
+   - It was being called with 0 arguments via `apply`, causing SBCL to throw
+     "invalid number of arguments: 0" before the function body executes
+   - This was happening during evaluation of the repl.clj test file
+
+**Changes Made:**
+
+1. **Fixed auto-gensym in quoted forms** - cl-clojure-eval.lisp:497-508
+   - Changed the `QUOTE` case in `process-syntax-quote` to process the quoted form
+   - Now ``( `a#)`` correctly expands to ``( (quote #:|a__123|))``
+   - The same gensym is reused for all occurrences of `a#` within the syntax-quote
+
+2. **Fixed clojure-call-ns-sym arity** - cl-clojure-eval.lisp:7454
+   - Changed parameter from required `(ns)` to optional `(&optional ns)`
+   - This allows the function to be called with 0 arguments
+   - The function is a stub that returns nil regardless of the argument
+
+**Test Results:**
+- Before: Eval: 67 ok, 35 errors
+- After: Eval: **68 ok, 34 errors**
+- **1 new test passing:** repl (was failing with "invalid number of arguments: 0")
+
+**Key Fixes:**
+1. **process-syntax-quote** - cl-clojure-eval.lisp:506-508
+   - Changed from returning `form` (unchanged) to processing the quoted form
+   - `(list 'quote (process-syntax-quote quoted-form env gensym-table))`
+
+2. **clojure-call-ns-sym** - cl-clojure-eval.lisp:7454
+   - Changed from `(defun clojure-call-ns-sym (ns)` 
+   - To `(defun clojure-call-ns-sym (&optional ns)`
+
+**Next Steps:**
+- Continue fixing remaining 34 evaluation errors
+- The auto-gensym fix may help other tests that use syntax-quote with auto-gensym

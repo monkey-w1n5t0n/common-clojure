@@ -503,8 +503,9 @@
                          (string= (symbol-name (car quoted-form)) "UNQUOTE-SPLICING")))
                 ;; (quote (unquote x)) -> evaluate x and quote the result
                 (list 'quote (clojure-eval (cadr quoted-form) env))
-                ;; Preserve the quote for other cases
-                form)))
+                ;; For other quoted forms, process through process-syntax-quote
+                ;; This handles auto-gensym like 'a# -> (quote #:|a__123|)
+                (list 'quote (process-syntax-quote quoted-form env gensym-table)))))
          ;; Handle unquote - evaluate and return the value
          ((and (symbolp head) (string= (symbol-name head) "UNQUOTE"))
           (clojure-eval (cadr form) env))
@@ -7450,7 +7451,7 @@
   (setf *current-ns* ns-name)
   ns-name)
 
-(defun clojure-call-ns-sym (ns)
+(defun clojure-call-ns-sym (&optional ns)
   "Call a function in the given namespace.
    For SBCL, this is a stub that returns nil."
   (declare (ignore ns))

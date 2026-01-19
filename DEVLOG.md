@@ -6404,3 +6404,60 @@ The function implementation was ignoring bindings and using `eval` on the body, 
 - Serialization test now fails on Java interop (expected, as we don't have full Java support)
 - Consider implementing other missing special forms or Java interop features
 - 25 tests still have errors - focus on the simpler ones that don't require full Java interop
+
+---
+
+### Iteration 108 - 2026-01-19
+
+**Focus:** Implement namespaced destructuring support (e.g., `{:a/keys [b c]}`)
+
+**Background:**
+Clojure supports two forms of namespaced destructuring:
+1. `{:a/keys [b c]}` - The `:keys` keyword itself has a namespace prefix
+   - Means: bind `b` to value of `:a/b`, `c` to value of `:a/c`
+2. `{:keys [a/b c/d]}` - The symbols IN the vector are namespaced
+   - Means: bind `b` (local name) to value of `:a/b`, `d` to value of `:c/d`
+
+**Changes Made:**
+
+1. **Updated `find-key` in `extend-map-binding`** - cl-clojure-eval.lisp:1046-1062
+   - Modified to find namespaced keywords (e.g., `:a/keys` when searching for "keys")
+   - Returns two values: the keyword found and its namespace (or nil)
+   - For `:a/keys`, returns `:a/keys` and namespace `"a"`
+
+2. **Updated `:keys` destructuring** - cl-clojure-eval.lisp:1070-1105
+   - When `keys-ns` is set (e.g., "a"), creates namespaced keywords for lookup
+   - For symbol `b` with `keys-ns="a"`: looks up `:a/b` in value map
+   - Extracts local name from namespaced symbols (e.g., `a/b` → binds to `b`)
+   - Only binds when key is found in value map (uses `found-p` from `gethash`)
+
+3. **Updated `:syms destructuring** - cl-clojure-eval.lisp:1106-1133
+   - Similar to `:keys`, handles namespaced `:syms` (e.g., `:a/syms [b c]`)
+   - When `syms-ns` is set, creates namespaced symbols for lookup
+   - Extracts local name from namespaced symbols
+
+4. **Updated `:or` handling** - cl-clojure-eval.lisp:1132-1143
+   - Changed from checking value-map to checking if binding exists in environment
+   - Uses `env-get-lexical` to check if binding was already made
+   - Only applies default if binding not found
+
+**Issues Encountered:**
+
+1. **`let*` vs `let` bug** - cl-clojure-eval.lisp:1059-1062
+   - Initially used `let` which binds in parallel
+   - `slash-pos` was trying to use `kname` before it was bound
+   - Fixed by changing to `let*` for sequential binding
+
+2. **Current error:** `#(|x|) is not of type SYMBOL`
+   - Occurs when testing namespaced destructuring
+   - Error suggests a vector is being passed where a symbol is expected
+   - Root cause not yet identified - likely in edge case handling
+
+**Test Results:**
+- Parse: 68 ok, 0 errors ✅
+- Eval: 43 ok, 25 errors (same as before - namespaced destructuring not yet working)
+
+**Next Steps:**
+1. Debug the vector-as-symbol error in namespaced destructuring
+2. The error occurs in `extend-map-binding` when processing `:keys` or `:syms`
+3. Need to trace through `bind-sym` computation to find where vector is introduced

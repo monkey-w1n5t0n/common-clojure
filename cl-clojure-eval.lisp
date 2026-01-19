@@ -1033,7 +1033,9 @@
    value-map is a hash table with actual values
    Supports:
    - :keys [k1 k2] - bind values for keywords :k1, :k2
+   - :ns/keys [k1 k2] - bind values for namespaced keywords :ns/k1, :ns/k2
    - :syms [s1 s2] - bind values for symbols s1, s2
+   - :ns/syms [s1 s2] - bind values for namespaced symbols ns/s1, ns/s2
    - :or {k default} - default values
    - :as sym - bind entire map to sym
    - keyword key with destructuring form: e.g., {:via [{:keys [data]}]} extracts :via and destructures it
@@ -1042,63 +1044,107 @@
    Note: Due to Clojure reader case sensitivity, we need to match keys by
    lowercase symbol name since Clojure preserves case but CL uppercases."
   (flet ((find-key (name)
-           "Find a keyword key in hash table by lowercase name comparison."
+           "Find a keyword key in hash table by lowercase name comparison.
+            Returns two values: the keyword and its namespace (or nil if unnamespaced)."
            (loop for k being the hash-keys of binding-map
                  when (and (keywordp k)
-                          (string-equal (symbol-name k) name))
-                   return k)))
+                          (let ((kname (symbol-name k)))
+                            ;; Check if name matches exactly (e.g., :keys)
+                            ;; or if it's namespaced (e.g., :a/keys matches 'keys')
+                            (or (string-equal kname name)
+                                (let ((slash-pos (position #\/ kname)))
+                                  (and slash-pos
+                                       (string-equal (subseq kname (1+ slash-pos)) name))))))
+                 return (values k
+                                (let* ((kname (symbol-name k))
+                                       (slash-pos (position #\/ kname)))
+                                  (when slash-pos
+                                    (subseq kname 0 slash-pos)))))))
     (let ((new-env env))
-      ;; Get the special keys
-      (let ((keys-key (find-key "keys"))
-            (syms-key (find-key "syms"))
-            (or-key (find-key "or"))
-            (as-key (find-key "as")))
-        ;; Handle :keys destructuring
-        (when (and keys-key (gethash keys-key binding-map))
-          (let ((keys-spec (gethash keys-key binding-map)))
-            ;; keys-spec is like [x y] - extract :x and :y from value-map
-            ;; For namespaced keywords like :a/b, bind just b (local name)
-            (dolist (key (coerce keys-spec 'list))
-              (let* ((keyword-key (if (symbolp key)
-                                     ;; Create keyword by interning into KEYWORD package
-                                     (intern (symbol-name key) "KEYWORD")
-                                     key))
-                     (val (gethash keyword-key value-map))
-                     ;; For namespaced symbols, use local name only
-                     ;; IMPORTANT: Convert keyword-key to symbol for binding
-                     ;; When key is :a (keyword), we want to bind symbol 'a
-                     (bind-sym (let ((name (symbol-name keyword-key)))
-                                 (if (find #\/ name)
-                                     (let ((slash-pos (position #\/ name)))
-                                       (intern (subseq name (1+ slash-pos))))
-                                     (intern name)))))
-                (setf new-env (env-extend-lexical new-env bind-sym val))))))
-        ;; Handle :syms destructuring
-        (when (and syms-key (gethash syms-key binding-map))
-          (let ((syms-spec (gethash syms-key binding-map)))
-            ;; syms-spec is like [x y] - extract 'x and :y from value-map
-            ;; For namespaced symbols like a/b, bind just b (local name)
-            (dolist (sym (coerce syms-spec 'list))
-              (let* ((sym-name (symbol-name sym))
-                     ;; Try to find the symbol in value map
-                     (val (gethash sym value-map))
-                     ;; For namespaced symbols, use local name only
-                     (bind-sym (if (find #\/ sym-name)
-                                     (let ((slash-pos (position #\/ sym-name)))
-                                       (intern (subseq sym-name (1+ slash-pos))))
-                                     sym)))
-                (setf new-env (env-extend-lexical new-env bind-sym val))))))
-        ;; Handle :or defaults - only set if key doesn't exist in value-map
-        (when (and or-key (gethash or-key binding-map))
-          (let ((or-spec (gethash or-key binding-map)))
-            (maphash (lambda (key default-val)
-                       (unless (gethash key value-map)
-                         (setf new-env (env-extend-lexical new-env key default-val))))
-                     or-spec)))
-        ;; Handle :as - bind entire map to symbol
-        (when (and as-key (gethash as-key binding-map))
-          (let ((as-spec (gethash as-key binding-map)))
-            (setf new-env (env-extend-lexical new-env as-spec value-map)))))
+      ;; Get the special keys (each returns (values keyword namespace))
+      (multiple-value-bind (keys-key keys-ns) (find-key "keys")
+        (multiple-value-bind (syms-key syms-ns) (find-key "syms")
+          (multiple-value-bind (or-key) (find-key "or")
+            (multiple-value-bind (as-key) (find-key "as")
+              ;; Handle :keys destructuring
+              (when (and keys-key (gethash keys-key binding-map))
+                (let ((keys-spec (gethash keys-key binding-map)))
+                  ;; keys-spec is like [x y] - extract :x and :y from value-map
+                  ;; If keys-ns is set (e.g., "a"), look for :a/x, :a/y instead
+                  (dolist (key (coerce keys-spec 'list))
+                    (let* ((;; Create the keyword to look up
+                            keyword-key (if keys-ns
+                                          ;; Namespaced: :a/x -> look for :a/x
+                                          (intern (concatenate 'string keys-ns "/" (symbol-name key)) "KEYWORD")
+                                          (if (symbolp key)
+                                              ;; Unnamespaced: x -> look for :x
+                                              ;; Namespaced symbol in vector: a/b -> look for :a/b
+                                              (intern (symbol-name key) "KEYWORD")
+                                              key)))
+                           ;; Use multiple-value-bind to check if key was found
+                           ;; gethash returns (values value found-p)
+                           (val-found-p (multiple-value-list (gethash keyword-key value-map)))
+                           (val (first val-found-p))
+                           (found-p (second val-found-p))
+                           ;; For binding, use the local name only (not namespaced)
+                           ;; Two cases:
+                           ;; 1. {:a/keys [b]} -> bind b to value of :a/b
+                           ;; 2. {:keys [a/b]} -> bind b to value of :a/b
+                           (bind-sym (if (symbolp key)
+                                        (let ((name (symbol-name key)))
+                                          ;; If key is namespaced (e.g., a/b), bind to local name (b)
+                                          ;; Otherwise bind to key itself
+                                          (if (find #\/ name)
+                                              (let ((slash-pos (position #\/ name)))
+                                                (intern (subseq name (1+ slash-pos))))
+                                              key))
+                                        (intern (symbol-name keyword-key)))))
+                      ;; Only bind if the key was found in the value map
+                      ;; Otherwise, :or will provide the default
+                      (when found-p
+                        (setf new-env (env-extend-lexical new-env bind-sym val)))))))
+              ;; Handle :syms destructuring
+              (when (and syms-key (gethash syms-key binding-map))
+                (let ((syms-spec (gethash syms-key binding-map)))
+                  ;; syms-spec is like [x y] - extract 'x and 'y from value-map
+                  ;; If syms-ns is set (e.g., "a"), look for a/x, a/y instead
+                  (dolist (sym (coerce syms-spec 'list))
+                    (let* ((;; Create the symbol to look up
+                            lookup-sym (if syms-ns
+                                          ;; Namespaced: x -> look for a/x
+                                          (intern (symbol-name sym) syms-ns)
+                                          sym))
+                           ;; Use multiple-value-bind to check if key was found
+                           (val-found-p (multiple-value-list (gethash lookup-sym value-map)))
+                           (val (first val-found-p))
+                           (found-p (second val-found-p))
+                           ;; For binding, use the local name only (not namespaced)
+                           ;; e.g., a/x binds to symbol x, not a/x
+                           (bind-sym (let ((name (symbol-name sym)))
+                                       (if (find #\/ name)
+                                           (let ((slash-pos (position #\/ name)))
+                                             (intern (subseq name (1+ slash-pos))))
+                                           sym))))
+                      ;; Only bind if the key was found in the value map
+                      ;; Otherwise, :or will provide the default
+                      (when found-p
+                        (setf new-env (env-extend-lexical new-env bind-sym val)))))))
+              ;; Handle :or defaults - only set if binding wasn't already made
+              (when (and or-key (gethash or-key binding-map))
+                (let ((or-spec (gethash or-key binding-map)))
+                  (maphash (lambda (key default-val)
+                             ;; Check if this binding was already made in new-env
+                             ;; If not, use the default value
+                             (multiple-value-bind (existing-value found-p)
+                                 (env-get-lexical new-env key)
+                               (declare (ignore existing-value))
+                               (unless found-p
+                                 (setf new-env (env-extend-lexical new-env key default-val)))))
+                           or-spec)))
+              ;; Handle :as - bind entire map to symbol
+              (when (and as-key (gethash as-key binding-map))
+                (let ((as-spec (gethash as-key binding-map)))
+                  (setf new-env (env-extend-lexical new-env as-spec value-map))))))))
       ;; Handle regular keys in binding-map
       ;; In Clojure destructuring, the syntax is:
       ;;   {binding-form key-to-extract ...}
@@ -1110,21 +1156,26 @@
       ;; and bind it using the KEY from the binding-map (which is the binding form)
       (maphash (lambda (binding-form key-to-extract)
                  ;; Skip special keywords that were already handled
-                 (when (and (keywordp key-to-extract)
-                           (not (member (symbol-name key-to-extract)
-                                       '("keys" "syms" "or" "as")
-                                       :test #'string=)))
-                   ;; Note: Due to case sensitivity issues, we need to find the key by name comparison
-                   ;; Clojure preserves case, CL uppercases, so we compare by symbol-name
-                   (let ((value (loop for k being the hash-keys of value-map
-                                     when (and (keywordp k)
-                                              (string-equal (symbol-name k) (symbol-name key-to-extract)))
-                                     return (gethash k value-map))))
-                     ;; The binding-form can be:
-                     ;; - A symbol: bind the value to that symbol
-                     ;; - A vector: destructuring bind the value
-                     ;; - A hash table: nested map destructuring
-                     (setf new-env (extend-binding new-env binding-form value)))))
+                 ;; Check both unnamespaced and namespaced variants
+                 (let ((key-name (symbol-name key-to-extract))
+                       (slash-pos (position #\/ (symbol-name key-to-extract))))
+                   (when (and (keywordp key-to-extract)
+                             (not (or (member key-name '("keys" "syms" "or" "as") :test #'string=)
+                                      (and slash-pos
+                                           (member (subseq key-name (1+ slash-pos))
+                                                   '("keys" "syms" "or" "as")
+                                                   :test #'string=)))))
+                     ;; Note: Due to case sensitivity issues, we need to find the key by name comparison
+                     ;; Clojure preserves case, CL uppercases, so we compare by symbol-name
+                     (let ((value (loop for k being the hash-keys of value-map
+                                       when (and (keywordp k)
+                                                (string-equal (symbol-name k) (symbol-name key-to-extract)))
+                                       return (gethash k value-map))))
+                       ;; The binding-form can be:
+                       ;; - A symbol: bind the value to that symbol
+                       ;; - A vector: destructuring bind the value
+                       ;; - A hash table: nested map destructuring
+                       (setf new-env (extend-binding new-env binding-form value))))))
                binding-map)
       new-env)))
 

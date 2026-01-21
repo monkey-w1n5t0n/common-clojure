@@ -33,68 +33,41 @@
         ;; Return tagged literal representation
         (list 'tagged-literal (intern tag-name) value)))))
 
-(defun ensure-clojure-readtable ()
-  "Create the Clojure readtable if it doesn't exist."
-  (unless *clojure-readtable*
-    (setf *clojure-readtable* (copy-readtable nil))
-    ;; Set readtable case to :preserve for Clojure compatibility
-    (setf (readtable-case *clojure-readtable*) :preserve)
-
-    ;; [ ]
-    (set-macro-character #\[ #'read-vector nil *clojure-readtable*)
-    (set-macro-character #\] #'right-delimiter-reader nil *clojure-readtable*)
-
-    ;; { }
-    (set-macro-character #\{ #'read-map nil *clojure-readtable*)
-    (set-macro-character #\} #'right-delimiter-reader nil *clojure-readtable*)
-
-    ;; , - comma is whitespace in Clojure (unlike Common Lisp)
-    (set-macro-character #\, #'read-whitespace-char nil *clojure-readtable*)
-
-    ;; ::foo - auto-resolved keyword
-    (set-macro-character #\: #'read-colon-dispatch nil *clojure-readtable*)
-
-    ;; #"regex" - regex literal
-    (set-dispatch-macro-character #\# #\" #'read-regex *clojure-readtable*)
-
-    ;; #{...} - set literal
-    (set-dispatch-macro-character #\# #\{ #'read-set *clojure-readtable*)
-
-    ;; #_form - comment (skip next form)
-    (set-dispatch-macro-character #\# #\_ #'read-comment *clojure-readtable*)
-
-    ;; #^metadata form - metadata (deprecated, same as ^metadata)
-    (set-dispatch-macro-character #\# #\^ #'read-metadata-dispatch *clojure-readtable*)
-
-    ;; ^metadata form - metadata syntax
-    (set-macro-character #\^ #'read-metadata *clojure-readtable*)
-
-    ;; ##Inf, ##-Inf, ##NaN - special float literals
-    (set-dispatch-macro-character #\# #\# #'read-special-float *clojure-readtable*)
-
-    ;; 'form - quote (non-terminating so ss' is read as one symbol in Clojure)
-    (set-macro-character #\' #'read-quote t *clojure-readtable*)
-
-    ;; #'form - var quote
-    (set-dispatch-macro-character #\# #\' #'read-var-quote *clojure-readtable*)
-
-    ;; `form - syntax-quote
-    (set-macro-character #\` #'read-syntax-quote *clojure-readtable*)
-
-    ;; ~form - unquote (and ~@form for unquote-splicing)
-    (set-macro-character #\~ #'read-tilde-dispatch *clojure-readtable*)
-
-    ;; #(body) - anonymous function literal
-    (set-dispatch-macro-character #\# #\( #'read-anon-fn *clojure-readtable*)
-
-    ;; Tagged literals: #tag value (like #uuid "...", #inst "...", #RecordType[...])
-    ;; Override CL's default dispatch chars for letters to handle Clojure tagged literals
-    (dolist (char '(#\a #\b #\c #\d #\e #\f #\g #\h #\i #\j #\k #\l #\m
-                    #\n #\o #\p #\q #\r #\s #\t #\u #\v #\w #\x #\y #\z
-                    #\A #\B #\C #\D #\E #\F #\G #\H #\I #\J #\K #\L #\M
-                    #\N #\O #\P #\Q #\R #\S #\T #\U #\V #\W #\X #\Y #\Z))
-      (set-dispatch-macro-character #\# char #'read-tagged-literal *clojure-readtable*)))
-  *clojure-readtable*)
+(defun read-character-literal (stream char)
+  "Read a Clojure character literal: \\a, \\newline, etc.
+   Returns a Common Lisp character object.
+   Supports: \\a (single char), \\newline, \\space, \\tab, \\return, \\backspace, \\formfeed"
+  (declare (ignore char))
+  ;; Read the next character(s)
+  (let ((first-char (read-char stream t nil)))
+    (cond
+      ;; Named characters
+      ((and (char= first-char #\n)
+            (peek-char t stream nil nil)
+            (char= (peek-char t stream nil nil) #\e))
+       ;; Check for \newline
+       (let ((name (make-array 0 :element-type 'character :fill-pointer 0)))
+         (vector-push-extend first-char name)
+         (loop while (and (peek-char t stream nil nil)
+                         (alpha-char-p (peek-char t stream nil nil)))
+               do (vector-push-extend (read-char stream t nil) name))
+         (let ((name-str (string-downcase name)))
+           (cond
+             ((string= name-str "newline") #\Newline)
+             ((string= name-str "space") #\Space)
+             ((string= name-str "tab") #\Tab)
+             ((string= name-str "return") #\Return)
+             ((string= name-str "backspace") #\Backspace)
+             ((string= name-str "formfeed") #\Page)
+             ((string= name-str "u")
+              ;; Unicode escape \uXXXX - not fully implemented, return placeholder
+              (dotimes (i 4) (read-char stream t nil))
+              #\?)
+             (t
+              ;; Unknown named character - return the first char as-is
+              (char name 0))))))
+      ;; Single character
+      (t first-char))))
 
 (defun read-vector (stream char)
   (declare (ignore char))
@@ -136,6 +109,10 @@
 
 (defvar *comment-marker* (make-symbol "COMMENT-MARKER")
   "Special marker used to indicate a commented form that should be filtered out.")
+
+(defun get-comment-marker ()
+  "Return the comment marker symbol."
+  *comment-marker*)
 
 (defun read-comment (stream sub-char num)
   "Read a Clojure comment: #_form
@@ -237,12 +214,17 @@
       ((or (symbolp token) (stringp token))
        (let ((name (if (symbolp token) (symbol-name token) token)))
          (cond
-           ((string= name "Inf") sb-ext:single-float-positive-infinity)
-           ((string= name "-Inf") sb-ext:single-float-negative-infinity)
+           ((string= name "Inf")
+            ;; Use most-positive-double-float as a proxy for infinity
+            ;; Note: SBCL's float handling may differ from Java's
+            most-positive-double-float)
+           ((string= name "-Inf")
+            ;; Use most-negative-double-float as a proxy for -infinity
+            most-negative-double-float)
            ((string= name "NaN")
-            ;; Create NaN using IEEE 754 quiet NaN bit pattern for single float
-            ;; Bit pattern: 0x7FC00000 (sign=0, exp=255, mantissa with high bit set)
-            (sb-kernel:make-single-float #x7FC00000))
+            ;; Create NaN using IEEE 754 quiet NaN bit pattern for double float
+            ;; Bit pattern for double: 0x7FF80000 00000000
+            (sb-kernel:make-double-float #x7FF80000 #x00000000))
            (t (error "Unknown special float literal: ##~A" name)))))
       ;; Check for number (in case someone writes ##1.0)
       ((numberp token)
@@ -310,12 +292,32 @@
   (declare (ignore sub-char num))
   (list 'var (read stream t nil t)))
 
+(defun read-deref (stream char)
+  "Read a Clojure deref: @form
+   Returns (deref form)."
+  (declare (ignore char))
+  (list 'deref (read stream t nil t)))
+
 (defun read-syntax-quote (stream char)
   "Read a Clojure syntax quote: `form
    Returns (syntax-quote form).
    In a full implementation, this would resolve symbols and handle unquote."
   (declare (ignore char))
+  ;; We use our custom backquote reader, but need to set comma handler too
   (list 'syntax-quote (read stream t nil t)))
+
+(defun read-clojure-unquote (stream char)
+  "Read Clojure unquote: ,form or ,@form
+   Returns (unquote form) or (unquote-splicing form)."
+  (declare (ignore char))
+  (let ((next-char (peek-char nil stream nil nil)))
+    (if (eql next-char #\@)
+        ;; Consume the @ and read the form for unquote-splicing
+        (progn
+          (read-char stream)  ; consume the @
+          (list 'unquote-splicing (read stream t nil t)))
+        ;; Regular unquote
+        (list 'unquote (read stream t nil t)))))
 
 (defun read-tilde-dispatch (stream char)
   "Dispatch for ~ character. If followed by @, it's unquote-splicing. Otherwise unquote."
@@ -331,25 +333,121 @@
 
 ;;; Anonymous function reader
 
+(defun group-special-forms (forms)
+  "Group special forms that span multiple elements in #() reader.
+   For example, #(try @d (catch Exception e e)) should group
+   the try/catch forms together instead of treating them as separate forms.
+
+   Returns a new list where special forms are properly grouped."
+  (let ((result '())
+        (remaining forms))
+    (loop while remaining
+          do (let ((first (car remaining))
+                   (rest (cdr remaining)))
+               (cond
+                 ;; try special form: (try body* catch* finally?)
+                 ;; Group try with its body and catch/finally clauses
+                 ((and (symbolp first)
+                       (string= (symbol-name first) "try"))
+                  ;; Collect all forms until we run out or hit a non-special keyword
+                  (let* ((grouped (list first))
+                         (current rest)
+                         ;; Track if we've seen catch/finally clauses
+                         (in-catch-clauses nil))
+                    (loop while current
+                          do (let* ((next-form (car current))
+                                   (is-catch (and (consp next-form)
+                                                   (symbolp (car next-form))
+                                                   (string= (symbol-name (car next-form)) "catch")))
+                                   (is-finally (and (consp next-form)
+                                                    (symbolp (car next-form))
+                                                    (string= (symbol-name (car next-form)) "finally"))))
+                               (cond
+                                 ;; Once we see a catch or finally, we're in catch clause mode
+                                 ;; Everything until the end belongs to try
+                                 (in-catch-clauses
+                                  (push next-form grouped)
+                                  (setf current (cdr current)))
+                                 ;; catch clause starts
+                                 (is-catch
+                                  (setf in-catch-clauses t)
+                                  (push next-form grouped)
+                                  (setf current (cdr current)))
+                                 ;; finally clause starts (last clause)
+                                 (is-finally
+                                  (push next-form grouped)
+                                  (setf current nil))  ; done after finally
+                                 ;; Body expression - include it
+                                 (t
+                                  (push next-form grouped)
+                                  (setf current (cdr current))))))
+                    (push (nreverse grouped) result)
+                    (setf remaining nil)))  ; all forms consumed
+                 ;; if special form: (if test then else?)
+                 ((and (symbolp first)
+                       (string= (symbol-name first) "if"))
+                  (if (>= (length rest) 2)
+                      (let ((grouped (list first (car rest) (cadr rest))))
+                        (push grouped result)
+                        (setf remaining (cddr rest)))
+                      (progn
+                        (push (list first) result)
+                        (setf remaining rest))))
+                 ;; when, when-not: (when test body+)
+                 ((and (symbolp first)
+                       (member (symbol-name first) '("when" "when-not") :test #'string=))
+                  (if rest
+                      (let ((grouped (cons first rest)))
+                        (push grouped result)
+                        (setf remaining nil))
+                      (progn
+                        (push (list first) result)
+                        (setf remaining rest))))
+                 ;; def, defonce, set!: (def symbol expr)
+                 ((and (symbolp first)
+                       (member (symbol-name first) '("def" "defonce" "set!") :test #'string=))
+                  (if (>= (length rest) 1)
+                      (let ((grouped (list first (car rest) (if (cdr rest) (cadr rest) nil))))
+                        (push grouped result)
+                        (setf remaining (if (cdr rest) (cddr rest) rest)))
+                      (progn
+                        (push (list first) result)
+                        (setf remaining rest))))
+                 ;; case: (case expr test-value* result+ default?)
+                 ;; All remaining forms belong to case
+                 ((and (symbolp first)
+                       (string= (symbol-name first) "case"))
+                  (let ((grouped (cons first rest)))
+                    (push grouped result)
+                    (setf remaining nil)))
+                 ;; Default: just add the form as-is
+                 (t
+                  (push first result)
+                  (setf remaining rest)))))
+    (nreverse result)))
+
 (defun read-anon-fn (stream sub-char num)
   "Read a Clojure anonymous function literal: #(body)
    Converts to (fn* [args] body) where args are inferred from % placeholders.
    % or %1 = first arg, %2 = second arg, etc. %& = rest args."
   (declare (ignore sub-char num))
   ;; Read the body forms until closing )
-  (let ((body-forms (read-delimited-list #\) stream t)))
-    ;; Analyze body to find % placeholders
-    (multiple-value-bind (arg-count has-rest)
-        (analyze-arg-placeholders body-forms)
-      ;; Generate argument names: gen__#, gen__2#, gen__3#, etc.
-      (let* ((args (generate-arg-names arg-count has-rest))
-             ;; Build arg map for substitution
-             (arg-map (build-arg-map arg-count has-rest))
-             ;; Replace % placeholders with generated arg names
-             (processed-body (mapcar #'(lambda (form) (replace-placeholders form arg-map))
-                                    body-forms)))
-        ;; Build the fn* form
-        `(fn* ,args ,@processed-body)))))
+  (let ((raw-forms (read-delimited-list #\) stream t)))
+    ;; Group special forms that span multiple elements
+    ;; e.g., #(try @d (catch Exception e e)) should group (try @d (catch Exception e e))
+    (let ((body-forms (group-special-forms raw-forms)))
+      ;; Analyze body to find % placeholders
+      (multiple-value-bind (arg-count has-rest)
+          (analyze-arg-placeholders body-forms)
+        ;; Generate argument names: gen__#, gen__2#, gen__3#, etc.
+        (let* ((args (generate-arg-names arg-count has-rest))
+               ;; Build arg map for substitution
+               (arg-map (build-arg-map arg-count has-rest))
+               ;; Replace % placeholders with generated arg names
+               (processed-body (mapcar #'(lambda (form) (replace-placeholders form arg-map))
+                                      body-forms)))
+          ;; Build the fn* form
+          `(fn* ,args ,@processed-body))))))
 
 (defun analyze-arg-placeholders (forms)
   "Analyze forms to determine how many arguments are needed and if rest args are used.
@@ -421,9 +519,9 @@
 
 (defun generate-arg-names (arg-count has-rest)
   "Generate argument name list based on count and rest flag.
-   Returns: [] for no args, [gen__#] for one arg, etc."
+   Returns: #() for no args, #[gen__#] for one arg, etc."
   (if (and (= arg-count 0) (not has-rest))
-      '()
+      (vector)  ; Return empty vector for no args
       (let ((args '()))
         ;; Generate numbered args
         (loop for i from 1 to arg-count
@@ -480,6 +578,90 @@
     ;; Return other types as-is
     (t form)))
 
+(defun ensure-clojure-readtable ()
+  "Create the Clojure readtable if it doesn't exist."
+  (unless *clojure-readtable*
+    (setf *clojure-readtable* (copy-readtable nil))
+    ;; Set readtable case to :preserve for Clojure compatibility
+    (setf (readtable-case *clojure-readtable*) :preserve)
+
+    ;; Bind *readtable* to *clojure-readtable* while setting macro characters
+    ;; This is necessary because SBCL's set-macro-character modifies *readtable*
+    ;; even when a readtable is passed as an argument.
+    (let ((*readtable* *clojure-readtable*))
+      ;; [ ]
+      (set-macro-character #\[ #'read-vector nil)
+      (set-macro-character #\] #'right-delimiter-reader nil)
+
+      ;; { }
+      (set-macro-character #\{ #'read-map nil)
+      (set-macro-character #\} #'right-delimiter-reader nil)
+
+      ;; , - comma for unquote (not whitespace in Clojure's quasiquote context)
+      ;; Note: In regular code comma is whitespace, but in backquote context it's unquote
+      ;; We set it to our unquote handler to support syntax-quote
+      (set-macro-character #\, #'read-clojure-unquote nil)
+
+      ;; \char - character literal (Clojure syntax)
+      ;; In Clojure, \a is a character literal. In CL, character literals are #\a
+      (set-macro-character #\\ #'read-character-literal nil)
+
+      ;; ::foo - auto-resolved keyword
+      (set-macro-character #\: #'read-colon-dispatch nil)
+
+      ;; 'form - quote (non-terminating so ss' is read as one symbol in Clojure)
+      (set-macro-character #\' #'read-quote t)
+
+      ;; `form - syntax-quote
+      ;; We need to set this to non-terminating T to override CL's quasiquote
+      (set-macro-character #\` #'read-syntax-quote t)
+
+      ;; ~form - unquote (and ~@form for unquote-splicing)
+      (set-macro-character #\~ #'read-tilde-dispatch nil)
+
+      ;; @form - deref reader macro (non-terminating so @@ is read as one token)
+      (set-macro-character #\@ #'read-deref t)
+
+      ;; ^metadata form - metadata syntax
+      (set-macro-character #\^ (lambda (s c)
+                                 (declare (ignore c))
+                                 (funcall (symbol-function 'read-metadata) s #\^))
+                          nil))
+
+    ;; For dispatch macro characters, we can pass the readtable directly
+    ;; #"regex" - regex literal
+    (set-dispatch-macro-character #\# #\" #'read-regex *clojure-readtable*)
+
+    ;; #{...} - set literal
+    (set-dispatch-macro-character #\# #\{ #'read-set *clojure-readtable*)
+
+    ;; #_form - comment (skip next form)
+    (set-dispatch-macro-character #\# #\_ #'read-comment *clojure-readtable*)
+
+    ;; #^metadata form - metadata (deprecated, same as ^metadata)
+    (set-dispatch-macro-character #\# #\^ (lambda (s c n)
+                                              (declare (ignore c n))
+                                              (funcall (symbol-function 'read-metadata) s #\^))
+                            *clojure-readtable*)
+
+    ;; ##Inf, ##-Inf, ##NaN - special float literals
+    (set-dispatch-macro-character #\# #\# #'read-special-float *clojure-readtable*)
+
+    ;; #'form - var quote
+    (set-dispatch-macro-character #\# #\' #'read-var-quote *clojure-readtable*)
+
+    ;; #(body) - anonymous function literal
+    (set-dispatch-macro-character #\# #\( #'read-anon-fn *clojure-readtable*)
+
+    ;; Tagged literals: #tag value (like #uuid "...", #inst "...", #RecordType[...])
+    ;; Override CL's default dispatch chars for letters to handle Clojure tagged literals
+    (dolist (char '(#\a #\b #\c #\d #\e #\f #\g #\h #\i #\j #\k #\l #\m
+                    #\n #\o #\p #\q #\r #\s #\t #\u #\v #\w #\x #\y #\z
+                    #\A #\B #\C #\D #\E #\F #\G #\H #\I #\J #\K #\L #\M
+                    #\N #\O #\P #\Q #\R #\S #\T #\U #\V #\W #\X #\Y #\Z))
+      (set-dispatch-macro-character #\# char #'read-tagged-literal *clojure-readtable*)))
+  *clojure-readtable*)
+
 (defun enable-clojure-syntax ()
   "Enable Clojure syntax for subsequent read operations."
   (ensure-clojure-readtable)
@@ -493,7 +675,8 @@
 (defun preprocess-clojure-dots (input-string)
   "Preprocess a Clojure source string to escape dot-only tokens.
    Converts tokens like '..' to '|..|' so CL's reader accepts them.
-   Also handles standalone '.' which is used for Java interop."
+   Also handles standalone '.' which is used for Java interop.
+   Converts commas to spaces since commas are whitespace in Clojure."
   (with-output-to-string (out)
     (let ((len (length input-string))
           (i 0))
@@ -508,6 +691,11 @@
         (loop while (< i len) do
           (let ((c (char input-string i)))
             (cond
+              ;; Comma is treated as whitespace in Clojure
+              ;; Convert to space to avoid CL's comma-unquote interpretation
+              ((char= c #\,)
+               (write-char #\Space out)
+               (incf i))
               ;; Skip string literals entirely
               ((char= c #\")
                (write-char c out)
@@ -562,15 +750,82 @@
   "Create a stream from preprocessed Clojure source."
   (make-string-input-stream (preprocess-clojure-dots input-string)))
 
+(defun normalize-clojure-symbol (sym)
+  "Convert Clojure-specific symbols to CL equivalents.
+   In :preserve case mode, nil becomes |nil|, true becomes |true|, etc.
+   This converts them back to proper CL values."
+  (when (symbolp sym)
+    (let ((name (symbol-name sym)))
+      (cond
+        ((string= name "nil") (return-from normalize-clojure-symbol nil))
+        ((string= name "true") (return-from normalize-clojure-symbol t))
+        ((string= name "false") (return-from normalize-clojure-symbol nil)))))
+  sym)
+
+(defun normalize-clojure-form (form)
+  "Recursively normalize Clojure symbols in a form.
+   Converts |nil| -> NIL, |true| -> T, |false| -> NIL throughout the tree.
+   Only normalizes symbols that are lowercase nil/true/false (from :preserve mode)."
+  (typecase form
+    (null nil)
+    (symbol (normalize-clojure-symbol form))
+    (cons (cons (normalize-clojure-form (car form))
+                (normalize-clojure-form (cdr form))))
+    (hash-table
+     ;; Normalize keys and values in hash tables
+     (let ((new-table (make-hash-table :test (hash-table-test form))))
+       (maphash (lambda (k v)
+                  (setf (gethash (normalize-clojure-form k) new-table)
+                        (normalize-clojure-form v)))
+                form)
+       new-table))
+    ;; Don't process strings as vectors - they should pass through unchanged
+    (string form)
+    (vector (map 'vector #'normalize-clojure-form form))
+    (t form)))
+
 (defun read-clojure (stream &optional (eof-error-p t) (eof-value :eof))
-  "Read a Clojure form from STREAM, post-processing to handle number suffixes.
+  "Read a Clojure form from STREAM, post-processing to handle number suffixes
+   and normalizing Clojure symbols (nil, true, false) to CL equivalents.
    This wraps the standard READ function to handle Clojure-specific syntax like
    the N suffix for bigints and M suffix for decimals."
   (let* ((form (read stream eof-error-p eof-value))
          (processed (if (eq form :eof)
                        :eof
-                       (parse-suffixed-number form))))
+                       (normalize-clojure-form (parse-suffixed-number form)))))
     processed))
+
+;;; Convert CL's quasiquote to Clojure's syntax-quote format
+(defun convert-cl-quasiquote (form)
+  "Convert Common Lisp's quasiquote forms to Clojure's syntax-quote format.
+   CL uses QUASIQUOTE with internal COMMA structures. We convert these to
+   syntax-quote, unquote, and unquote-splicing."
+  (typecase form
+    ;; Handle SBCL's COMMA structure (for unquote and unquote-splicing)
+    ;; SB-IMPL::COMMA has :EXPR and :KIND (0 = unquote, 1 = unquote-splicing)
+    ((satisfies sb-impl::comma-p)
+     (let ((kind (sb-impl::comma-kind form))
+           (expr (sb-impl::comma-expr form)))
+       (if (= kind 1)
+           `(unquote-splicing ,expr)
+           `(unquote ,expr))))
+    ;; Handle strings - must come before vector since strings are vectors in CL
+    (string form)
+    ;; Handle QUASIQUOTE
+    (cons
+     (if (eq (car form) 'quasiquote)
+         ;; Convert quasiquote contents to our format
+         ;; The body is (cadr form) - the single element after quasiquote
+         ;; We need to convert just that one element, not mapcar over cdr
+         (let ((body (cadr form)))
+           `(syntax-quote ,(convert-cl-quasiquote body)))
+         ;; Recursively process list elements
+         (mapcar #'convert-cl-quasiquote form)))
+    ;; Handle vectors (but not strings, which are handled above)
+    (vector
+     (coerce (mapcar #'convert-cl-quasiquote (coerce form 'list)) 'vector))
+    ;; Everything else is self-evaluating
+    (t form)))
 
 (defun read-clojure-string (string &optional (eof-error-p t) (eof-value :eof))
   "Read a Clojure form from a string, with preprocessing for dot tokens.
@@ -578,7 +833,7 @@
   (let ((preprocessed (preprocess-clojure-dots string)))
     (with-input-from-string (stream preprocessed)
       (let ((*readtable* (ensure-clojure-readtable)))
-        (read-clojure stream eof-error-p eof-value)))))
+        (convert-cl-quasiquote (read-clojure stream eof-error-p eof-value))))))
 
 (defun disable-clojure-syntax ()
   "Disable Clojure syntax, restoring default Common Lisp readtable."

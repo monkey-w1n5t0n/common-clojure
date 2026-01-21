@@ -54,4 +54,7 @@
   (format t "~&=== Failed Tests ===~%")
   (dolist (name failed)
     (format t "  ~A~%" name))
-  (format t "~&Total: ~D passed, ~D failed~%" (length passed) (length failed)))
+  (format t "~&Total: ~D passed, ~D failed~%" (length passed) (length failed))
+  ;; Exit with proper status code for CI/completion detection
+  ;; Exit 0 only if ALL tests pass, exit 1 if any failed
+  (sb-ext:exit :code (if failed 1 0)))

@@ -1,0 +1,22 @@
+# FASL compiled files
+*.fasl
+
+# Temporary test files in root (not clojure-tests/)
+/debug_*.lisp
+/test_*.lisp
+/test-*.lisp
+
+# Editor backup files
+*~
+*.swp
+\#*\#
+.#*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.iml

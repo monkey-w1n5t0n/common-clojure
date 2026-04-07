@@ -1,0 +1,8 @@
+commands:
+  install: echo "No dependencies to install"
+  test: sbcl --script run-tests.lisp
+  lint: echo "No linter configured"
+  build: echo "No build step needed - Lisp is interpreted"
+  typecheck: echo "No typecheck configured"
+
+services: {}

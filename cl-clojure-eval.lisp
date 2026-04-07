@@ -2447,6 +2447,23 @@
              (if (hash-table-p target)
                  (gethash fn-arg target)
                  nil)))))
+    ((hash-table-p fn-arg)
+     ;; In Clojure, maps can be used as functions to look up keys
+     ;; ({:a 1} :a) returns 1
+     (lambda (&rest args)
+       (if (null args)
+           (error "Wrong number of args (0) passed to map")
+           (gethash (car args) fn-arg (cadr args)))))
+    ((vectorp fn-arg)
+     ;; In Clojure, vectors can be used as functions to look up by index
+     ;; ([a b c] 1) returns b
+     (lambda (&rest args)
+       (if (null args)
+           (error "Wrong number of args (0) passed to vector")
+           (let ((idx (car args)))
+             (if (and (integerp idx) (>= idx 0) (< idx (length fn-arg)))
+                 (aref fn-arg idx)
+                 nil)))))
     (t fn-arg)))
 
 ;;; ============================================================
@@ -2954,12 +2971,28 @@
        (t
         (error "Unsupported set method: ~A" member-name))))
     ;; clojure.walk functions (w/prewalk-replace, etc.)
-    ((string-equal class-name "w")
+    ((or (string-equal class-name "w") (string-equal class-name "clojure.walk"))
      (cond
        ((string-equal member-name "prewalk-replace")
         (if (< (length args) 2)
             (error "prewalk-replace requires a map and a form")
             (clojure-prewalk-replace (first args) (second args))))
+       ((string-equal member-name "postwalk-replace")
+        (if (< (length args) 2) nil
+            (clojure-postwalk-replace (first args) (second args))))
+       ((string-equal member-name "walk")
+        (if (< (length args) 3) nil
+            (clojure-walk (first args) (second args) (third args))))
+       ((string-equal member-name "postwalk")
+        (if (< (length args) 2) nil
+            (clojure-postwalk (first args) (second args))))
+       ((string-equal member-name "prewalk")
+        (if (< (length args) 2) nil
+            (clojure-prewalk (first args) (second args))))
+       ((string-equal member-name "stringify-keys")
+        (clojure-stringify-keys (first args)))
+       ((string-equal member-name "keywordize-keys")
+        (clojure-keywordize-keys (first args)))
        (t
         (error "Unsupported w method: ~A" member-name))))
     ;; clojure.math functions (math library aliased as m)
@@ -3525,16 +3558,13 @@
         (coerce args 'list))
        (t
         (error "Unsupported Stream method: ~A" member-name))))
-    ;; w namespace (walk test)
-    ((string-equal class-name "w")
-     (cond
-       ((string-equal member-name "postwalk-replace")
-        ;; Stub: walk replacement - just return the replacement value
-        (if (< (length args) 2)
-            nil
-            (second args)))
-       (t
-        (error "Unsupported w method: ~A" member-name))))
+    ;; w namespace (walk test) - delegate to main handler above
+    ((and (string-equal class-name "w")
+          (member member-name '("postwalk-replace" "walk" "postwalk" "prewalk"
+                                 "stringify-keys" "keywordize-keys" "prewalk-replace")
+                 :test #'string-equal))
+     ;; Already handled by the main w handler above - this shouldn't be reached
+     (eval-java-interop class-name member-name args))
     ;; chk namespace functions (test.check)
     ((string-equal class-name "chk")
      (cond
@@ -4010,6 +4040,8 @@
   (register-core-function env 'ns-resolve #'clojure-resolve)
   (register-core-function env 'parse-long #'clojure-parse-long)
   (register-core-function env 'parse-double #'clojure-parse-double)
+  (register-core-function env 'parse-uuid #'clojure-parse-uuid)
+  (register-core-function env 'random-uuid #'clojure-random-uuid)
   (register-core-function env 'diff #'clojure-diff)
   (register-core-function env 'pmap #'clojure-pmap)
 
@@ -4136,9 +4168,15 @@
 
   ;; Sequence functions
   (register-core-function env 'sequence #'clojure-sequence)
+  (register-core-function env 'sort-by #'clojure-sort-by)
+  (register-core-function env 'seq? #'clojure-seq?)
+  (register-core-function env 'compare-and-set! #'clojure-compare-and-set!)
 
   ;; Namespace functions
   (env-set-var env '*ns* :user-ns)  ; Current namespace (stub)
+  (env-set-var env '*out* *standard-output*)
+  (env-set-var env '*err* *error-output*)
+  (env-set-var env '*in* *standard-input*)
 
   ;; Test helper functions
   (register-core-function env 'eval-in-temp-ns #'clojure-eval-in-temp-ns)
@@ -4207,6 +4245,18 @@
   (register-core-function env 'peek #'clojure-peek)
   (register-core-function env 'pop #'clojure-pop)
   (register-core-function env 'select-keys #'clojure-select-keys)
+
+  ;; Additional missing functions
+  (register-core-function env 'min-key #'clojure-min-key)
+  (register-core-function env 'max-key #'clojure-max-key)
+  (register-core-function env 'push-thread-bindings #'clojure-push-thread-bindings)
+  (register-core-function env 'pop-thread-bindings #'clojure-pop-thread-bindings)
+  (register-core-function env 'compile #'clojure-compile)
+  (register-core-function env 'await-for #'clojure-await-for)
+  (register-core-function env 'agent-errors #'clojure-agent-errors)
+  (register-core-function env 'clear-agent-errors #'clojure-clear-agent-errors)
+  (register-core-function env 'error-mode #'clojure-error-mode)
+  (register-core-function env 'set-error-mode! #'clojure-set-error-mode!)
 
   ;; Test helper functions with question marks (need special handling)
   ;; These are registered as regular functions since the ? is part of the name
@@ -5700,24 +5750,58 @@
   "Return a sorted sequence of the items in coll.
    If comparator is provided, use it for comparison.
    For nil or empty collections, return nil."
-  (declare (ignore comparator))
-  (cond
-    ((null coll) nil)
-    ((and (vectorp coll) (= (length coll) 0)) nil)
-    ((listp coll)
-     (when coll
-       (sort (copy-seq coll) #'<)))
-    ((vectorp coll)
-     (when (> (length coll) 0)
-       (sort (copy-seq (coerce coll 'list)) #'<)))
-    ((hash-table-p coll)
-     ;; For hash tables, convert to list of entries and sort
-     (let ((result '()))
-       (maphash (lambda (k v)
-                  (push (vector k v) result))
-                coll)
-       (sort (nreverse result) #'<)))
-    (t (sort (list coll) #'<))))
+  (let ((comp-fn (if comparator
+                     (ensure-callable comparator)
+                     #'(lambda (a b) (< (if (numberp a) a 0) (if (numberp b) b 0))))))
+    (cond
+      ((null coll) nil)
+      ((and (vectorp coll) (= (length coll) 0)) nil)
+      ((listp coll)
+       (when coll
+         (sort (copy-seq coll) comp-fn)))
+      ((vectorp coll)
+       (when (> (length coll) 0)
+         (sort (copy-seq (coerce coll 'list)) comp-fn)))
+      ((hash-table-p coll)
+       (let ((result '()))
+         (maphash (lambda (k v)
+                    (push (vector k v) result))
+                  coll)
+         (sort (nreverse result) comp-fn)))
+      (t (sort (list coll) comp-fn)))))
+
+(defun clojure-sort-by (keyfn coll &optional comparator)
+  "Sort collection by a key function.
+   (sort-by keyfn coll) or (sort-by keyfn comparator coll)."
+  ;; Handle the 2-arity case where comparator is actually the collection
+  (when (and comparator (or (listp comparator) (vectorp comparator) (hash-table-p comparator)))
+    ;; (sort-by keyfn comp coll) - swap
+    (rotatef coll comparator))
+  (let ((callable-keyfn (ensure-callable keyfn)))
+    (if comparator
+        (let ((callable-comp (ensure-callable comparator)))
+          (clojure-sort coll (lambda (a b) (funcall callable-comp
+                                                     (funcall callable-keyfn a)
+                                                     (funcall callable-keyfn b)))))
+        (clojure-sort coll (lambda (a b) (let ((ka (funcall callable-keyfn a))
+                                                (kb (funcall callable-keyfn b)))
+                                            (cond
+                                              ((and (numberp ka) (numberp kb)) (< ka kb))
+                                              ((and (stringp ka) (stringp kb)) (string< ka kb))
+                                              (t (string< (princ-to-string ka)
+                                                          (princ-to-string kb))))))))))
+
+(defun clojure-seq? (x)
+  "Return true if x is a seq (list, lazy range, etc)."
+  (or (listp x) (lazy-range-p x)))
+
+(defun clojure-compare-and-set! (atom-obj old-val new-val)
+  "Atomically set the value of atom to new-val if and only if
+   the current value equals old-val. Returns true if set happened."
+  (let ((current (car atom-obj)))
+    (if (equal current old-val)
+        (progn (setf (car atom-obj) new-val) t)
+        nil)))
 
 (defun expand-thread-first-macro (form)
   "Expand a -> (thread-first) macro call WITHOUT evaluating.
@@ -6061,8 +6145,12 @@
                    always (funcall callable-pred i)))))
       ((listp coll)
        (every callable-pred coll))
+      ((hash-table-p coll)
+       (every callable-pred (clojure-seq coll)))
+      ((vectorp coll)
+       (every callable-pred (coerce coll 'list)))
       (t
-       (every callable-pred (coerce coll 'list))))))
+       (every callable-pred (clojure-seq coll))))))
 
 (defun clojure-some (pred coll)
   "Return the first truthy value of (pred x) for any x in coll, or nil if none."
@@ -6083,8 +6171,12 @@
                    thereis (funcall callable-pred i)))))
       ((listp coll)
        (some callable-pred coll))
+      ((hash-table-p coll)
+       (some callable-pred (clojure-seq coll)))
+      ((vectorp coll)
+       (some callable-pred (coerce coll 'list)))
       (t
-       (some callable-pred (coerce coll 'list))))))
+       (some callable-pred (clojure-seq coll))))))
 
 (defun clojure-not-every? (pred coll)
   "Return true if pred is not true for every element in coll (i.e., false for some element)."
@@ -6627,10 +6719,22 @@
 
 (defun clojure-parse-double (s)
   "Parse a string as a double floating-point number.
-   Returns nil if the string cannot be parsed."
-  (handler-case
-      (read-from-string s)
-    (error () nil)))
+   Returns nil if the string cannot be parsed.
+   Handles special values: NaN, Infinity, -Infinity."
+  (cond
+    ((string= s "NaN") (sb-kernel:make-double-float #x7FF80000 #x00000000))
+    ((string= s "Infinity") sb-ext:double-float-positive-infinity)
+    ((string= s "-Infinity") sb-ext:double-float-negative-infinity)
+    (t (handler-case
+           (let ((val (read-from-string s)))
+             (if (numberp val) (coerce val 'double-float) nil))
+         (error () nil)))))
+
+(defun clojure-parse-uuid (s)
+  "Parse a UUID string. Returns the string as-is (stub)."
+  (if (and (stringp s) (= (length s) 36))
+      s
+      nil))
 
 (defun clojure-diff (x y &rest more)
   "Return a list of items in x that are not in y.
@@ -7636,6 +7740,69 @@
         acc)
       init))
 
+(defun clojure-min-key (k &rest args)
+  "Return the arg for which (k x) is least."
+  (let ((callable-k (ensure-callable k)))
+    (if (= (length args) 1)
+        (first args)
+        (reduce (lambda (a b)
+                  (let ((ka (funcall callable-k a))
+                        (kb (funcall callable-k b)))
+                    (if (and (numberp ka) (numberp kb))
+                        (if (<= ka kb) a b)
+                        a)))
+                args))))
+
+(defun clojure-max-key (k &rest args)
+  "Return the arg for which (k x) is greatest."
+  (let ((callable-k (ensure-callable k)))
+    (if (= (length args) 1)
+        (first args)
+        (reduce (lambda (a b)
+                  (let ((ka (funcall callable-k a))
+                        (kb (funcall callable-k b)))
+                    (if (and (numberp ka) (numberp kb))
+                        (if (>= ka kb) a b)
+                        a)))
+                args))))
+
+(defun clojure-push-thread-bindings (binding-map)
+  "Push thread-local bindings. Stub - just returns nil."
+  (declare (ignore binding-map))
+  nil)
+
+(defun clojure-pop-thread-bindings ()
+  "Pop thread-local bindings. Stub - just returns nil."
+  nil)
+
+(defun clojure-compile (ns-sym)
+  "Compile a namespace. Stub - returns the ns symbol."
+  ns-sym)
+
+(defun clojure-await-for (timeout-ms &rest agents)
+  "Wait for agents with a timeout. Stub - returns true."
+  (declare (ignore timeout-ms agents))
+  t)
+
+(defun clojure-agent-errors (agent)
+  "Get errors from an agent. Stub - returns nil."
+  (declare (ignore agent))
+  nil)
+
+(defun clojure-clear-agent-errors (agent)
+  "Clear errors from an agent. Stub - returns agent."
+  agent)
+
+(defun clojure-error-mode (agent)
+  "Get the error mode of an agent. Stub - returns :continue."
+  (declare (ignore agent))
+  :continue)
+
+(defun clojure-set-error-mode! (agent mode)
+  "Set the error mode of an agent. Stub - returns nil."
+  (declare (ignore agent mode))
+  nil)
+
 (defun clojure-send (agent f &rest args)
   "Send a function to an agent for async application.
    For SBCL, this is a stub that applies the function synchronously.
@@ -8555,6 +8722,78 @@
                              (and (cdr f) (walk (cdr f))))
                        f)))))
     (walk form)))
+
+(defun clojure-postwalk-replace (smap form)
+  "Replace occurrences of keys in smap with their values in form (post-walk)."
+  (labels ((walk (f)
+             (let ((walked (if (consp f)
+                               (cons (walk (car f))
+                                     (and (cdr f) (walk (cdr f))))
+                               f)))
+               (let ((replacement (gethash walked smap)))
+                 (if replacement replacement walked)))))
+    (walk form)))
+
+(defun clojure-walk (inner outer form)
+  "Walk a form, applying inner to each element and outer to the result."
+  (let ((callable-inner (ensure-callable inner))
+        (callable-outer (ensure-callable outer)))
+    (funcall callable-outer
+             (cond
+               ((listp form) (mapcar callable-inner form))
+               ((vectorp form) (map 'vector callable-inner form))
+               ((hash-table-p form)
+                (let ((result (make-hash-table :test 'equal)))
+                  (maphash (lambda (k v)
+                             (let ((entry (funcall callable-inner (vector k v))))
+                               (when (vectorp entry)
+                                 (setf (gethash (aref entry 0) result) (aref entry 1)))))
+                           form)
+                  result))
+               (t form)))))
+
+(defun clojure-postwalk (f form)
+  "Walk form applying f to each sub-form (post-order)."
+  (let ((callable-f (ensure-callable f)))
+    (clojure-walk (lambda (x) (clojure-postwalk callable-f x))
+                  callable-f
+                  form)))
+
+(defun clojure-prewalk (f form)
+  "Walk form applying f to each sub-form (pre-order)."
+  (let ((callable-f (ensure-callable f)))
+    (let ((walked (funcall callable-f form)))
+      (clojure-walk (lambda (x) (clojure-prewalk callable-f x))
+                    #'identity
+                    walked))))
+
+(defun clojure-stringify-keys (m)
+  "Recursively convert map keys to strings."
+  (if (hash-table-p m)
+      (let ((result (make-hash-table :test 'equal)))
+        (maphash (lambda (k v)
+                   (setf (gethash (if (keywordp k)
+                                     (symbol-name k)
+                                     (princ-to-string k))
+                                  result)
+                         (clojure-stringify-keys v)))
+                 m)
+        result)
+      m))
+
+(defun clojure-keywordize-keys (m)
+  "Recursively convert map keys to keywords."
+  (if (hash-table-p m)
+      (let ((result (make-hash-table :test 'equal)))
+        (maphash (lambda (k v)
+                   (setf (gethash (if (stringp k)
+                                     (intern k :keyword)
+                                     k)
+                                  result)
+                         (clojure-keywordize-keys v)))
+                 m)
+        result)
+      m))
 
 ;;; Delay/Force implementations
 (defun clojure-delay (body-fn)

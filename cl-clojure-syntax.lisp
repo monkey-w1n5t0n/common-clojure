@@ -447,7 +447,11 @@
                (processed-body (mapcar #'(lambda (form) (replace-placeholders form arg-map))
                                       body-forms)))
           ;; Build the fn* form
-          `(fn* ,args ,@processed-body))))))
+          ;; In Clojure, #(f a b) becomes (fn* [args] (f a b))
+          ;; The body forms make a single function call expression
+          (if (= (length processed-body) 1)
+              `(fn* ,args ,(first processed-body))
+              `(fn* ,args ,processed-body)))))))
 
 (defun analyze-arg-placeholders (forms)
   "Analyze forms to determine how many arguments are needed and if rest args are used.
@@ -602,9 +606,10 @@
       ;; We set it to our unquote handler to support syntax-quote
       (set-macro-character #\, #'read-clojure-unquote nil)
 
-      ;; \char - character literal (Clojure syntax)
-      ;; In Clojure, \a is a character literal. In CL, character literals are #\a
-      (set-macro-character #\\ #'read-character-literal nil)
+      ;; NOTE: Clojure \char character literals are handled in preprocessing
+      ;; (preprocess-clojure-dots converts \a to #\a, \newline to #\Newline, etc.)
+      ;; We do NOT set \ as a macro character here because that would break
+      ;; its single-escape behavior inside CL strings (e.g., "hello \"world\"")
 
       ;; ::foo - auto-resolved keyword
       (set-macro-character #\: #'read-colon-dispatch nil)
@@ -717,12 +722,73 @@
                (loop while (and (< i len) (char/= (char input-string i) #\Newline)) do
                  (write-char (char input-string i) out)
                  (incf i)))
+              ;; Skip regex literals #"..." entirely
+              ((and (char= c #\#)
+                    (< (1+ i) len)
+                    (char= (char input-string (1+ i)) #\"))
+               ;; Write #" as-is
+               (write-char #\# out)
+               (write-char #\" out)
+               (setf i (+ i 2))
+               ;; Skip until unescaped closing "
+               (loop while (< i len) do
+                 (let ((sc (char input-string i)))
+                   (write-char sc out)
+                   (incf i)
+                   (cond
+                     ((char= sc #\\)
+                      (when (< i len)
+                        (write-char (char input-string i) out)
+                        (incf i)))
+                     ((char= sc #\")
+                      (return))))))
+              ;; Clojure character literals: \a, \newline, etc.
+              ;; Only at token boundaries (not inside symbols/strings)
+              ((and (char= c #\\)
+                    (at-token-boundary-p i)
+                    (< (1+ i) len)
+                    (not (member (char input-string (1+ i)) '(#\Space #\Tab #\Newline #\Return))))
+               (incf i) ; skip the backslash
+               (let ((next-char (char input-string i)))
+                 (if (alpha-char-p next-char)
+                     ;; Could be named character (\newline) or single char (\a)
+                     (let ((start i)
+                           (end i))
+                       (loop while (and (< end len)
+                                        (alpha-char-p (char input-string end)))
+                             do (incf end))
+                       (let ((name (subseq input-string start end)))
+                         (if (and (> (length name) 1) (ends-token-p end))
+                             ;; Named character literal
+                             (progn
+                               (write-string
+                                (cond
+                                  ((string-equal name "newline") "#\\Newline")
+                                  ((string-equal name "space") "#\\Space")
+                                  ((string-equal name "tab") "#\\Tab")
+                                  ((string-equal name "return") "#\\Return")
+                                  ((string-equal name "backspace") "#\\Backspace")
+                                  ((string-equal name "formfeed") "#\\Page")
+                                  (t (format nil "#\\~A" name)))
+                                out)
+                               (setf i end))
+                             ;; Single character
+                             (if (ends-token-p (1+ start))
+                                 (progn
+                                   (write-string (format nil "#\\~A" next-char) out)
+                                   (setf i (1+ start)))
+                                 ;; Backslash before identifier - just write as-is
+                                 (progn
+                                   (write-char #\\ out))))))
+                     ;; Non-alpha char like \, \( etc.
+                     (progn
+                       (write-string (format nil "#\\~A" next-char) out)
+                       (incf i)))))
               ;; Check for dot at token boundary
               ((and (char= c #\.)
                     (at-token-boundary-p i))
                ;; Count consecutive dots
-               (let ((dot-start i)
-                     (dot-count 0))
+               (let ((dot-count 0))
                  (loop while (and (< i len) (char= (char input-string i) #\.)) do
                    (incf dot-count)
                    (incf i))

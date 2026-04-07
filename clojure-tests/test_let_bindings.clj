@@ -10,4 +10,4 @@
         int-vecs (create-vals (vector-of :int))]
     (is (= 99 (count (:standard int-vecs))))
     (is (= 0 (count (:empty int-vecs))))
-    (is (= 100 (count (:longer int-vecs)))))
+    (is (= 100 (count (:longer int-vecs))))))

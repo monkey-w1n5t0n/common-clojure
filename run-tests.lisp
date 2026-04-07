@@ -36,7 +36,7 @@
           (init-eval-system))
         (eval-file (namestring path))
         (values :ok (pathname-name path)))
-    (error (c)
+    (serious-condition (c)
       (declare (ignore c))
       (values :error (pathname-name path)))))
 

@@ -16,7 +16,7 @@ The `clojure-tests/` directory contains 68 test files from the official Clojure 
 
 ```bash
 cd /home/w1n5t0n/src/common-clojure
-bd ready
+hw ready
 ```
 
 Only work on issues with no blockers. Dependencies are intentionally chained so we build features in the right order.
@@ -25,7 +25,7 @@ Only work on issues with no blockers. Dependencies are intentionally chained so 
 
 ```bash
 # Mark as in-progress
-bd set-state in-progress common-clojure-<id>
+hw claim <id>
 ```
 
 ### 3. Implement and Test
@@ -43,7 +43,7 @@ The test runner shows:
 ### 4. Close When Done
 
 ```bash
-bd close common-clojure-<id>
+hw done <id> --reason "tests pass"
 ```
 
 ## Implementation Layers
@@ -120,12 +120,12 @@ docs: update README with current status
 
 - Don't work on issues blocked by open dependencies
 - Don't skip ahead to later layers
-- Don't add features not tracked in beads (create issue first)
+- Don't add features not tracked in holon-work (create the issue first via `hw create`)
 - Don't close issues without verifying tests pass
 
 ## Do
 
-- Run `bd ready` before picking up work
+- Run `hw ready` before picking up work
 - Run `test-runner.lisp` to check progress
 - Mark issues in-progress when working
 - Close issues when tests actually pass

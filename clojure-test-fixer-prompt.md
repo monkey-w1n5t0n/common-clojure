@@ -23,9 +23,9 @@ As of the latest run:
 - **57 test files** can be parsed successfully
 - **11 test files** have parse errors: clearing, compilation, errors, java_interop, method_thunks, param_tags, protocols, reducers, test_helper, transducers, vectors
 
-## Available Work (from beads)
+## Available Work (from Ergo)
 
-Run `bd ready` to see issues with no blockers:
+Run `ergo ready --all` to see tasks with no blockers. `--all` includes the migrated project tasks:
 
 1. Reader: Implement anonymous function literal
 2. Reader: Implement character literals
@@ -41,13 +41,13 @@ Run `bd ready` to see issues with no blockers:
 ## Your Workflow
 
 1. **Check status**: `sbcl --script test-runner.lisp`
-2. **Pick a task**: Choose a failing test or ready bead issue
+2. **Pick a task**: Choose a failing test or ready Ergo task
 3. **Implement**: Follow patterns in `cl-clojure-syntax.lisp`
 4. **Test**: `sbcl --script test-runner.lisp`
 5. **Run CL tests**: `sbcl --eval "(asdf:test-system :cl-clojure-syntax)"`
 6. **Track work**:
-   - `bd set-state in-progress <issue-id>` to claim
-   - `bd close <issue-id>` when done
+   - `ergo claim <id>` to claim
+   - `ergo done <id> --reason "Implemented and verified"` when done
 7. **Commit**: Use conventional commits: `feat(scope): description`
 
 ## Implementation Notes

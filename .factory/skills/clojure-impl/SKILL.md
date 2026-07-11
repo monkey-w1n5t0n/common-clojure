@@ -1,6 +1,6 @@
 ---
 name: clojure-impl
-description: Implements Clojure features in Common Lisp to pass official Clojure test suite
+description: Use when implementing or fixing Clojure language features in this Common Lisp runtime against the official test suite. NOT for Java-interop work or architecture-wide redesigns.
 ---
 
 # Clojure Implementation Worker
@@ -24,7 +24,8 @@ None - this is a pure Common Lisp implementation task.
 
 ### 1. Understand the Requirement
 - Read the relevant test file(s) in `clojure-tests/` to understand expected behavior
-- Check Beads issue tracker: `bd ready` to see if there's an existing issue
+- Inspect assigned work with `ergo show <id>`, or use `ergo ready --all` to see
+  unblocked tasks from the migrated project queue; claim one with `ergo claim <id>`
 - Consult DEVLOG.md for similar implementations and gotchas
 
 ### 2. Write Tests First (TDD)
@@ -86,8 +87,14 @@ sbcl --load run-tests.lisp --eval '(progn (try-run-clojure-file "clojure-tests/f
 
 ### 7. Update Tracking
 - Update DEVLOG.md with what was implemented
-- Close Beads issue if applicable: `bd close <id>`
+- Complete the Ergo task, if applicable, only after verification:
+  `ergo done <id> --reason "Implemented and tests passed"`
 - Commit with conventional commit message: `feat(string): implement clojure.string/split`
+
+### 8. Verify Completion
+- `./tests.sh` exits successfully for the intended change
+- `ergo show <id>` reports the expected terminal state when work was task-tracked
+- `git diff --check` reports no whitespace errors
 
 ## Example Handoff
 
@@ -99,7 +106,7 @@ sbcl --load run-tests.lisp --eval '(progn (try-run-clojure-file "clojure-tests/f
   "verification": {
     "commandsRun": [
       {"command": "./tests.sh", "exitCode": 0, "observation": "69 passed, 33 failed (was 68 passed, 34 failed)"},
-      {"command": "bd close string-impl", "exitCode": 0, "observation": "Issue closed"}
+      {"command": "ergo done <id> --reason \"Implemented and tests passed\"", "exitCode": 0, "observation": "Task completed"}
     ],
     "interactiveChecks": []
   },

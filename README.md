@@ -4,7 +4,7 @@ A Clojure implementation built on top of Steel Bank Common Lisp (SBCL).
 
 ## Overview
 
-This project aims to implement Clojure on SBCL, using the official Clojure test suite as our north star for correctness and completeness. We're following Test-Driven Development, tracking progress with beads issues, and working through features in a logical dependency order.
+This project aims to implement Clojure on SBCL, using the official Clojure test suite as our north star for correctness and completeness. We're following Test-Driven Development, tracking progress in Ergo, and working through features in a logical dependency order.
 
 ## Goal
 
@@ -42,20 +42,20 @@ Currently implementing the reader layer. The parser can read Clojure's vector `[
 
 ### Tracking Progress
 
-We use [beads](https://github.com/monadplus/beads) for issue tracking with 93 tasks organized in dependency chains:
+We use Ergo for coding-work tracking. The original 93 tasks were migrated, so include `--all` when reading their queues:
 
 ```bash
 # See what's ready to work on (no blockers)
-bd ready
+ergo ready --all
 
-# Show the foundation issue (start here)
-bd show common-clojure-wxt
+# Show the foundation task using the short_id printed above
+ergo show <id>
 
 # Mark work in progress
-bd set-state in-progress common-clojure-wxt
+ergo claim <id>
 
 # Complete and close
-bd close common-clojure-wxt
+ergo done <id> --reason "Implemented and verified"
 ```
 
 ### Running Tests
@@ -103,13 +103,13 @@ Features are implemented in dependency order:
 
 ## Contributing
 
-Work follows the beads dependency chain:
+Work follows the task dependency chain:
 
-1. Run `bd ready` to see available work
-2. Pick up a task: `bd set-state in-progress <issue>`
+1. Run `ergo ready --all` to see available work
+2. Pick up a task: `ergo claim <id>`
 3. Implement the feature
 4. Run tests to verify
-5. Close: `bd close <issue>`
+5. Close: `ergo done <id> --reason "Implemented and verified"`
 
 Use Conventional Commits:
 ```

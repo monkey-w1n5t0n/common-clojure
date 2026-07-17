@@ -1,132 +1,143 @@
-# Agent Instructions — Clojure on SBCL
+# Agent Instructions — Common Clojure
 
-This file provides guidance to coding agents working on the Clojure on SBCL implementation.
+`AGENTS.md` is the canonical project prompt. `CLAUDE.md` must remain the relative
+symlink `CLAUDE.md -> AGENTS.md`; never maintain a second copy.
 
-## Project Goal
+## Mission
 
-Implement Clojure on top of SBCL, making the official Clojure test suite pass. This is a TDD project - tests drive development.
+Build a seamless Clojure semantic layer that compiles through Common Lisp to native
+SBCL code. The language is for new Common Clojure applications and deliberately adapted
+libraries. It is not a JVM emulator and it is not a tree-walking interpreter.
 
-## North Star
+The observable contract lives in `docs/specs/`. Existing source, tests, branches, and
+old tasks are evidence only when they agree with that contract.
 
-The `clojure-tests/` directory contains 68 test files from the official Clojure repository. **Making these tests pass is the goal.** Everything else is a means to that end.
+## Read before changing code
 
-## How to Work
+Read these in order:
 
-### 1. Check What's Ready
+1. `MAP.md` — repository inventory and spec discovery.
+2. `docs/specs/MAIN.md` and every child spec cited by the task.
+3. `docs/domain.md` — canonical vocabulary.
+4. Relevant accepted records in `docs/decisions/`.
+5. `ALIGNMENT.md` — current strategic defects.
+6. The full body and dependency edges of the claimed Ergo task.
+
+If source or a legacy test contradicts a spec, do not preserve both paths or weaken the
+test. Surface the conflict and implement the smallest coherent design that satisfies the
+specification and accepted decisions.
+
+## Non-negotiable architecture
+
+- Runtime execution contains no AST/form walking, evaluator environment lookup,
+  interpreted closure body, or fallback to `cl-clojure-eval:clojure-eval`.
+- All source execution goes through one pipeline: read, macroexpand, analyze into a
+  private semantic IR, emit Common Lisp, and ask SBCL to compile it.
+- A REPL or `eval-string` compiles a native thunk. ASDF, file compilation, loading, REPL,
+  and embedding are adapters over the same compiler seam, never alternate evaluators.
+- SBCL is the sole backend. Do not add a generic backend abstraction without a new
+  accepted decision based on a real second backend.
+- The compiler IR is private. Ordinary Clojure macros, tagged literals, protocols over
+  host types, declarative Common Lisp bridges, and small CL adapter modules are the
+  extension surfaces. A compiler hook requires evidence from at least two concrete
+  library ports and a new accepted decision.
+- Preserve Clojure's observable value semantics: nil and false are distinct falsey
+  values; the empty Clojure list is distinct from nil and truthy; equality and hashing
+  are Clojure-semantic rather than raw Common Lisp `equal`.
+- Clojure namespaces and Vars form a semantic registry. Backing CL packages are code
+  generation, storage, and interop machinery, not the name resolver.
+- Default development compilation preserves Var redefinition. Direct linking or
+  inlining that changes redefinition behavior is explicit final/sealed optimization.
+- `recur` is checked for target, tail position, and arity before host compilation and is
+  lowered to bounded-stack native control flow with simultaneous argument reassignment.
+- Loaded application artifacts depend on the runtime ABI, not the compiler or legacy
+  evaluator.
+
+## Compatibility boundary
+
+Clojure language semantics are the design reference. The vendored official tests are a
+reference corpus, not the North Star and not an acceptance oracle. JVM classes,
+bytecode-specific machinery, and Java interop calls must receive an explicit SBCL/Common
+Lisp adaptation or a source-located unsupported-platform error; never add silent stubs.
+
+Priority library targets are `core.match`, `clojure.spec.alpha`, O'Doyle Rules, and an
+adapted `core.async`. Their ports are milestone evidence. They do not imply that arbitrary
+Clojure projects must run unchanged.
+
+## Work through Ergo
+
+Use only native-compilation epic `f86d60db` described in `docs/swarm.md` unless the user
+explicitly redirects you. The imported evaluator-era tasks are frozen migration evidence;
+they are hidden from normal Ergo queues and must not be claimed just because `--all`
+reveals them.
 
 ```bash
 cd /home/w1n5t0n/src/common-clojure
 ergo ready
-```
-
-Only work on issues with no blockers. Dependencies are intentionally chained so we build features in the right order.
-
-### 2. Pick Up a Task
-
-```bash
-# Mark as in-progress
+ergo show <id>
 ergo claim <id>
 ```
 
-### 3. Implement and Test
+Before implementation, confirm that all blockers are closed, read the exact cited spec
+sections, and keep to the task's file-ownership boundary. If another active task owns a
+shared compiler module, coordinate through a narrower seam instead of editing it
+concurrently.
+
+Close work only with observable evidence:
 
 ```bash
-# Run test scanner to see current status
-sbcl --script test-runner.lisp
+ergo done <id> --reason "Implemented; <commands/evidence>; specs synchronized"
 ```
 
-The test runner shows:
-- Which test files can now be parsed
-- Which still error
-- What features each test file needs
+Create newly discovered coding work in Ergo and wire real dependencies. Do not use
+Markdown task lists, TODO files, or the retired tracker. Do not close, kill, or rewrite
+the imported backlog without explicit authorization.
 
-### 4. Close When Done
+## Verification ladder
 
-```bash
-ergo done <id> --reason "Tests pass"
+Use the narrowest public seam that proves the behavior, then run every broader gate the
+task names:
+
+1. Reader/form and analyzer tests, including source-located failure cases.
+2. Runtime semantic tests for values, equality, collections, Vars, and dispatch.
+3. Compilation tests that produce and load FASLs without the compiler/evaluator present.
+4. Common Lisp calls proving exported values are SBCL compiled functions.
+5. Disassembly/allocation/performance checks for promised native fast paths.
+6. Adapted-library conformance tests when a milestone reaches that layer.
+
+`./tests.sh` is a legacy characterization harness. A file loading without a serious
+condition, an eager `deftest` body, or a false `is` expression that merely returns nil is
+not a passing test.
+
+Never weaken an assertion, swallow a compiler condition, or add an interpreter fallback
+to make a gate green.
+
+## Legacy code policy
+
+- `cl-clojure-syntax.lisp` contains reader algorithms and cases worth mining, but its
+  representations are not the new form/value ABI.
+- `cl-clojure-eval.lisp` is a semantic quarry only. Selectively port verified pure
+  algorithms behind new tests; never link its evaluator, environment, or closure path
+  into the compiler/runtime.
+- `feat/clojure-on-common-lisp` is an architectural sketch, not a merge base. Manually
+  mine useful ideas only after they satisfy the current specs.
+- Do not edit or delete the user's untracked diagnostic scripts unless a task explicitly
+  scopes them in.
+
+## Documentation is part of done
+
+Before every commit, check `MAP.md`, `ALIGNMENT.md`, the task's cited specs, linked
+decisions, and deeper docs. Update affected documentation in the same commit as behavior.
+Delete resolved strategic defects from `ALIGNMENT.md`; do not turn it into a changelog.
+
+Specs describe durable behavior, decisions explain hard-to-reverse choices, Ergo holds
+coding tasks, and `MAP.md` only says where things are. Keep those roles separate.
+
+Use Conventional Commit messages with a focused scope, for example:
+
+```text
+feat(compiler): emit native fixed-arity functions
+fix(runtime): distinguish false from nil in equality
+test(compiler): reject non-tail recur with a source span
+docs(specs): define native artifact isolation
 ```
-
-## Implementation Layers
-
-Work through layers in order. Don't jump ahead.
-
-1. **Reader** - Must parse Clojure syntax before anything else
-2. **Eval** - Can't run tests without evaluation
-3. **Collections** - Tests use sequences, maps, sets heavily
-4. **Concurrency** - Refs, atoms, agents come after core works
-5. **Java Interop** - SBCL needs Java bridge for this
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `cl-clojure-syntax.lisp` | Reader implementation (macros for `[` `{`) |
-| `test-runner.lisp` | Scans Clojure tests, reports parse status |
-| `tests.lisp` | Original Common Lisp tests (legacy) |
-| `clojure-tests/` | Official Clojure test suite (68 files) |
-
-## Testing Strategy
-
-1. **Parse First** - Can we read the test file?
-2. **Eval Second** - Can we evaluate the forms?
-3. **Assert Third** - Do the test assertions pass?
-
-Don't try to run tests before the reader can parse them. Don't try to assert before eval works.
-
-## Reader Implementation Notes
-
-The reader uses Common Lisp's `set-macro-character` to hook into the parser:
-
-```lisp
-(set-macro-character #\[ #'read-vector)
-(set-macro-character #\{ #'read-map)
-```
-
-New reader macros follow this pattern. Each dispatch macro (starting with `#`) is registered via `set-dispatch-macro-character`.
-
-## Common Patterns
-
-### Adding a New Reader Macro
-
-```lisp
-(defun read-<feature> (stream char)
-  (declare (ignore char))
-  ;; parse and return Lisp data
-  )
-
-(set-dispatch-macro-character #\# #\<char> #'read-<feature>)
-```
-
-### Testing Reader Changes
-
-```lisp
-;; In test-runner.lisp context
-(enable-clojure-syntax)
-(read-from-string "<clojure-syntax>")  ; should return Lisp data
-```
-
-## Commit Messages
-
-Use Conventional Commits with scope:
-
-```
-feat(reader): implement keyword syntax :foo
-fix(eval): handle nil in if conditional
-test: add scanner for Clojure test files
-docs: update README with current status
-```
-
-## Don't
-
-- Don't work on issues blocked by open dependencies
-- Don't skip ahead to later layers
-- Don't add features not tracked in ergo (create a task first)
-- Don't close issues without verifying tests pass
-
-## Do
-
-- Run `ergo ready` before picking up work
-- Run `test-runner.lisp` to check progress
-- Mark issues in-progress when working
-- Close issues when tests actually pass
-- Ask if blocked or unsure about approach

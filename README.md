@@ -1,127 +1,71 @@
-# Clojure on SBCL
+# Common Clojure
 
-A Clojure implementation built on top of Steel Bank Common Lisp (SBCL).
+Common Clojure is a Clojure-semantic language hosted natively on Steel Bank Common
+Lisp. Clojure source is read, macroexpanded, analyzed, lowered to Common Lisp, and
+compiled by SBCL into ordinary native functions and FASLs.
 
-## Overview
+The project is aimed at building new applications in a Clojure-shaped language while
+using SBCL's compiler, runtime, debugger, profiler, object system, and library ecosystem.
+Selected Clojure libraries may be ported with explicit platform adaptations.
 
-This project aims to implement Clojure on SBCL, using the official Clojure test suite as our north star for correctness and completeness. We're following Test-Driven Development, tracking progress in Ergo, and working through features in a logical dependency order.
+## Contract
 
-## Goal
+Runtime execution must not walk Clojure forms, retain evaluator environments, or fall
+back to the legacy `clojure-eval`. Walking forms during compilation is expected; the
+resulting program is native SBCL code.
 
-Make all 68 Clojure core test files pass. These tests cover:
-- Reader (parsing)
-- Core evaluation
-- Collections (vectors, maps, sets, sequences, transducers)
-- Concurrency (refs, atoms, agents, volatiles)
-- Namespaces
-- Metadata
-- Protocols and multimethods
-- Java interop
-- And more...
+The intended pipeline is:
 
-## Current Status
+```text
+.clj source -> reader/forms -> macroexpansion -> semantic analysis/private IR
+            -> Common Lisp emission -> SBCL compile/compile-file -> FASL/native code
+```
 
-**Phase: Foundation - Reader Implementation**
+Common Clojure targets Clojure's useful language semantics, not unchanged execution of
+arbitrary JVM projects. SBCL is the deliberate host and sole compiler backend. Common
+Lisp portability, Java emulation, and blanket compatibility with the official Clojure
+test suite are not current goals.
 
-Currently implementing the reader layer. The parser can read Clojure's vector `[...]` and map `{...}` literals, but needs significant expansion:
+## Current state
 
-- [ ] Keywords (`:foo`, `:ns/foo`, `::auto-resolve`)
-- [ ] Symbols and namespace-qualified symbols
-- [ ] Numbers (ints, floats, ratios, BigInt, radix notation)
-- [ ] Set literals (`#{...}`)
-- [ ] Quote/syntax-quote (`'`, `` ` ``, `~`, `~@`)
-- [ ] Metadata (`^{:foo 1}`)
-- [ ] Var quote (`#'foo`)
-- [ ] Anonymous function literals (`#(...)`)
-- [ ] Regex literals (`#"\d+"`)
-- [ ] Character literals (`\a`, `\newline`, etc.)
-- [ ] Dispatch literals (`#inst`, `#uuid`)
-- [ ] Comments (`;`, `(comment ...)`, `#_`)
+The checked-in implementation predates this direction. It contains a capable syntax
+experiment and a large tree-walking evaluator, but no conforming native compiler yet.
+Its tests and the vendored Clojure corpus are useful for characterization and semantic
+examples; their historical pass counts are not evidence that the new contract is met.
 
-## Development
+The next milestone is a native vertical slice: compile a `.clj` module containing a
+user macro and a typed `loop`/`recur`, produce a loadable FASL, call its exported
+compiled function directly from Common Lisp, and demonstrate bounded-stack,
+allocation-free loop execution without any evaluator dependency.
 
-### Tracking Progress
+## Start here
 
-We use Ergo for coding-work tracking. The original 93 tasks were migrated, so include `--all` when reading their queues:
+- [MAP.md](MAP.md) is the terse repository map and spec-discovery entry.
+- [docs/specs/MAIN.md](docs/specs/MAIN.md) is the normative behavioral contract.
+- [docs/domain.md](docs/domain.md) defines the project's shared vocabulary.
+- [docs/decisions/](docs/decisions/) records accepted architectural choices and rejected alternatives.
+- [ALIGNMENT.md](ALIGNMENT.md) is the dated critique of gaps between the current code and the mission.
+- [docs/swarm.md](docs/swarm.md) explains how multiple agents coordinate without creating parallel architectures.
+
+## Working on the project
+
+Coding work is tracked in Ergo. Use native-compilation epic `f86d60db` described in
+[docs/swarm.md](docs/swarm.md); the imported evaluator-era backlog is intentionally not
+the default work queue.
 
 ```bash
-# See what's ready to work on (no blockers)
-ergo ready --all
-
-# Show the foundation task using the short_id printed above
+ergo ready
 ergo show <id>
-
-# Mark work in progress
 ergo claim <id>
-
-# Complete and close
-ergo done <id> --reason "Implemented and verified"
+# implement and verify the task's cited spec clauses
+ergo done <id> --reason "Implemented and verified against the cited specs"
 ```
 
-### Running Tests
-
-```bash
-# Run the Clojure test suite scanner
-sbcl --script test-runner.lisp
-
-# Run existing Common Lisp tests
-sbcl --script tests.lisp
-```
-
-The test runner shows:
-- Which test files exist and what features they need
-- Parse status (can we read the file?)
-- Categorization by feature layer (Reader, Eval, Collections, etc.)
-
-### Project Structure
-
-```
-├── clojure-tests/          # Official Clojure test suite (68 files)
-├── test-runner.lisp        # Test scanner/runner
-├── cl-clojure-syntax.lisp  # Reader implementation
-├── cl-clojure-syntax.asd   # ASDF definition
-├── package.lisp            # Package definition
-└── tests.lisp              # Original Common Lisp tests
-```
-
-## Implementation Layers
-
-Features are implemented in dependency order:
-
-1. **Reader Layer** - Parse Clojure syntax into Lisp data structures
-2. **Eval Layer** - Evaluate forms (def, fn, if, let, etc.)
-3. **Namespace Layer** - ns, require, use, import
-4. **Collection Layer** - Persistent data structures
-5. **Concurrency Layer** - Refs, atoms, agents, STM
-6. **Metadata Layer** - with-meta, meta, reader metadata
-7. **Macro Layer** - defmacro, core macros
-8. **Protocol Layer** - defprotocol, extend-type, reify
-9. **Multimethod Layer** - defmulti, defmethod
-10. **Java Interop Layer** - gen-class, proxy, arrays
-11. **Printer Layer** - pr-str, pprint, EDN
-12. **REPL Layer** - Read-eval-print loop
-
-## Contributing
-
-Work follows the task dependency chain:
-
-1. Run `ergo ready --all` to see available work
-2. Pick up a task: `ergo claim <id>`
-3. Implement the feature
-4. Run tests to verify
-5. Close: `ergo done <id> --reason "Implemented and verified"`
-
-Use Conventional Commits:
-```
-feat(reader): implement keyword parsing
-fix(eval): handle nil in if conditional
-test: add vector equality tests
-```
+`./tests.sh` exercises the legacy evaluator and is retained only as a characterization
+signal during migration. Native compiler tasks must add acceptance tests at the public
+compiler/artifact seam and keep the specs, map, and related decisions synchronized in
+the same change.
 
 ## License
 
 MIT
-
-## Author
-
-Droid

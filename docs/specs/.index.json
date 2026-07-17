@@ -1,0 +1,2401 @@
+{
+  "schema": 1,
+  "generated_at": "2026-07-17T21:51:19Z",
+  "generator": "spec-maintainer pass",
+  "spec_root": "docs/specs",
+  "layout": "flat",
+  "main_entry": "MAIN.md",
+  "specs": [
+    {
+      "path": "collections-and-sequences.md",
+      "title": "Collections and Sequences",
+      "stability": "aspirational",
+      "layer": "behavioural",
+      "counterpart": null,
+      "coupling": null,
+      "audience": "both",
+      "tests": null,
+      "last_reviewed": null,
+      "sections": [
+        {
+          "num": "1.1",
+          "title": "Common Clojure provides immutable persistent lists, vectors, maps, and sets plus a common sequence abstraction with Clojure-observable behavior.",
+          "byte_offset": 895
+        },
+        {
+          "num": "1.2",
+          "title": "Collection representation is private. Native arrays, hash tables, conses, and trees MAY be used internally only when updates, equality, hashing, metadata, ordering, and persistence remain conforming.",
+          "byte_offset": 1160
+        },
+        {
+          "num": "2.1",
+          "title": "An operation on a persistent collection MUST NOT change the value observed through any existing reference to that collection.",
+          "byte_offset": 1400
+        },
+        {
+          "num": "2.2",
+          "title": "Vector append, indexed association, map association/removal, and set addition/removal return values with structural sharing suitable for repeated functional updates; they MUST NOT copy the complete collection for every ordinary update at scale.",
+          "byte_offset": 1531
+        },
+        {
+          "num": "2.3",
+          "title": "Vectors preserve index order and support integer lookup. Maps preserve key/value associations independent of iteration order. Sets preserve membership independent of iteration order. Lists preserve sequence order and front-oriented construction.",
+          "byte_offset": 1938
+        },
+        {
+          "num": "2.4",
+          "title": "Maps support nil, false, and the empty list as distinct keys. Presence tests MUST distinguish an absent key from a present key mapped to nil.",
+          "byte_offset": 2189
+        },
+        {
+          "num": "2.5",
+          "title": "Empty list is the truthy singleton defined by [value-model.md §2.1](value-model.md); it is neither nil nor a host `NIL` list terminator exposed as a Clojure list.",
+          "byte_offset": 2336
+        },
+        {
+          "num": "2.6",
+          "title": "Collection equality and hashes follow [value-model.md §3.1](value-model.md), including sequential cross-type equality and order-independent map/set hashing.",
+          "byte_offset": 2505
+        },
+        {
+          "num": "3.1",
+          "title": "`seq` returns nil for an empty seqable value and a sequence view for a non-empty value. Sequence views do not require copying the whole source collection.",
+          "byte_offset": 2711
+        },
+        {
+          "num": "3.2",
+          "title": "`first`, `rest`, and `next` obey [value-model.md §2.4](value-model.md) for empty and terminal sequences.",
+          "byte_offset": 2871
+        },
+        {
+          "num": "3.3",
+          "title": "Lazy sequence operations MUST be demand-driven and MUST NOT impose arbitrary realization limits on finite or infinite inputs.",
+          "byte_offset": 2982
+        },
+        {
+          "num": "3.4",
+          "title": "Realizing a lazy element caches its successful result so repeated traversal does not repeat the element's producer side effects. Concurrent realization MUST not publish a partially initialized value.",
+          "byte_offset": 3267
+        },
+        {
+          "num": "3.5",
+          "title": "Operations documented as lazy return before consuming an unbounded input and consume no more input than required to produce the demanded prefix.",
+          "byte_offset": 3472
+        },
+        {
+          "num": "3.6",
+          "title": "Sequence functions accept every declared seqable type, including strings, maps as map entries, sets, records where applicable, and explicit CL bridge values. Unsupported values signal a typed not-seqable condition.",
+          "byte_offset": 3622
+        },
+        {
+          "num": "3.7",
+          "title": "Reduced values terminate reductions without consuming later input. Transducers compose independently of a source collection and preserve completion arities and reduced propagation.",
+          "byte_offset": 3842
+        },
+        {
+          "num": "4.1",
+          "title": "Keywords invoked with a map-like target return the associated value or nil, and accept an optional not-found value.",
+          "byte_offset": 4062
+        },
+        {
+          "num": "4.2",
+          "title": "Maps invoked with a key perform map lookup and accept an optional not-found value.",
+          "byte_offset": 4183
+        },
+        {
+          "num": "4.3",
+          "title": "Sets invoked with a value return the stored equal member or nil; `contains?` remains the presence operation when the member itself may be nil.",
+          "byte_offset": 4271
+        },
+        {
+          "num": "4.4",
+          "title": "Vectors invoked with an integer return the indexed value and follow the vector lookup failure/default behavior.",
+          "byte_offset": 4419
+        },
+        {
+          "num": "4.5",
+          "title": "Wrong invocation arity or an invalid index/key domain signals the same typed failure whether the operation is reached through invocation or its named lookup function.",
+          "byte_offset": 4536
+        },
+        {
+          "num": "5.1",
+          "title": "A transient is a linear, owner-scoped optimization for building a persistent collection; converting it to persistent invalidates further transient mutation.",
+          "byte_offset": 4744
+        },
+        {
+          "num": "5.2",
+          "title": "Transient operations MUST NOT mutate persistent values that existed before transient creation.",
+          "byte_offset": 4906
+        },
+        {
+          "num": "5.3",
+          "title": "Cross-owner use, use after persistence, or an operation unsupported by that transient type signals a typed transient-state condition.",
+          "byte_offset": 5006
+        },
+        {
+          "num": "5.4",
+          "title": "Internal builders MAY use mutable native storage without exposing it, provided the published result obeys persistent semantics.",
+          "byte_offset": 5145
+        },
+        {
+          "num": "6.1",
+          "title": "Out-of-range indexed access signals when no not-found argument is defined and returns the explicit not-found value when that arity defines one.",
+          "byte_offset": 5307
+        },
+        {
+          "num": "6.2",
+          "title": "Map and set construction reject malformed entry/member input rather than dropping data or silently choosing a duplicate whose equality is ambiguous.",
+          "byte_offset": 5456
+        },
+        {
+          "num": "6.3",
+          "title": "A lazy producer condition is raised at the demand that encounters it, with both producer and consumer source context when available.",
+          "byte_offset": 5610
+        }
+      ],
+      "source_files": [
+        "cl-clojure-eval.lisp",
+        "cl-clojure-transducers.lisp",
+        "clojure-tests/vectors.clj",
+        "clojure-tests/data_structures.clj",
+        "clojure-tests/clojure_set.clj",
+        "clojure-tests/sequences.clj"
+      ],
+      "cross_refs": [
+        {
+          "to": "MAIN.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "value-model.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "protocols-types-and-metadata.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "performance.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "value-model.md",
+          "section": "2.1",
+          "from_section": "2.5"
+        },
+        {
+          "to": "value-model.md",
+          "section": "3.1",
+          "from_section": "2.6"
+        },
+        {
+          "to": "value-model.md",
+          "section": "2.4",
+          "from_section": "3.2"
+        }
+      ],
+      "open_deferred_count": 3,
+      "size_bytes": 6254,
+      "size_lines": 111
+    },
+    {
+      "path": "common-lisp-interop.md",
+      "title": "Common Lisp and SBCL Interop",
+      "stability": "aspirational",
+      "layer": "cross-cutting",
+      "counterpart": null,
+      "coupling": null,
+      "audience": "both",
+      "tests": null,
+      "last_reviewed": null,
+      "sections": [
+        {
+          "num": "1.1",
+          "title": "Common Lisp interop is an explicit, native host bridge rather than Java syntax emulation or an unrestricted bypass around Common Clojure analysis.",
+          "byte_offset": 631
+        },
+        {
+          "num": "1.2",
+          "title": "Ordinary language extensions use macros, tagged literals, protocols over declared CL types, declarative host bindings, or small CL adapter modules; they do not require a public compiler plugin interface.",
+          "byte_offset": 913
+        },
+        {
+          "num": "2.1",
+          "title": "Clojure nil is host `NIL`, Clojure true is host `T`, false is a distinct singleton, and empty Clojure list is a distinct truthy singleton as specified by [value-model.md §2.1](value-model.md).",
+          "byte_offset": 1156
+        },
+        {
+          "num": "2.2",
+          "title": "Clojure symbols and keywords are not CL symbols. A host bridge resolves a declared CL package/name at analysis time and records whether it denotes a function, variable, class, type, generic function, condition, or macro adapter.",
+          "byte_offset": 1355
+        },
+        {
+          "num": "2.3",
+          "title": "Source programs MUST opt into host names through a declared namespace/alias/import mechanism. Unqualified unresolved symbols MUST NOT search arbitrary CL packages.",
+          "byte_offset": 1589
+        },
+        {
+          "num": "2.4",
+          "title": "A bridged host object remains a first-class opaque value unless an adapter declares Clojure equality, hashing, sequencing, lookup, printing, or protocol behavior.",
+          "byte_offset": 1758
+        },
+        {
+          "num": "3.1",
+          "title": "A declared host function or generic function call emits an ordinary native CL call when its target is statically known; otherwise it uses an explicit callable adapter.",
+          "byte_offset": 1959
+        },
+        {
+          "num": "3.2",
+          "title": "Arguments and results follow the bridge's declared conversion contract. Conversion MUST NOT infer from a returned `NIL` whether the host meant false, empty list, or no value.",
+          "byte_offset": 2132
+        },
+        {
+          "num": "3.3",
+          "title": "A result declared as a generalized boolean maps host non-nil to canonical true and host nil to canonical false. An undeclared raw `NIL` result maps to Clojure nil.",
+          "byte_offset": 2397
+        },
+        {
+          "num": "3.4",
+          "title": "Numeric and character values MAY pass without allocation when their supported semantics coincide. Strings MAY share native storage only while Common Clojure immutability remains observable.",
+          "byte_offset": 2566
+        },
+        {
+          "num": "3.5",
+          "title": "Multiple host values, optional arguments, keyword arguments, and rest arguments require an explicit bridge declaration or adapter; they MUST NOT be guessed from Clojure call shape.",
+          "byte_offset": 2761
+        },
+        {
+          "num": "3.6",
+          "title": "Type declarations supplied by a bridge MAY enable unboxed arithmetic, direct slot access, and native call specialization, subject to the safety tiers in [performance.md §2.1](performance.md).",
+          "byte_offset": 2947
+        },
+        {
+          "num": "4.1",
+          "title": "Declared CL classes can receive Common Clojure protocol extensions through native CLOS methods as specified by [protocols-types-and-metadata.md §2.2](protocols-types-and-metadata.md).",
+          "byte_offset": 3183
+        },
+        {
+          "num": "4.2",
+          "title": "Common Clojure types and records MAY be passed to CL code as their native class instances; adapter authors must not rely on generated class/package names unless those names are explicitly exported by the bridge.",
+          "byte_offset": 3373
+        },
+        {
+          "num": "4.3",
+          "title": "SBCL-specific facilities MAY be exposed through named bridge namespaces or adapter systems. Their source MUST identify the SBCL dependency and failure behavior.",
+          "byte_offset": 3590
+        },
+        {
+          "num": "4.4",
+          "title": "Host macros are not called as runtime functions. A CL macro used by Common Clojure MUST be wrapped by a compile-time adapter that returns analyzable Common Lisp emission or ordinary Common Clojure forms under the compiler's control.",
+          "byte_offset": 3756
+        },
+        {
+          "num": "5.1",
+          "title": "Argument conversion failure, unresolved host name, wrong host kind, foreign type mismatch, or unsupported multiple-value shape signals a typed `interop-error` with source span and host cause.",
+          "byte_offset": 4031
+        },
+        {
+          "num": "5.2",
+          "title": "Declared CL condition classes can participate in Common Clojure catch matching. Undeclared host conditions propagate with their original cause and acquire Common Clojure source context at the bridge frame.",
+          "byte_offset": 4228
+        },
+        {
+          "num": "5.3",
+          "title": "Resource adapters MUST specify ownership and cleanup. Cleanup participates in Common Clojure `try/finally` and non-local exit restoration.",
+          "byte_offset": 4439
+        },
+        {
+          "num": "5.4",
+          "title": "Host warnings and style warnings remain distinguishable from fatal conditions; compiler policy MAY promote named warning classes but MUST report the policy in diagnostics.",
+          "byte_offset": 4583
+        },
+        {
+          "num": "6.1",
+          "title": "Java constructor, field, method, reflection, proxy, and class-generation behavior are not emulated. Familiar punctuation MAY be repurposed only if its Common Lisp meaning is documented and unambiguous.",
+          "byte_offset": 4793
+        },
+        {
+          "num": "6.2",
+          "title": "A CL adapter MAY replace a JVM-specific implementation inside an adapted library while preserving that library's Common Clojure-visible contract.",
+          "byte_offset": 5000
+        },
+        {
+          "num": "6.3",
+          "title": "Raw host-form escape, if later admitted, MUST be explicit, source-located, limited to compile-time emission, and unable to install a runtime interpreted path.",
+          "byte_offset": 5151
+        }
+      ],
+      "source_files": [
+        "package.lisp",
+        "cl-clojure-eval.lisp",
+        "cl-clojure.asd"
+      ],
+      "cross_refs": [
+        {
+          "to": "MAIN.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "value-model.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "protocols-types-and-metadata.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "diagnostics.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "value-model.md",
+          "section": "2.1",
+          "from_section": "2.1"
+        },
+        {
+          "to": "performance.md",
+          "section": "2.1",
+          "from_section": "3.6"
+        },
+        {
+          "to": "protocols-types-and-metadata.md",
+          "section": "2.2",
+          "from_section": "4.1"
+        }
+      ],
+      "open_deferred_count": 3,
+      "size_bytes": 5789,
+      "size_lines": 98
+    },
+    {
+      "path": "compiler-and-artifacts.md",
+      "title": "Compiler and Artifacts",
+      "stability": "aspirational",
+      "layer": "cross-cutting",
+      "counterpart": null,
+      "coupling": null,
+      "audience": "both",
+      "tests": null,
+      "last_reviewed": null,
+      "sections": [
+        {
+          "num": "1.1",
+          "title": "Common Clojure is implemented as a compiler to Common Lisp forms and SBCL native artifacts, not as a tree-walking evaluator.",
+          "byte_offset": 733
+        },
+        {
+          "num": "1.2",
+          "title": "Interactive evaluation, ahead-of-time compilation, ASDF compilation, and any embedding adapter share one compiler module and one semantic pipeline.",
+          "byte_offset": 950
+        },
+        {
+          "num": "1.3",
+          "title": "The compiler's analyzed representation is private and closed to application code.",
+          "byte_offset": 1209
+        },
+        {
+          "num": "2.1",
+          "title": "A **compilation session** owns source roots, namespace and macro state, compiler policy, source caches, and the runtime ABI target for one coherent development/build context.",
+          "byte_offset": 1522
+        },
+        {
+          "num": "2.2",
+          "title": "A **module** is an ordered Common Clojure source unit with a declared namespace and dependencies.",
+          "byte_offset": 1702
+        },
+        {
+          "num": "2.3",
+          "title": "A **native artifact** is an SBCL-loadable FASL plus enough manifest information to reject an incompatible runtime before executing module initialization.",
+          "byte_offset": 1805
+        },
+        {
+          "num": "2.4",
+          "title": "The public compiler seam has three behavioral roles: construct a session, compile a source file to a native artifact, and compile then execute interactive source text. Exact package and function names are not frozen by this spec.",
+          "byte_offset": 1964
+        },
+        {
+          "num": "2.5",
+          "title": "A compilation session is stateful and MUST serialize mutations to its namespace and macro world. Independent sessions MAY compile concurrently when they do not publish into the same runtime world.",
+          "byte_offset": 2299
+        },
+        {
+          "num": "3.1",
+          "title": "Every execution surface follows this ordered pipeline:",
+          "byte_offset": 2536
+        },
+        {
+          "num": "3.2",
+          "title": "No successful path MAY skip semantic analysis, execute a legacy evaluator, retain interpreted closure bodies, or fall back to walking an AST at runtime.",
+          "byte_offset": 2974
+        },
+        {
+          "num": "3.3",
+          "title": "Compile-time macro functions are themselves SBCL-compiled functions. A module processes top-level forms in source order so a macro defined earlier can expand a later form as specified by [namespaces-vars-and-macros.md §5.2](namespaces-vars-and-macros.md).",
+          "byte_offset": 3132
+        },
+        {
+          "num": "3.4",
+          "title": "Higher-level language forms SHOULD be ordinary Common Clojure macros over the small kernel in [functions-and-control-flow.md §4.1](functions-and-control-flow.md), not additional evaluator cases.",
+          "byte_offset": 3394
+        },
+        {
+          "num": "3.5",
+          "title": "SBCL is called directly. The compiler MUST NOT introduce a generic backend interface until a second backend becomes an approved requirement.",
+          "byte_offset": 3595
+        },
+        {
+          "num": "4.1",
+          "title": "File compilation reads all module forms, resolves and compiles required modules, stages compile-time definitions, emits Common Lisp, and invokes SBCL `compile-file` to produce the requested artifact.",
+          "byte_offset": 3780
+        },
+        {
+          "num": "4.2",
+          "title": "A successful artifact MUST contain SBCL-compiled definitions and module initialization data. It MUST NOT contain source ASTs for execution, evaluator environments, interpreted closure bodies, or calls to the legacy evaluator.",
+          "byte_offset": 3985
+        },
+        {
+          "num": "4.3",
+          "title": "Loading a normal application artifact MAY depend on the Common Clojure runtime but MUST NOT require the compiler, reader, test harness, or legacy evaluator to be loaded.",
+          "byte_offset": 4216
+        },
+        {
+          "num": "4.4",
+          "title": "Artifact creation MUST use a temporary output and publish the target path only after successful compilation. An existing good artifact remains intact after failure.",
+          "byte_offset": 4491
+        },
+        {
+          "num": "4.5",
+          "title": "Each artifact MUST declare its Common Clojure runtime ABI, relevant compiler ABI, and SBCL FASL compatibility identity. A mismatch MUST be detected before module-owned namespace or Var initialization runs.",
+          "byte_offset": 4661
+        },
+        {
+          "num": "4.6",
+          "title": "Loading a module registers its namespace and definitions in dependency order. Compiler-owned publication is atomic as bounded by [diagnostics.md §4.1](diagnostics.md).",
+          "byte_offset": 4872
+        },
+        {
+          "num": "5.1",
+          "title": "Interactive source text is read into ordered top-level forms; each form is macroexpanded, analyzed, emitted, SBCL-compiled into a native thunk, and invoked before the next form begins.",
+          "byte_offset": 5081
+        },
+        {
+          "num": "5.2",
+          "title": "Definitions and macro state from each successful top-level form are visible to subsequent forms in the same input and session.",
+          "byte_offset": 5271
+        },
+        {
+          "num": "5.3",
+          "title": "If a later top-level form fails, effects of earlier successful forms remain visible. The failing form MUST NOT publish a partial definition.",
+          "byte_offset": 5403
+        },
+        {
+          "num": "5.4",
+          "title": "A function value returned or installed by interactive evaluation MUST satisfy Common Lisp `compiled-function-p` unless it is an explicitly declared host callable adapter.",
+          "byte_offset": 5669
+        },
+        {
+          "num": "5.5",
+          "title": "A language-level `eval`, if provided, MUST delegate to the current native compilation session and MUST NOT introduce an interpreter.",
+          "byte_offset": 5845
+        },
+        {
+          "num": "6.1",
+          "title": "The REPL is a thin reader/printer adapter over interactive evaluation. ASDF is a thin component adapter over file compilation and standard artifact load.",
+          "byte_offset": 6024
+        },
+        {
+          "num": "6.2",
+          "title": "An embedding macro MAY expose Common Clojure forms inside Common Lisp source, but it MUST delegate to the same analyzer and emitter and MUST NOT become a second language implementation.",
+          "byte_offset": 6183
+        },
+        {
+          "num": "6.3",
+          "title": "Given identical source bytes, dependency artifacts, session policy, runtime ABI, and SBCL build, compilation SHOULD produce behaviorally equivalent artifacts. Generated internal names MUST be deterministic except where hygiene requires fresh identities.",
+          "byte_offset": 6374
+        },
+        {
+          "num": "6.4",
+          "title": "Debug output MAY expose emitted Common Lisp and source maps for inspection, but those representations are diagnostics rather than a stable public compiler interface.",
+          "byte_offset": 6633
+        }
+      ],
+      "source_files": [
+        "cl-clojure.asd",
+        "cl-clojure-eval.lisp",
+        "run-tests.lisp",
+        "sbcl-init.lisp"
+      ],
+      "cross_refs": [
+        {
+          "to": "MAIN.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "diagnostics.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "performance.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "namespaces-vars-and-macros.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "namespaces-vars-and-macros.md",
+          "section": "5.2",
+          "from_section": "3.3"
+        },
+        {
+          "to": "functions-and-control-flow.md",
+          "section": "4.1",
+          "from_section": "3.4"
+        },
+        {
+          "to": "diagnostics.md",
+          "section": "4.1",
+          "from_section": "4.6"
+        }
+      ],
+      "open_deferred_count": 3,
+      "size_bytes": 7347,
+      "size_lines": 127
+    },
+    {
+      "path": "diagnostics.md",
+      "title": "Diagnostics and Failure Atomicity",
+      "stability": "aspirational",
+      "layer": "cross-cutting",
+      "counterpart": null,
+      "coupling": null,
+      "audience": "both",
+      "tests": null,
+      "last_reviewed": null,
+      "sections": [
+        {
+          "num": "1.1",
+          "title": "Every failure is assigned to the earliest reliable language phase and retains the original host cause when one exists.",
+          "byte_offset": 647
+        },
+        {
+          "num": "1.2",
+          "title": "Diagnostics are Common Lisp conditions with machine-readable fields and a human-readable report; callers MAY handle them without parsing strings.",
+          "byte_offset": 953
+        },
+        {
+          "num": "1.3",
+          "title": "No unsupported construct is converted to nil, a placeholder value, a warning-only success, or an interpreter fallback.",
+          "byte_offset": 1104
+        },
+        {
+          "num": "2.1",
+          "title": "`reader-error` identifies origin, smallest reliable span, reader construct, and cause or expected syntax.",
+          "byte_offset": 1349
+        },
+        {
+          "num": "2.2",
+          "title": "`macroexpansion-error` identifies macro Var, call-site span, ordered expansion stack, most recent generated form when printable, and original condition.",
+          "byte_offset": 1460
+        },
+        {
+          "num": "2.3",
+          "title": "`analysis-error` identifies source span, semantic category such as unresolved symbol, invalid binding, arity, illegal recur, or type assertion, and relevant resolved identities.",
+          "byte_offset": 1618
+        },
+        {
+          "num": "2.4",
+          "title": "`native-compile-error` identifies emitted-definition identity, corresponding Clojure span, compiler policy, and wrapped SBCL condition.",
+          "byte_offset": 1801
+        },
+        {
+          "num": "2.5",
+          "title": "`artifact-error` distinguishes artifact creation, ABI rejection, dependency resolution, and module initialization failures.",
+          "byte_offset": 1942
+        },
+        {
+          "num": "2.6",
+          "title": "Runtime language conditions include at least arity, not-callable, not-seqable, lookup/index, protocol missing/ambiguity, multimethod missing/ambiguity, transient state, metadata, assertion, and interop categories.",
+          "byte_offset": 2071
+        },
+        {
+          "num": "2.7",
+          "title": "Condition type names in this spec describe behavioral categories; exact package-qualified class names are not frozen until the public runtime package is implemented.",
+          "byte_offset": 2290
+        },
+        {
+          "num": "3.1",
+          "title": "Every diagnostic originating from written or macro-generated code reports the Clojure source name, line, column, and containing span when known.",
+          "byte_offset": 2500
+        },
+        {
+          "num": "3.2",
+          "title": "Generated code reports both the generated-form location and the nearest written macro call site, with an ordered expansion trace rather than replacing one with the other.",
+          "byte_offset": 2650
+        },
+        {
+          "num": "3.3",
+          "title": "Runtime stack reports SHOULD show Clojure namespace/function names and source locations alongside optional generated CL frames.",
+          "byte_offset": 2826
+        },
+        {
+          "num": "3.4",
+          "title": "A compiler report MUST preserve SBCL notes and restarts as nested host detail without exposing generated host names as the only explanation.",
+          "byte_offset": 2959
+        },
+        {
+          "num": "3.5",
+          "title": "Printing a condition MUST be bounded even when values, environments, causes, or data structures are cyclic or very large.",
+          "byte_offset": 3105
+        },
+        {
+          "num": "4.1",
+          "title": "File compilation stages compiler-owned namespace, Var, type, protocol, and macro publication. A failed module compilation publishes none of that staged state and leaves the previously valid artifact unchanged.",
+          "byte_offset": 3262
+        },
+        {
+          "num": "4.2",
+          "title": "Artifact loading checks runtime/compiler ABI compatibility before module initialization. A mismatch publishes no module-owned state.",
+          "byte_offset": 3595
+        },
+        {
+          "num": "4.3",
+          "title": "Module initialization stages compiler-owned namespace and Var registration until all compiler-generated initialization succeeds. Arbitrary external side effects explicitly performed by user top-level code cannot be rolled back and MUST be identified as outside the atomicity guarantee.",
+          "byte_offset": 3733
+        },
+        {
+          "num": "4.4",
+          "title": "Interactive evaluation commits after each successful top-level form and preserves earlier successes if a later form fails, as owned by [compiler-and-artifacts.md §5.1](compiler-and-artifacts.md).",
+          "byte_offset": 4024
+        },
+        {
+          "num": "4.5",
+          "title": "A failing interactive definition MUST leave the prior root and callable fdefinition coherent and visible; it MUST NOT expose a half-installed replacement.",
+          "byte_offset": 4226
+        },
+        {
+          "num": "4.6",
+          "title": "Cleanup, dynamic binding restoration, and temporary redefinition restoration run on every supported non-local exit.",
+          "byte_offset": 4386
+        },
+        {
+          "num": "5.1",
+          "title": "Warnings identify category and source span and remain distinguishable from fatal conditions. Session policy MAY suppress or promote named warning categories but MUST NOT silently suppress errors.",
+          "byte_offset": 4546
+        },
+        {
+          "num": "5.2",
+          "title": "The conformance harness records separate counts for forms read, forms expanded, definitions analyzed, modules compiled, artifacts loaded, tests executed, assertions passed, assertions failed, and unexpected conditions.",
+          "byte_offset": 4747
+        },
+        {
+          "num": "5.3",
+          "title": "A false assertion is a failure even when its containing file loaded without a condition.",
+          "byte_offset": 4971
+        },
+        {
+          "num": "5.4",
+          "title": "Test isolation MUST prevent namespace, Var, macro, hierarchy, multimethod, and dynamic-binding state from changing another test's outcome unless shared state is the behavior under test.",
+          "byte_offset": 5065
+        }
+      ],
+      "source_files": [
+        "run-tests.lisp",
+        "cl-clojure-eval.lisp",
+        "sbcl-init.lisp"
+      ],
+      "cross_refs": [
+        {
+          "to": "MAIN.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "compiler-and-artifacts.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "reader-and-forms.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "compiler-and-artifacts.md",
+          "section": "5.1",
+          "from_section": "4.4"
+        }
+      ],
+      "open_deferred_count": 3,
+      "size_bytes": 5726,
+      "size_lines": 100
+    },
+    {
+      "path": "functions-and-control-flow.md",
+      "title": "Functions and Control Flow",
+      "stability": "aspirational",
+      "layer": "behavioural",
+      "counterpart": null,
+      "coupling": null,
+      "audience": "both",
+      "tests": null,
+      "last_reviewed": null,
+      "sections": [
+        {
+          "num": "1.1",
+          "title": "Common Clojure functions and closures execute as SBCL-compiled native functions.",
+          "byte_offset": 738
+        },
+        {
+          "num": "1.2",
+          "title": "Evaluation order, arity behavior, truthiness, exception flow, and tail recurrence follow this spec regardless of AOT or interactive entry.",
+          "byte_offset": 983
+        },
+        {
+          "num": "2.1",
+          "title": "A function expression produces a compiled callable that captures lexical values according to lexical scope; it does not capture a runtime map of source names to unevaluated bodies.",
+          "byte_offset": 1170
+        },
+        {
+          "num": "2.2",
+          "title": "Fixed, variadic, named-recursive, and multi-arity functions dispatch by Clojure arity rules. Duplicate arities and multiple variadic overloads are analysis errors.",
+          "byte_offset": 1356
+        },
+        {
+          "num": "2.3",
+          "title": "Calling with no matching arity signals a typed arity condition containing callable identity when known, supplied count, and supported arities.",
+          "byte_offset": 1525
+        },
+        {
+          "num": "2.4",
+          "title": "Function position and arguments evaluate exactly once, from left to right, before invocation unless a special form or macro explicitly defines conditional evaluation.",
+          "byte_offset": 1673
+        },
+        {
+          "num": "2.5",
+          "title": "Locals shadow Vars. Local function calls use native lexical calls when statically known; unknown callable values use the Clojure invocation protocol.",
+          "byte_offset": 1845
+        },
+        {
+          "num": "2.6",
+          "title": "Functions, Vars containing callables, keywords, maps, sets, and vectors participate in invocation with their Clojure lookup/default behavior as detailed in [collections-and-sequences.md §4.1](collections-and-sequences.md). Other values signal a typed not-callable condition.",
+          "byte_offset": 2000
+        },
+        {
+          "num": "3.1",
+          "title": "Lexical binding initializers evaluate in source order with each binding visible only where the selected binding form specifies.",
+          "byte_offset": 2320
+        },
+        {
+          "num": "3.2",
+          "title": "Sequential, associative, nested, rest, `:keys`, `:syms`, `:strs`, namespaced, `:or`, and `:as` destructuring MUST preserve Clojure binding and missing-value behavior.",
+          "byte_offset": 2453
+        },
+        {
+          "num": "3.3",
+          "title": "Destructuring is compiled into native access and binding operations; it MUST NOT invoke the legacy evaluator on a synthesized form.",
+          "byte_offset": 2625
+        },
+        {
+          "num": "3.4",
+          "title": "Function preconditions and postconditions, when supported through macros, execute with ordinary truthiness and signal assertion conditions with source context.",
+          "byte_offset": 2866
+        },
+        {
+          "num": "4.1",
+          "title": "The primitive compiler kernel contains only forms requiring analyzer control: definition, conditional branch, sequencing, lexical binding, function construction, loop/recur, quote, Var quote, throw, try/catch/finally, mutation of permitted targets, and explicit host bridge forms.",
+          "byte_offset": 3074
+        },
+        {
+          "num": "4.2",
+          "title": "`if` evaluates only the selected branch and uses [value-model.md §2.2](value-model.md) truthiness.",
+          "byte_offset": 3360
+        },
+        {
+          "num": "4.3",
+          "title": "`do` evaluates forms left to right and returns the last result, or nil when empty.",
+          "byte_offset": 3465
+        },
+        {
+          "num": "4.4",
+          "title": "`try` runs at most one matching catch and always runs `finally` on normal or non-local exit; a `finally` non-local exit supersedes the pending result or condition.",
+          "byte_offset": 3553
+        },
+        {
+          "num": "4.5",
+          "title": "`and`, `or`, `when`, threading forms, `cond`, `case`, `let`, `defn`, comprehensions, resource helpers, and comparable higher forms SHOULD be macros over the kernel.",
+          "byte_offset": 3722
+        },
+        {
+          "num": "5.1",
+          "title": "`recur` is valid only in tail position of the nearest function arity or loop target and MUST supply exactly that target's binding count.",
+          "byte_offset": 4012
+        },
+        {
+          "num": "5.2",
+          "title": "Illegal position, crossing a `try`/`finally` protection region, target ambiguity, or arity mismatch is an `analysis-error`; no runtime recur stub exists.",
+          "byte_offset": 4154
+        },
+        {
+          "num": "5.3",
+          "title": "Recur argument expressions evaluate exactly once, left to right, into temporaries before target bindings change; assignment is observably simultaneous.",
+          "byte_offset": 4419
+        },
+        {
+          "num": "5.4",
+          "title": "Valid recur lowers to native control flow and runs in bounded stack space. A typed fixnum loop meeting [performance.md §3.1](performance.md) MUST allocate no storage in its steady-state recur path.",
+          "byte_offset": 4576
+        },
+        {
+          "num": "5.5",
+          "title": "Function-position self-recur and explicit loop recur share the same validation and simultaneous-rebinding semantics.",
+          "byte_offset": 4780
+        },
+        {
+          "num": "6.1",
+          "title": "`throw` raises the supplied Clojure or bridged host condition without converting it into a return value.",
+          "byte_offset": 4945
+        },
+        {
+          "num": "6.2",
+          "title": "Catch matching uses declared Common Clojure type/condition relationships, including explicitly bridged CL condition classes; it does not emulate Java class names.",
+          "byte_offset": 5055
+        },
+        {
+          "num": "6.3",
+          "title": "Dynamic bindings, resource cleanup, and finally clauses restore their state during all supported non-local exits.",
+          "byte_offset": 5223
+        },
+        {
+          "num": "6.4",
+          "title": "Runtime stack information SHOULD name Clojure namespace/functions and source spans rather than only generated host symbols, as specified by [diagnostics.md §3.1](diagnostics.md).",
+          "byte_offset": 5342
+        }
+      ],
+      "source_files": [
+        "cl-clojure-eval.lisp",
+        "cl-clojure-case.lisp",
+        "clojure-tests/control.clj",
+        "clojure-tests/fn.clj"
+      ],
+      "cross_refs": [
+        {
+          "to": "MAIN.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "value-model.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "collections-and-sequences.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "performance.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "collections-and-sequences.md",
+          "section": "4.1",
+          "from_section": "2.6"
+        },
+        {
+          "to": "value-model.md",
+          "section": "2.2",
+          "from_section": "4.2"
+        },
+        {
+          "to": "performance.md",
+          "section": "3.1",
+          "from_section": "5.4"
+        },
+        {
+          "to": "diagnostics.md",
+          "section": "3.1",
+          "from_section": "6.4"
+        }
+      ],
+      "open_deferred_count": 2,
+      "size_bytes": 5865,
+      "size_lines": 108
+    },
+    {
+      "path": "language-and-compatibility.md",
+      "title": "Language and Compatibility",
+      "stability": "aspirational",
+      "layer": "behavioural",
+      "counterpart": null,
+      "coupling": null,
+      "audience": "both",
+      "tests": null,
+      "last_reviewed": null,
+      "sections": [
+        {
+          "num": "1.1",
+          "title": "Common Clojure is a language for developing new programs and selectively adapting libraries with Clojure semantics on top of SBCL.",
+          "byte_offset": 680
+        },
+        {
+          "num": "1.2",
+          "title": "Clojure's data, namespace, function, macro, collection, protocol, and concurrency ideas are the semantic reference unless this corpus explicitly adapts them for Common Lisp.",
+          "byte_offset": 964
+        },
+        {
+          "num": "1.3",
+          "title": "SBCL is the sole required host and compiler backend. Other Common Lisp implementations are outside the committed surface.",
+          "byte_offset": 1290
+        },
+        {
+          "num": "2.1",
+          "title": "Conforming source MUST compile to native SBCL code through the pipeline owned by [compiler-and-artifacts.md §3.1](compiler-and-artifacts.md); production execution MUST NOT walk source forms or interpreted closure bodies.",
+          "byte_offset": 1568
+        },
+        {
+          "num": "2.2",
+          "title": "The language MUST support an interactive development loop, ahead-of-time modules, and ASDF integration without assigning different semantics to those surfaces.",
+          "byte_offset": 1929
+        },
+        {
+          "num": "2.3",
+          "title": "Selective source adaptation, replacement of JVM-specific internals, and small Common Lisp bridge modules are compatible with the mission.",
+          "byte_offset": 2183
+        },
+        {
+          "num": "2.4",
+          "title": "A feature is conforming only when observable behavior is pinned by focused acceptance evidence; merely parsing or loading a form is not success.",
+          "byte_offset": 2458
+        },
+        {
+          "num": "3.1",
+          "title": "**Stable target core** consists of the semantics owned by this corpus: value identity and truthiness, native compilation, namespaces and Vars, macros, functions and recur, persistent collections and sequences, protocol/type dispatch, metadata, explicit CL interop, and typed failures.",
+          "byte_offset": 2773
+        },
+        {
+          "num": "3.2",
+          "title": "**Compatibility cuts** include familiar `.clj` syntax, common `clojure.core` names, and upstream tests that express host-independent behavior. A cut MAY be adapted or removed when it encodes JVM classes, Java reflection, bytecode, or implementation accidents.",
+          "byte_offset": 3166
+        },
+        {
+          "num": "3.3",
+          "title": "Every retained compatibility cut MUST have a named consumer or conformance example; speculative shims are not part of the contract.",
+          "byte_offset": 3537
+        },
+        {
+          "num": "3.4",
+          "title": "The official Clojure test corpus is reference evidence only. Passing all upstream files is neither necessary nor sufficient for conformance.",
+          "byte_offset": 3764
+        },
+        {
+          "num": "4.1",
+          "title": "Common Clojure does not promise JVM bytecode, Java class emulation, Java reflection, Maven compatibility, or unchanged execution of arbitrary Clojure projects.",
+          "byte_offset": 4055
+        },
+        {
+          "num": "4.2",
+          "title": "Common Clojure does not expose a public compiler IR, compiler-plugin interface, or generic backend protocol.",
+          "byte_offset": 4220
+        },
+        {
+          "num": "4.3",
+          "title": "Common Clojure does not provide an interpreter or evaluator fallback when native compilation fails.",
+          "byte_offset": 4512
+        },
+        {
+          "num": "4.4",
+          "title": "Exact JVM implementation artifacts, exception class names, collection representations, and performance quirks are not compatibility promises unless a focused spec adopts them.",
+          "byte_offset": 4722
+        },
+        {
+          "num": "5.1",
+          "title": "The first required evidence is the end-to-end contract in [native-vertical-slice.md §3.1](native-vertical-slice.md).",
+          "byte_offset": 4936
+        },
+        {
+          "num": "5.2",
+          "title": "Broader readiness is demonstrated by focused semantic tests plus the adaptation milestones in [library-adaptation.md §3.1](library-adaptation.md), not by a single aggregate file-load count.",
+          "byte_offset": 5059
+        },
+        {
+          "num": "5.3",
+          "title": "Every test harness MUST distinguish read, expansion, analysis, native compilation, load, execution, and assertion failures.",
+          "byte_offset": 5255
+        }
+      ],
+      "source_files": [
+        "AGENTS.md",
+        "README.md",
+        "clojure-tests/",
+        "cl-clojure-eval.lisp"
+      ],
+      "cross_refs": [
+        {
+          "to": "MAIN.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "compiler-and-artifacts.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "library-adaptation.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "compiler-and-artifacts.md",
+          "section": "3.1",
+          "from_section": "2.1"
+        },
+        {
+          "to": "native-vertical-slice.md",
+          "section": "3.1",
+          "from_section": "5.1"
+        },
+        {
+          "to": "library-adaptation.md",
+          "section": "3.1",
+          "from_section": "5.2"
+        }
+      ],
+      "open_deferred_count": 2,
+      "size_bytes": 5814,
+      "size_lines": 108
+    },
+    {
+      "path": "legacy-migration.md",
+      "title": "Legacy Isolation and Migration",
+      "stability": "aspirational",
+      "layer": "cross-cutting",
+      "counterpart": null,
+      "coupling": null,
+      "audience": "implementer",
+      "tests": null,
+      "last_reviewed": null,
+      "sections": [
+        {
+          "num": "1.1",
+          "title": "Migration replaces the runtime execution architecture rather than incrementally disguising the tree walker behind compiled wrappers.",
+          "byte_offset": 991
+        },
+        {
+          "num": "1.2",
+          "title": "Existing code and branches are evidence of syntax cases, semantic questions, and failed assumptions. They are not compatibility contracts and do not outrank this corpus.",
+          "byte_offset": 1288
+        },
+        {
+          "num": "2.1",
+          "title": "The conforming compiler and runtime systems MUST NOT depend on, load, or call `cl-clojure-eval.lisp` or evaluator-specific helper modules.",
+          "byte_offset": 1491
+        },
+        {
+          "num": "2.2",
+          "title": "Application FASLs MUST load and run in a fresh SBCL process containing the conforming runtime but not the reader, compiler, legacy evaluator, or legacy test harness.",
+          "byte_offset": 1635
+        },
+        {
+          "num": "2.3",
+          "title": "Legacy commands MAY remain available as explicitly named comparison/oracle tools while migration is active, but their packages, globals, caches, and namespaces MUST be isolated from conformance tests.",
+          "byte_offset": 1806
+        },
+        {
+          "num": "2.4",
+          "title": "No unsupported native form may delegate to the legacy evaluator. Unsupported behavior signals the typed phase failure owned by [diagnostics.md §2.1](diagnostics.md).",
+          "byte_offset": 2012
+        },
+        {
+          "num": "2.5",
+          "title": "A temporary adapter between legacy data and conforming values MUST have a named test consumer and removal condition; it MUST NOT become a second runtime representation accepted implicitly everywhere.",
+          "byte_offset": 2184
+        },
+        {
+          "num": "3.1",
+          "title": "Reader delimiter techniques, syntax examples, pure algorithms, and focused tests MAY be transplanted only after their outputs are rewritten to satisfy [reader-and-forms.md §2.1](reader-and-forms.md) and [value-model.md §2.1](value-model.md).",
+          "byte_offset": 2414
+        },
+        {
+          "num": "3.2",
+          "title": "An old runtime function MAY be reused only when it is independent of evaluator environments and interpreted closures, has behavior pinned at the new public seam, and uses conforming values and failures.",
+          "byte_offset": 2663
+        },
+        {
+          "num": "3.3",
+          "title": "Environment lookup fallbacks, hard-coded namespaces, Java emulation tables, arbitrary lazy realization limits, assertion stubs, and “return nil” compatibility placeholders MUST NOT migrate.",
+          "byte_offset": 2871
+        },
+        {
+          "num": "3.4",
+          "title": "The `feat/clojure-on-common-lisp` branch is a design sketch, not a merge base. Its file decomposition and tests MAY inform work, but compiler, reader, namespace, and collection implementations require independent conformance review before any selective transplant.",
+          "byte_offset": 3070
+        },
+        {
+          "num": "3.5",
+          "title": "Migration SHOULD proceed by building a new compiler/runtime system alongside the isolated legacy system until the native vertical slice passes, then moving conformance surfaces rather than modifying the evaluator into the compiler.",
+          "byte_offset": 3491
+        },
+        {
+          "num": "4.1",
+          "title": "Each imported upstream test is classified as host-independent semantic evidence, adaptable JVM-coupled evidence, or out of scope.",
+          "byte_offset": 3763
+        },
+        {
+          "num": "4.2",
+          "title": "A host-independent assertion MAY become a conformance test only after its setup and assertion mechanism execute correctly and its behavior is owned by a spec claim.",
+          "byte_offset": 3898
+        },
+        {
+          "num": "4.3",
+          "title": "JVM class, reflection, bytecode, Java concurrency, serialization, or implementation-specific exception assertions do not become requirements by presence in the corpus.",
+          "byte_offset": 4068
+        },
+        {
+          "num": "4.4",
+          "title": "Test reporting distinguishes assertions from file loading as required by [diagnostics.md §5.2](diagnostics.md); no aggregate “files passed” count represents language correctness.",
+          "byte_offset": 4241
+        },
+        {
+          "num": "5.1",
+          "title": "The first cutover gate is complete only when every acceptance item in [native-vertical-slice.md §3.1](native-vertical-slice.md) passes through the new public compiler seam.",
+          "byte_offset": 4459
+        },
+        {
+          "num": "5.2",
+          "title": "Dependency inspection MUST show no compiler or evaluator dependency in the loaded artifact, and native function inspection MUST show compiled functions and a loop back-edge for recur.",
+          "byte_offset": 4638
+        },
+        {
+          "num": "5.3",
+          "title": "The legacy evaluator remains frozen during comparison. New semantic behavior is implemented only in the conforming compiler/runtime path.",
+          "byte_offset": 4827
+        },
+        {
+          "num": "5.4",
+          "title": "Legacy removal is a separate authorized operation after every remaining named consumer has moved; migration does not authorize deletion of historical tests, branches, diagnostics, or user-owned untracked files.",
+          "byte_offset": 5073
+        }
+      ],
+      "source_files": [
+        "cl-clojure-eval.lisp",
+        "cl-clojure-syntax.lisp",
+        "cl-clojure-case.lisp",
+        "cl-clojure-transducers.lisp",
+        "tests.lisp",
+        "clojure-tests/",
+        "cl-clojure.asd"
+      ],
+      "cross_refs": [
+        {
+          "to": "MAIN.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "language-and-compatibility.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "compiler-and-artifacts.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "native-vertical-slice.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "diagnostics.md",
+          "section": "2.1",
+          "from_section": "2.4"
+        },
+        {
+          "to": "reader-and-forms.md",
+          "section": "2.1",
+          "from_section": "3.1"
+        },
+        {
+          "to": "value-model.md",
+          "section": "2.1",
+          "from_section": "3.1"
+        },
+        {
+          "to": "diagnostics.md",
+          "section": "5.2",
+          "from_section": "4.4"
+        },
+        {
+          "to": "native-vertical-slice.md",
+          "section": "3.1",
+          "from_section": "5.1"
+        }
+      ],
+      "open_deferred_count": 3,
+      "size_bytes": 5822,
+      "size_lines": 94
+    },
+    {
+      "path": "library-adaptation.md",
+      "title": "Library Adaptation",
+      "stability": "aspirational",
+      "layer": "behavioural",
+      "counterpart": null,
+      "coupling": null,
+      "audience": "both",
+      "tests": null,
+      "last_reviewed": null,
+      "sections": [
+        {
+          "num": "1.1",
+          "title": "Library adaptation demonstrates that Common Clojure is useful for new projects; it does not promise unchanged Maven artifacts or JVM internals.",
+          "byte_offset": 763
+        },
+        {
+          "num": "1.2",
+          "title": "An adaptation MAY modify source, replace Java/JVM internals with CL adapters, rename host-specific namespaces, or reduce peripheral features, but MUST document every behavioral cut exercised by its public examples.",
+          "byte_offset": 1049
+        },
+        {
+          "num": "1.3",
+          "title": "Success means representative library programs compile to native artifacts, execute their assertions, and contain no runtime evaluator dependency. Merely defining stub names or loading files is failure.",
+          "byte_offset": 1269
+        },
+        {
+          "num": "2.1",
+          "title": "Adapted library code uses ordinary Common Clojure macros, functions, Vars, persistent collections, protocols, multimethods, tagged literals, and declared CL bridges. It MUST NOT access private compiler representation.",
+          "byte_offset": 1515
+        },
+        {
+          "num": "2.2",
+          "title": "JVM class checks, reflection, bytecode emitters, thread primitives, and file/resource assumptions are replaced by explicit Common Lisp/SBCL adapters with focused tests.",
+          "byte_offset": 1738
+        },
+        {
+          "num": "2.3",
+          "title": "Every milestone records the upstream library/version or semantic source, adapted namespaces, unsupported features, bridge modules, and conformance examples.",
+          "byte_offset": 1912
+        },
+        {
+          "num": "2.4",
+          "title": "Macro-generated runtime code follows the same analyzer and native compilation pipeline as written source.",
+          "byte_offset": 2074
+        },
+        {
+          "num": "2.5",
+          "title": "Failures use the language condition and source-location model; an adaptation MUST NOT swallow a compiler error and choose an interpreted implementation.",
+          "byte_offset": 2185
+        },
+        {
+          "num": "3.1",
+          "title": "The core.match adaptation MUST implement a representative match macro that compiles literal, wildcard, binding, sequence/vector, map-key, predicate/guard, alternation, and fall-through cases into native decision code.",
+          "byte_offset": 2376
+        },
+        {
+          "num": "3.2",
+          "title": "Pattern expressions and guards obey left-to-right single evaluation where the source contract requires it; failed alternatives do not leak bindings.",
+          "byte_offset": 2599
+        },
+        {
+          "num": "3.3",
+          "title": "Exhaustive successful, no-match/default, guard-failure, and malformed-pattern examples MUST run identically in interactive and AOT modes.",
+          "byte_offset": 2753
+        },
+        {
+          "num": "3.4",
+          "title": "Generated match execution MUST not retain pattern ASTs for runtime walking.",
+          "byte_offset": 2896
+        },
+        {
+          "num": "4.1",
+          "title": "The spec.alpha adaptation MUST support named specs, predicate specs, conjunction/disjunction, nilability, collection element specs, map-key specs, conform/unform where defined, validity checks, and structured explain data for a representative domain model.",
+          "byte_offset": 3168
+        },
+        {
+          "num": "4.2",
+          "title": "Spec registry entries are namespace-qualified and redefine coherently through Vars/session state. Predicate and conformer functions are native compiled callables.",
+          "byte_offset": 3430
+        },
+        {
+          "num": "4.3",
+          "title": "Explain data is persistent Common Clojure data with source-meaningful paths and causes; validation failure is not conflated with nil or false input.",
+          "byte_offset": 3598
+        },
+        {
+          "num": "4.4",
+          "title": "Generative testing integration MAY be adapted separately; absence of JVM test.check integration MUST be documented and MUST NOT weaken deterministic validation claims.",
+          "byte_offset": 3752
+        },
+        {
+          "num": "5.1",
+          "title": "The O'Doyle Rules adaptation MUST support declaring rules, creating a session, inserting and retracting facts, firing until quiescence, querying derived state, and preserving deterministic results for a representative rules program.",
+          "byte_offset": 4099
+        },
+        {
+          "num": "5.2",
+          "title": "Rule left-hand matching and right-hand actions compile to native functions. The runtime MAY use mutable indexed state internally when session semantics expose controlled mutation, but published persistent values remain immutable.",
+          "byte_offset": 4337
+        },
+        {
+          "num": "5.3",
+          "title": "Rule identity, activation order where public, repeated insertion, retraction, and update behavior MUST be pinned by focused examples rather than inferred from incidental host map iteration order.",
+          "byte_offset": 4572
+        },
+        {
+          "num": "5.4",
+          "title": "The milestone MUST include a nontrivial program with multiple interacting rules and demonstrate that no evaluator walks rule source forms at runtime.",
+          "byte_offset": 4773
+        },
+        {
+          "num": "6.1",
+          "title": "The core.async adaptation MUST support buffered and unbuffered channels, blocking or explicitly named thread operations, asynchronous put/take, close, selection among operations, and a `go`-style construct for representative pipelines.",
+          "byte_offset": 5095
+        },
+        {
+          "num": "6.2",
+          "title": "A `go` body compiles at macro expansion into a native resumable state machine or continuation representation; parked execution MUST NOT resume by interpreting source forms.",
+          "byte_offset": 5336
+        },
+        {
+          "num": "6.3",
+          "title": "Put/take ordering, close behavior, pending-operation completion, buffer behavior, and exception propagation MUST be pinned under deterministic tests before throughput claims.",
+          "byte_offset": 5514
+        },
+        {
+          "num": "6.4",
+          "title": "Dynamic Var bindings and cleanup required across a parked/resumed computation MUST be captured or restored explicitly; accidental dependence on the worker thread's ambient specials is non-conforming.",
+          "byte_offset": 5694
+        },
+        {
+          "num": "6.5",
+          "title": "SBCL threads, locks, condition variables, and timers MAY replace JVM executors and atomics through small host adapters.",
+          "byte_offset": 5899
+        },
+        {
+          "num": "7.1",
+          "title": "Each library milestone reports passed behavioral examples, excluded upstream surfaces, native artifact evidence, performance measurements relevant to its workload, and remaining semantic questions.",
+          "byte_offset": 6225
+        },
+        {
+          "num": "7.2",
+          "title": "Completion of one milestone does not imply general JVM library compatibility or completion of every upstream namespace.",
+          "byte_offset": 6428
+        }
+      ],
+      "source_files": [
+        "clojure-tests/",
+        "cl-clojure-eval.lisp"
+      ],
+      "cross_refs": [
+        {
+          "to": "MAIN.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "language-and-compatibility.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "common-lisp-interop.md",
+          "section": null,
+          "from_section": null
+        }
+      ],
+      "open_deferred_count": 3,
+      "size_bytes": 7048,
+      "size_lines": 117
+    },
+    {
+      "path": "namespaces-vars-and-macros.md",
+      "title": "Namespaces, Vars, and Macros",
+      "stability": "aspirational",
+      "layer": "behavioural",
+      "counterpart": null,
+      "coupling": null,
+      "audience": "both",
+      "tests": null,
+      "last_reviewed": null,
+      "sections": [
+        {
+          "num": "1.1",
+          "title": "Common Clojure namespaces and Vars have Clojure semantics independent of Common Lisp package and symbol-cell behavior.",
+          "byte_offset": 811
+        },
+        {
+          "num": "1.2",
+          "title": "CL packages and symbols MAY back resolved definitions after analysis, but this mapping is an adapter hidden from source programs.",
+          "byte_offset": 1088
+        },
+        {
+          "num": "2.1",
+          "title": "A namespace is a stable named registry of mappings, aliases, refers, metadata, and loaded-module identity.",
+          "byte_offset": 1261
+        },
+        {
+          "num": "2.2",
+          "title": "Source symbol resolution checks lexical bindings before namespace mappings. Qualified symbols resolve through their explicit namespace or alias; unqualified symbols use the current namespace and its refers according to Clojure conflict rules.",
+          "byte_offset": 1373
+        },
+        {
+          "num": "2.3",
+          "title": "An unresolved or ambiguous symbol MUST signal an `analysis-error` at its source span; the compiler MUST NOT guess a host package symbol or fall back to a global user namespace.",
+          "byte_offset": 1621
+        },
+        {
+          "num": "2.4",
+          "title": "Namespace declarations and dependency clauses take effect in source order within the module staging world. Cyclic dependencies MUST report a typed dependency failure with the cycle path.",
+          "byte_offset": 1912
+        },
+        {
+          "num": "2.5",
+          "title": "Auto-resolved keywords use the active semantic namespace and aliases at read/analysis time as appropriate; they MUST NOT be hard-coded to `user`.",
+          "byte_offset": 2104
+        },
+        {
+          "num": "3.1",
+          "title": "A Var has stable identity, namespace-qualified name, root state, metadata, and a dynamic flag. Re-evaluating `def` updates the existing Var rather than replacing its identity.",
+          "byte_offset": 2289
+        },
+        {
+          "num": "3.2",
+          "title": "Reading a Var as a value returns its current binding or root according to dynamic-binding rules; Var quote returns the Var object itself.",
+          "byte_offset": 2559
+        },
+        {
+          "num": "3.3",
+          "title": "Calls to ordinary non-dynamic function Vars use a redefinable native fdefinition kept coherent with the Var root, so existing compiled callers observe later redefinition without interpreter dispatch.",
+          "byte_offset": 2702
+        },
+        {
+          "num": "3.4",
+          "title": "A Var explicitly marked sealed/final MAY be direct-linked or inlined. Attempting to redefine it MUST signal unless the program explicitly removes that assertion and recompiles dependent callers.",
+          "byte_offset": 3005
+        },
+        {
+          "num": "3.5",
+          "title": "Setting a function Var root, `alter-var-root`, and temporary root redefinition MUST keep the callable fdefinition and Var view coherent, including restoration during non-local exit.",
+          "byte_offset": 3314
+        },
+        {
+          "num": "4.1",
+          "title": "A dynamic Var maps to an SBCL special binding while retaining its Var identity and root.",
+          "byte_offset": 3526
+        },
+        {
+          "num": "4.2",
+          "title": "Dynamic binding is thread-local, nestable, visible to native callees, and restored on normal return or non-local exit.",
+          "byte_offset": 3620
+        },
+        {
+          "num": "4.3",
+          "title": "Binding a Var not declared dynamic MUST signal an analysis or runtime error at the earliest reliable phase.",
+          "byte_offset": 3744
+        },
+        {
+          "num": "4.4",
+          "title": "A call through a dynamic function Var MUST observe the current dynamic binding rather than a static fdefinition shortcut.",
+          "byte_offset": 3857
+        },
+        {
+          "num": "5.1",
+          "title": "A macro is a Var marked as a macro whose root is an SBCL-compiled function from source forms and lexical expansion context to a replacement form.",
+          "byte_offset": 4003
+        },
+        {
+          "num": "5.2",
+          "title": "A top-level macro definition is compiled and installed in the module's staging world before the next top-level form expands. The compiled artifact also contains the definition needed by dependent module compilation.",
+          "byte_offset": 4154
+        },
+        {
+          "num": "5.3",
+          "title": "Macro expansion repeats until the head is no longer a macro call, while preserving source origin and an expansion trace linking generated forms to call sites.",
+          "byte_offset": 4488
+        },
+        {
+          "num": "5.4",
+          "title": "Macro functions receive Clojure-equivalent `&form` and `&env` information. The environment describes lexical names and supported compiler facts but does not expose the private IR.",
+          "byte_offset": 4652
+        },
+        {
+          "num": "5.5",
+          "title": "Macro expansion MAY execute arbitrary compile-time Common Clojure code available in the compilation session. Failures are reported as specified by [diagnostics.md §2.2](diagnostics.md).",
+          "byte_offset": 4837
+        },
+        {
+          "num": "5.6",
+          "title": "Syntax quote resolves namespace-qualified symbols, preserves metadata, creates hygienic auto-gensyms, and honors unquote and unquote-splicing in their valid contexts.",
+          "byte_offset": 5029
+        },
+        {
+          "num": "5.7",
+          "title": "Macro expansion output is analyzed exactly like written source; a macro MUST NOT inject unchecked raw runtime code around the analyzer.",
+          "byte_offset": 5201
+        },
+        {
+          "num": "6.1",
+          "title": "Public/private, dynamic, macro, deprecation, type-hint, and final/sealed attributes are represented as Var or definition metadata with Clojure-observable lookup behavior where applicable.",
+          "byte_offset": 5479
+        },
+        {
+          "num": "6.2",
+          "title": "Namespace and Var metadata follow [protocols-types-and-metadata.md §5.1](protocols-types-and-metadata.md) and do not alter Var identity.",
+          "byte_offset": 5672
+        }
+      ],
+      "source_files": [
+        "cl-clojure-eval.lisp",
+        "package.lisp",
+        "clojure-tests/ns_libs.clj",
+        "clojure-tests/vars.clj",
+        "clojure-tests/macros.clj"
+      ],
+      "cross_refs": [
+        {
+          "to": "MAIN.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "compiler-and-artifacts.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "reader-and-forms.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "common-lisp-interop.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "diagnostics.md",
+          "section": "2.2",
+          "from_section": "5.5"
+        },
+        {
+          "to": "protocols-types-and-metadata.md",
+          "section": "5.1",
+          "from_section": "6.2"
+        }
+      ],
+      "open_deferred_count": 3,
+      "size_bytes": 6321,
+      "size_lines": 114
+    },
+    {
+      "path": "native-vertical-slice.md",
+      "title": "First Native Vertical Slice",
+      "stability": "aspirational",
+      "layer": "cross-cutting",
+      "counterpart": null,
+      "coupling": null,
+      "audience": "both",
+      "tests": null,
+      "last_reviewed": null,
+      "sections": [
+        {
+          "num": "1.1",
+          "title": "The first vertical slice proves the approved architecture through one interactive session and one loadable source module; it is not a broad feature-count milestone.",
+          "byte_offset": 892
+        },
+        {
+          "num": "1.2",
+          "title": "The slice includes only the semantics needed to prove value distinctions, namespaces and Vars, native functions, sequential macros, calls, conditionals, lexical bindings, loop/recur, diagnostics, FASL loading, and the initial performance gate.",
+          "byte_offset": 1183
+        },
+        {
+          "num": "1.3",
+          "title": "Persistent collection families, protocols, records, multimethods, and target library adaptations are not prerequisites for this slice except for the minimal form/value structures needed by the reader and macros.",
+          "byte_offset": 1432
+        },
+        {
+          "num": "2.1",
+          "title": "The slice MUST compile a source module behaviorally equivalent to:",
+          "byte_offset": 1682
+        },
+        {
+          "num": "2.2",
+          "title": "The macro definition MUST be SBCL-compiled and installed before `classify` expands. The compiled `classify` body MUST contain native conditional code, not a runtime call that walks the macro output.",
+          "byte_offset": 2062
+        },
+        {
+          "num": "2.3",
+          "title": "Calling `classify` with nil or false returns `:falsey`; calling it with the empty list returns nil because the empty list is truthy.",
+          "byte_offset": 2266
+        },
+        {
+          "num": "2.4",
+          "title": "Calling `sum-to` with 1,000,000 returns `500000500000` in bounded stack space. Its typed recur path observes simultaneous rebinding and has no steady-state allocation.",
+          "byte_offset": 2404
+        },
+        {
+          "num": "3.1",
+          "title": "The vertical slice is conforming only when all of the following pass:",
+          "byte_offset": 2609
+        },
+        {
+          "num": "3.2",
+          "title": "Assertion evidence MUST be reported by phase using [diagnostics.md §5.2](diagnostics.md), not as a file-load count.",
+          "byte_offset": 4005
+        },
+        {
+          "num": "3.3",
+          "title": "The native loop inspection MAY use SBCL disassembly or equivalent compiler metadata, but acceptance records the function identity, SBCL build, optimization policy, and evidence of a back-edge.",
+          "byte_offset": 4127
+        },
+        {
+          "num": "4.1",
+          "title": "The interactive and file paths MUST use the same reader semantics, macro functions, analyzer rules, Common Lisp emitter, runtime ABI, and error categories.",
+          "byte_offset": 4360
+        },
+        {
+          "num": "4.2",
+          "title": "Test instrumentation MAY identify pipeline phase entry, but it MUST NOT require a public IR or backend interface.",
+          "byte_offset": 4521
+        },
+        {
+          "num": "4.3",
+          "title": "A semantic test is run once through interactive source and once from the loaded FASL. Divergent result, condition type, Var resolution, or macro expansion is a failure.",
+          "byte_offset": 4640
+        },
+        {
+          "num": "4.4",
+          "title": "REPL and ASDF adapters are accepted only when they delegate to the compiler roles in [compiler-and-artifacts.md §2.4](compiler-and-artifacts.md) without duplicating analysis or emission.",
+          "byte_offset": 4814
+        },
+        {
+          "num": "5.1",
+          "title": "After a failed interactive redefinition, the previous compiled function root and native fdefinition remain callable and coherent.",
+          "byte_offset": 5044
+        },
+        {
+          "num": "5.2",
+          "title": "After a failed file compilation, the previous good FASL remains byte-for-byte untouched and the session exposes none of the failed module's staged names or macros.",
+          "byte_offset": 5179
+        },
+        {
+          "num": "5.3",
+          "title": "A macro expansion failure reports the macro Var, written call-site span, expansion stack, and original condition.",
+          "byte_offset": 5348
+        },
+        {
+          "num": "5.4",
+          "title": "Any observed fallback to nil, warning-only success, placeholder closure, or evaluator call fails the slice even if later assertions happen to pass.",
+          "byte_offset": 5467
+        },
+        {
+          "num": "6.1",
+          "title": "Passing this slice authorizes expanding the native path one focused semantic area at a time; it does not declare the legacy corpus or any target library compatible.",
+          "byte_offset": 5647
+        },
+        {
+          "num": "6.2",
+          "title": "Every subsequent feature must remain reachable through the same compiler seam and preserve the negative dependency and native-function checks from §3.1.",
+          "byte_offset": 5817
+        }
+      ],
+      "source_files": [
+        "cl-clojure-syntax.lisp",
+        "cl-clojure-eval.lisp",
+        "cl-clojure.asd",
+        "tests.lisp"
+      ],
+      "cross_refs": [
+        {
+          "to": "MAIN.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "compiler-and-artifacts.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "performance.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "legacy-migration.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "performance.md",
+          "section": "3.1",
+          "from_section": "3.1"
+        },
+        {
+          "to": "diagnostics.md",
+          "section": "5.2",
+          "from_section": "3.2"
+        },
+        {
+          "to": "compiler-and-artifacts.md",
+          "section": "2.4",
+          "from_section": "4.4"
+        }
+      ],
+      "open_deferred_count": 2,
+      "size_bytes": 6368,
+      "size_lines": 125
+    },
+    {
+      "path": "performance.md",
+      "title": "Performance",
+      "stability": "aspirational",
+      "layer": "cross-cutting",
+      "counterpart": null,
+      "coupling": null,
+      "audience": "both",
+      "tests": null,
+      "last_reviewed": null,
+      "sections": [
+        {
+          "num": "1.1",
+          "title": "Common Clojure aims for ordinary SBCL-native performance, with overhead only where a named Clojure semantic requirement needs dynamic behavior or persistent data.",
+          "byte_offset": 803
+        },
+        {
+          "num": "1.2",
+          "title": "Performance optimization MUST NOT conflate nil and false, mutate persistent values, bypass dynamic Vars, stale protocol/multimethod dispatch, weaken failure behavior, or introduce an interpreter fallback.",
+          "byte_offset": 1135
+        },
+        {
+          "num": "2.1",
+          "title": "**Tier A — statically informed native code:** typed locals, resolved non-dynamic calls, sealed/final calls where asserted, and native control flow SHOULD approach equivalent declared Common Lisp.",
+          "byte_offset": 1375
+        },
+        {
+          "num": "2.2",
+          "title": "**Tier B — ordinary Common Clojure:** resolved but redefinable Vars, generic numeric operations, persistent collections, and unsealed calls MAY pay the checks or indirection needed for their semantics.",
+          "byte_offset": 1578
+        },
+        {
+          "num": "2.3",
+          "title": "**Tier C — explicitly dynamic code:** dynamic Vars, unknown callable values, protocols, multimethods, reflection-like host bridges, and language-level eval MAY pay dispatch or compilation costs that remain attributable and measurable.",
+          "byte_offset": 1787
+        },
+        {
+          "num": "2.4",
+          "title": "A compiler optimization report SHOULD identify why a hot operation remains in Tier B or C and which safe declaration or program fact would move it to a lower-overhead tier.",
+          "byte_offset": 2029
+        },
+        {
+          "num": "3.1",
+          "title": "The canonical loop benchmark is a compiled function performing 10,000,000 typed fixnum iterations through `loop*`/`recur`, using only fixnum decrement, comparison, and an accumulator operation that remains within fixnum range. After entry, its steady-state loop MUST use bounded stack and report zero bytes consed per iteration.",
+          "byte_offset": 2336
+        },
+        {
+          "num": "3.2",
+          "title": "The initial, low-confidence throughput gate is a median elapsed time no worse than 2.0 times an equivalent hand-written Common Lisp function carrying the same type and optimization declarations.",
+          "byte_offset": 2794
+        },
+        {
+          "num": "3.3",
+          "title": "Measurement uses one SBCL build and process, `(speed 3) (safety 1) (debug 0)`, equivalent declarations, two unmeasured warm-up runs, seven measured runs, a full GC before each measured pair, alternating implementation order, and median paired ratios. CPU model, SBCL version, governor/pinning state, and raw samples MUST be reported.",
+          "byte_offset": 3154
+        },
+        {
+          "num": "3.4",
+          "title": "Compiler setup, reading, macro expansion, and first invocation are excluded from the runtime ratio and reported separately as compilation latency.",
+          "byte_offset": 3493
+        },
+        {
+          "num": "3.5",
+          "title": "Conformance also requires `compiled-function-p` for the benchmark function and inspection evidence of a native loop back-edge with no call into the legacy evaluator.",
+          "byte_offset": 3645
+        },
+        {
+          "num": "4.1",
+          "title": "Persistent vector append and indexed association MUST avoid whole-vector copying at scale and have logarithmic-or-better update depth with structural sharing. Persistent hash map/set updates MUST have expected logarithmic-or-better lookup/update behavior under ordinary hash distribution.",
+          "byte_offset": 3858
+        },
+        {
+          "num": "4.2",
+          "title": "Building a large collection through the documented transient/builder path SHOULD be linear in element count and MUST NOT retain intermediate persistent versions unintentionally.",
+          "byte_offset": 4152
+        },
+        {
+          "num": "4.3",
+          "title": "Lazy sequence production MUST remain bounded in work and retained storage per demanded element when the consumer does not retain the prefix.",
+          "byte_offset": 4335
+        },
+        {
+          "num": "4.4",
+          "title": "Protocol and multimethod benchmarks MUST separately report cold dispatch, warm-cache dispatch, cache invalidation, and native method-body time; a single blended number is insufficient.",
+          "byte_offset": 4481
+        },
+        {
+          "num": "5.1",
+          "title": "File compilation and interactive form compilation MUST be measured separately from execution. No maximum latency is committed until the first vertical slice supplies a baseline.",
+          "byte_offset": 4714
+        },
+        {
+          "num": "5.2",
+          "title": "Loading an application FASL MUST NOT initialize the compiler or reader and SHOULD do no work proportional to source AST size.",
+          "byte_offset": 4897
+        },
+        {
+          "num": "5.3",
+          "title": "Performance regressions are evaluated per tier and benchmark rather than hidden in an aggregate suite duration.",
+          "byte_offset": 5028
+        },
+        {
+          "num": "6.1",
+          "title": "Truthiness testing is permitted because nil and false are distinct falsey values.",
+          "byte_offset": 5182
+        },
+        {
+          "num": "6.2",
+          "title": "Var indirection is permitted where live redefinition, first-class Vars, or dynamic binding requires it; ordinary non-dynamic function calls SHOULD use coherent native fdefinitions as specified by [namespaces-vars-and-macros.md §3.3](namespaces-vars-and-macros.md).",
+          "byte_offset": 5269
+        },
+        {
+          "num": "6.3",
+          "title": "Protocol and multimethod dispatch cost is permitted because open extension and arbitrary dispatch are named semantics. Method bodies themselves remain native compiled code.",
+          "byte_offset": 5540
+        },
+        {
+          "num": "6.4",
+          "title": "Persistent collection structure and hashing cost is permitted because immutability, structural sharing, and value equality are named semantics; full-copy updates are not.",
+          "byte_offset": 5718
+        }
+      ],
+      "source_files": [
+        "sbcl-init.lisp",
+        "cl-clojure-eval.lisp",
+        "cl-clojure-transducers.lisp",
+        "tests.sh"
+      ],
+      "cross_refs": [
+        {
+          "to": "MAIN.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "compiler-and-artifacts.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "functions-and-control-flow.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "collections-and-sequences.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "namespaces-vars-and-macros.md",
+          "section": "3.3",
+          "from_section": "6.2"
+        }
+      ],
+      "open_deferred_count": 3,
+      "size_bytes": 6419,
+      "size_lines": 101
+    },
+    {
+      "path": "protocols-types-and-metadata.md",
+      "title": "Protocols, Types, Records, Multimethods, and Metadata",
+      "stability": "aspirational",
+      "layer": "cross-cutting",
+      "counterpart": null,
+      "coupling": null,
+      "audience": "both",
+      "tests": null,
+      "last_reviewed": null,
+      "sections": [
+        {
+          "num": "1.1",
+          "title": "Common Clojure protocols provide open, first-argument type dispatch over Common Clojure and explicitly bridged Common Lisp types.",
+          "byte_offset": 791
+        },
+        {
+          "num": "1.2",
+          "title": "Protocol methods use native CLOS generic functions and methods as their SBCL dispatch substrate while preserving the Clojure-visible protocol descriptor and Var behavior.",
+          "byte_offset": 1024
+        },
+        {
+          "num": "1.3",
+          "title": "Multimethods remain distinct from protocols because they dispatch on arbitrary runtime values, hierarchies, and preferences rather than only host type.",
+          "byte_offset": 1316
+        },
+        {
+          "num": "2.1",
+          "title": "Defining a protocol creates a stable descriptor and callable method Vars with declared names, argument lists, documentation, and metadata.",
+          "byte_offset": 1495
+        },
+        {
+          "num": "2.2",
+          "title": "Extending a type installs native methods for the declared protocol operations. Extension of nil is supported explicitly and does not treat false or empty list as nil.",
+          "byte_offset": 1639
+        },
+        {
+          "num": "2.3",
+          "title": "Protocol dispatch selects on the first declared target argument. Other arguments participate in method execution but not protocol method selection.",
+          "byte_offset": 1811
+        },
+        {
+          "num": "2.4",
+          "title": "Missing protocol implementation signals a typed condition naming the protocol, method, and runtime target type; it MUST NOT return nil or invoke a generic fallback accidentally.",
+          "byte_offset": 1964
+        },
+        {
+          "num": "2.5",
+          "title": "Redefining or extending a protocol invalidates affected dispatch assumptions and becomes visible to subsequent calls, subject only to an explicit sealed/final assertion.",
+          "byte_offset": 2147
+        },
+        {
+          "num": "2.6",
+          "title": "`satisfies?` reports whether a target has a conforming implementation, including extensions installed for bridged CL classes and nil.",
+          "byte_offset": 2322
+        },
+        {
+          "num": "3.1",
+          "title": "User-defined types compile to native SBCL classes or structures with compiled constructors, field access, and protocol methods; instances do not carry source-form method bodies.",
+          "byte_offset": 2505
+        },
+        {
+          "num": "3.2",
+          "title": "Records additionally implement persistent associative lookup over declared fields and extension entries, preserve record type identity, and follow Clojure record equality/hash behavior.",
+          "byte_offset": 2688
+        },
+        {
+          "num": "3.3",
+          "title": "Record and type field access MUST respect immutability promises. Explicit mutable fields, if supported, are named in the type declaration and use controlled mutation semantics.",
+          "byte_offset": 2879
+        },
+        {
+          "num": "3.4",
+          "title": "Reification creates an instance of a generated native class implementing the requested protocols/interfaces and lexically capturing referenced values.",
+          "byte_offset": 3061
+        },
+        {
+          "num": "3.5",
+          "title": "Generated classes and methods retain source identity sufficient for diagnostics but their host names are not a stable user-facing interface.",
+          "byte_offset": 3217
+        },
+        {
+          "num": "4.1",
+          "title": "A multimethod contains a dispatch function, method table, default dispatch value, hierarchy, preference relation, and versioned cache.",
+          "byte_offset": 3402
+        },
+        {
+          "num": "4.2",
+          "title": "Dispatch evaluates the dispatch function exactly once, selects the most specific applicable method under `isa?` and preferences, and invokes a native compiled method function.",
+          "byte_offset": 3542
+        },
+        {
+          "num": "4.3",
+          "title": "Adding, replacing, removing, preferring, or changing hierarchy relationships invalidates every cached result whose answer may change.",
+          "byte_offset": 3723
+        },
+        {
+          "num": "4.4",
+          "title": "No applicable method signals a typed no-method condition unless a default method exists. Ambiguous incomparable methods signal an ambiguity condition naming the candidates.",
+          "byte_offset": 3963
+        },
+        {
+          "num": "4.5",
+          "title": "Multimethod arbitrary-value dispatch MUST NOT be approximated as CLOS class dispatch.",
+          "byte_offset": 4141
+        },
+        {
+          "num": "5.1",
+          "title": "Metadata is an immutable map associated with metadata-capable values including symbols, collections, Vars, namespaces, types, and functions where declared.",
+          "byte_offset": 4253
+        },
+        {
+          "num": "5.2",
+          "title": "`with-meta` returns a value with replacement metadata while sharing the underlying immutable payload; `vary-meta` applies its function once to the current map.",
+          "byte_offset": 4414
+        },
+        {
+          "num": "5.3",
+          "title": "Metadata does not affect value equality or hashing, as owned by [value-model.md §3.5](value-model.md).",
+          "byte_offset": 4579
+        },
+        {
+          "num": "5.4",
+          "title": "Source spans, compiler type hints, macro/final/dynamic/private flags, and user metadata remain distinguishable even when represented in one metadata map.",
+          "byte_offset": 4688
+        },
+        {
+          "num": "5.5",
+          "title": "Type hints and other compiler metadata MAY change generated declarations and call specialization but MUST NOT change the program's value result or suppress a required runtime check unless the hint is an explicit unsafe assertion.",
+          "byte_offset": 4847
+        },
+        {
+          "num": "5.6",
+          "title": "Asking for metadata from a value that does not support it returns nil; attempting to attach metadata to such a value signals a typed metadata condition.",
+          "byte_offset": 5082
+        },
+        {
+          "num": "6.1",
+          "title": "Invalid protocol signatures, duplicate methods, illegal field declarations, and unresolved extension targets are analysis failures at the declaration span.",
+          "byte_offset": 5269
+        },
+        {
+          "num": "6.2",
+          "title": "A CLOS method-combination or class-redefinition limitation that prevents promised protocol/type behavior MUST be surfaced as a typed native-compilation or load failure, not hidden behind a slower interpreter path.",
+          "byte_offset": 5430
+        }
+      ],
+      "source_files": [
+        "cl-clojure-eval.lisp",
+        "clojure-tests/protocols.clj",
+        "clojure-tests/multimethods.clj",
+        "clojure-tests/metadata.clj"
+      ],
+      "cross_refs": [
+        {
+          "to": "MAIN.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "common-lisp-interop.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "value-model.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "namespaces-vars-and-macros.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "value-model.md",
+          "section": "3.5",
+          "from_section": "5.3"
+        }
+      ],
+      "open_deferred_count": 3,
+      "size_bytes": 6196,
+      "size_lines": 109
+    },
+    {
+      "path": "reader-and-forms.md",
+      "title": "Reader and Forms",
+      "stability": "aspirational",
+      "layer": "behavioural",
+      "counterpart": null,
+      "coupling": null,
+      "audience": "both",
+      "tests": null,
+      "last_reviewed": null,
+      "sections": [
+        {
+          "num": "1.1",
+          "title": "The reader transforms Common Clojure text into Clojure data forms while preserving every distinction that can affect expansion, analysis, diagnostics, printing, equality, or execution.",
+          "byte_offset": 564
+        },
+        {
+          "num": "1.2",
+          "title": "Semantic losslessness does not require retaining whitespace or comments after reading; it does require retaining origin and source span for every form and nested form.",
+          "byte_offset": 861
+        },
+        {
+          "num": "1.3",
+          "title": "Reading MUST NOT globally mutate the host Common Lisp readtable or package state.",
+          "byte_offset": 1143
+        },
+        {
+          "num": "2.1",
+          "title": "Symbols and keywords are distinct Clojure values with case-preserving name and optional namespace components; they are not host package symbols or Common Lisp keywords.",
+          "byte_offset": 1345
+        },
+        {
+          "num": "2.2",
+          "title": "Lists, vectors, maps, and sets retain their collection kind when used as forms. Map literals require an even form count, and set literals reject duplicate equal values.",
+          "byte_offset": 1629
+        },
+        {
+          "num": "2.3",
+          "title": "Every form MAY carry metadata and MUST carry an origin descriptor sufficient to report source name, line, column, and containing span when it came from text.",
+          "byte_offset": 1803
+        },
+        {
+          "num": "2.4",
+          "title": "`nil`, `true`, `false`, and the empty list read as the distinct values defined in [value-model.md §2.1](value-model.md).",
+          "byte_offset": 1966
+        },
+        {
+          "num": "3.1",
+          "title": "The reader MUST support Clojure list, vector, map, set, string, character, numeric, keyword, symbol, quote, syntax-quote, unquote, unquote-splicing, dereference, Var quote, metadata, anonymous-function, regex, discard, and tagged-literal syntax adopted by this corpus.",
+          "byte_offset": 2122
+        },
+        {
+          "num": "3.2",
+          "title": "Commas are whitespace outside string and character literals. Semicolon comments and discard forms do not produce runtime forms.",
+          "byte_offset": 2396
+        },
+        {
+          "num": "3.3",
+          "title": "Reader sugar MUST expand to ordinary source forms without resolving lexical or namespace meaning. Namespace resolution belongs to expansion and analysis.",
+          "byte_offset": 2529
+        },
+        {
+          "num": "3.4",
+          "title": "Anonymous-function literals MUST infer `%`, `%N`, and `%&` bindings, reject nested anonymous-function literal ambiguity, and produce hygienic parameter symbols.",
+          "byte_offset": 2770
+        },
+        {
+          "num": "3.5",
+          "title": "Metadata shorthand MUST normalize to a metadata map without evaluating metadata or the target form.",
+          "byte_offset": 2936
+        },
+        {
+          "num": "3.6",
+          "title": "Reading multiple forms MUST preserve source order and distinguish a literal `nil` form from end of input.",
+          "byte_offset": 3041
+        },
+        {
+          "num": "4.1",
+          "title": "Tagged literals resolve through a session-scoped declarative reader table whose handlers receive the already-read payload and return an ordinary Clojure value.",
+          "byte_offset": 3267
+        },
+        {
+          "num": "4.2",
+          "title": "Unknown tags MUST signal a typed reader failure unless a configured default data-reader handles them.",
+          "byte_offset": 3432
+        },
+        {
+          "num": "4.3",
+          "title": "A tagged-literal handler is an ordinary native function; adding one MUST NOT require access to compiler IR or a compiler plugin interface.",
+          "byte_offset": 3539
+        },
+        {
+          "num": "5.1",
+          "title": "Unmatched delimiters, malformed tokens, invalid escapes, odd map forms, duplicate set values, illegal anonymous-function placeholders, and unknown tags MUST signal `reader-error` conditions as defined by [diagnostics.md §2.1](diagnostics.md).",
+          "byte_offset": 3802
+        },
+        {
+          "num": "5.2",
+          "title": "A read failure MUST identify the smallest reliable source span and MUST NOT return a guessed or partial form as successful input.",
+          "byte_offset": 4051
+        },
+        {
+          "num": "5.3",
+          "title": "Recovery for editor tooling MAY resume at a later form boundary, but recovered forms MUST remain marked as following an error and MUST NOT be compiled as though the source were valid.",
+          "byte_offset": 4186
+        }
+      ],
+      "source_files": [
+        "cl-clojure-syntax.lisp",
+        "clojure-tests/reader.cljc"
+      ],
+      "cross_refs": [
+        {
+          "to": "MAIN.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "value-model.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "namespaces-vars-and-macros.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "diagnostics.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "value-model.md",
+          "section": "2.1",
+          "from_section": "2.4"
+        },
+        {
+          "to": "diagnostics.md",
+          "section": "2.1",
+          "from_section": "5.1"
+        }
+      ],
+      "open_deferred_count": 2,
+      "size_bytes": 4741,
+      "size_lines": 94
+    },
+    {
+      "path": "value-model.md",
+      "title": "Value Model",
+      "stability": "aspirational",
+      "layer": "behavioural",
+      "counterpart": null,
+      "coupling": null,
+      "audience": "both",
+      "tests": null,
+      "last_reviewed": null,
+      "sections": [
+        {
+          "num": "1.1",
+          "title": "Common Clojure values preserve Clojure-observable identity and equality while using native SBCL representations where those representations do not collapse distinctions.",
+          "byte_offset": 742
+        },
+        {
+          "num": "1.2",
+          "title": "Representation is private except for the explicit host mappings stated in this spec and [common-lisp-interop.md §2.1](common-lisp-interop.md).",
+          "byte_offset": 1007
+        },
+        {
+          "num": "2.1",
+          "title": "Clojure nil maps to Common Lisp `NIL`; Clojure true maps to `T`; Clojure false is a distinct singleton that is neither `NIL` nor `T`; and the empty Clojure list is a fourth, distinct singleton.",
+          "byte_offset": 1198
+        },
+        {
+          "num": "2.2",
+          "title": "Only nil and false are falsey. Every other value, including zero, the empty string, and the empty list, is truthy.",
+          "byte_offset": 1536
+        },
+        {
+          "num": "2.3",
+          "title": "Predicates and boolean operators return canonical true or canonical false, not arbitrary Common Lisp generalized booleans.",
+          "byte_offset": 1656
+        },
+        {
+          "num": "2.4",
+          "title": "`seq` of an empty collection returns nil; `rest` returns an empty sequence value; `next` returns nil when no next element exists.",
+          "byte_offset": 1784
+        },
+        {
+          "num": "2.5",
+          "title": "Printing and reading MUST distinguish `nil`, `false`, `true`, and `()` and round-trip each to the same value class.",
+          "byte_offset": 2028
+        },
+        {
+          "num": "3.1",
+          "title": "Clojure equality is value equality, not Common Lisp `EQ`, `EQL`, or `EQUAL` exposed directly.",
+          "byte_offset": 2182
+        },
+        {
+          "num": "3.2",
+          "title": "Nil, false, and empty list are pairwise unequal. Equal sequential collections compare element-by-element even when their concrete sequential collection types differ.",
+          "byte_offset": 2281
+        },
+        {
+          "num": "3.3",
+          "title": "Maps are equal when they contain equal key/value associations regardless of iteration order; sets are equal when they contain equal members regardless of iteration order.",
+          "byte_offset": 2452
+        },
+        {
+          "num": "3.4",
+          "title": "Numeric equality follows Clojure numeric value semantics across supported numeric representations; identity-sensitive predicates remain separate.",
+          "byte_offset": 2628
+        },
+        {
+          "num": "3.5",
+          "title": "Values that are equal under Clojure equality MUST produce the same Clojure hash. Metadata MUST NOT participate in equality or hashing.",
+          "byte_offset": 2779
+        },
+        {
+          "num": "3.6",
+          "title": "Host objects without a declared Clojure equality bridge compare by stable host identity unless their adapter explicitly defines value equality and matching hash behavior.",
+          "byte_offset": 3024
+        },
+        {
+          "num": "4.1",
+          "title": "Native SBCL fixnums, bignums, ratios, and floating-point values MAY back corresponding Common Clojure numbers when their observable arithmetic agrees with the supported Clojure operation.",
+          "byte_offset": 3227
+        },
+        {
+          "num": "4.2",
+          "title": "Integer arithmetic MUST promote rather than silently wrap when a result exceeds fixnum range, except inside an explicitly named unchecked operation.",
+          "byte_offset": 3420
+        },
+        {
+          "num": "4.3",
+          "title": "Ratio arithmetic MUST remain exact until an operation explicitly requests floating-point conversion.",
+          "byte_offset": 3699
+        },
+        {
+          "num": "4.4",
+          "title": "Floating-point NaN, infinity, signed zero, comparison, and hash behavior MUST be specified by focused tests before being claimed compatible; JVM bit-level representations are not implied.",
+          "byte_offset": 3805
+        },
+        {
+          "num": "5.1",
+          "title": "Conversion between host and Clojure values occurs only through declared bridges. Raw host `NIL` maps to Clojure nil unless the bridge declares a generalized-boolean result, in which case it maps to canonical false.",
+          "byte_offset": 4027
+        },
+        {
+          "num": "5.2",
+          "title": "A conversion MUST either produce a value satisfying this model or signal the typed interop failure defined by [common-lisp-interop.md §5.1](common-lisp-interop.md).",
+          "byte_offset": 4363
+        }
+      ],
+      "source_files": [
+        "cl-clojure-syntax.lisp",
+        "cl-clojure-eval.lisp",
+        "clojure-tests/data_structures.clj",
+        "clojure-tests/numbers.clj"
+      ],
+      "cross_refs": [
+        {
+          "to": "MAIN.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "collections-and-sequences.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "common-lisp-interop.md",
+          "section": null,
+          "from_section": null
+        },
+        {
+          "to": "common-lisp-interop.md",
+          "section": "2.1",
+          "from_section": "1.2"
+        },
+        {
+          "to": "common-lisp-interop.md",
+          "section": "5.1",
+          "from_section": "5.2"
+        }
+      ],
+      "open_deferred_count": 2,
+      "size_bytes": 4856,
+      "size_lines": 94
+    }
+  ]
+}

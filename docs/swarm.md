@@ -64,8 +64,12 @@ epic rollup or graph command, so inspect gate tasks directly before closing the 
 ## Ownership rules
 
 - Claim before editing. One active task owns each named module/file family.
-- Central ASDF, package, public-seam, `MAP.md`, and `ALIGNMENT.md` edits belong to the
-  scaffold or an explicitly named integration gate.
+- Central ASDF, package, and public-seam edits belong to the scaffold or an explicitly
+  named integration gate.
+- A task owns only the minimal `MAP.md` inventory update or `ALIGNMENT.md` defect removal
+  made necessary by its authorized behavior, and lands it in the same commit. Coordinate
+  before touching these shared files; broader reconciliation belongs to an explicitly
+  named integration gate.
 - A task may consume another module's declared seam but must not “help” by editing that
   module concurrently.
 - When a seam is insufficient, record the concrete conflict and create a dependency-wired

@@ -54,12 +54,16 @@ Coding work is tracked in Ergo. Use native-compilation epic `f86d60db` described
 the default work queue.
 
 ```bash
-ergo ready
-ergo show <id>
-ergo claim <id>
+ergo ready --json
+ergo list --status open --part-of f86d60db --json
+ergo show <matching-id>
+ergo claim <matching-id>
 # implement and verify the task's cited spec clauses
-ergo done <id> --reason "Implemented and verified against the cited specs"
+ergo done <matching-id> --reason "Implemented and verified against the cited specs"
 ```
+
+Choose only an ID present in both views; the global ready queue contains work from other
+projects. Never claim the epic itself or use `--all` for this workstream.
 
 `./tests.sh` exercises the legacy evaluator and is retained only as a characterization
 signal during migration. Native compiler tasks must add acceptance tests at the public

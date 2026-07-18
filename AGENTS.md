@@ -18,10 +18,15 @@ Read these in order:
 
 1. `MAP.md` — repository inventory and spec discovery.
 2. `docs/specs/MAIN.md` and every child spec cited by the task.
-3. `docs/domain.md` — canonical vocabulary.
-4. Relevant accepted records in `docs/decisions/`.
-5. `ALIGNMENT.md` — current strategic defects.
+3. Relevant accepted records in `docs/decisions/`.
+4. `docs/domain.md` — canonical vocabulary.
+5. `docs/swarm.md` — authority, work selection, ownership, and design-wall rules.
 6. The full body and dependency edges of the claimed Ergo task.
+7. `ALIGNMENT.md` — current strategic defects.
+
+When evidence conflicts, authority descends from specs, to accepted decisions, to domain
+language, to the claimed task, to `ALIGNMENT.md`, and finally to current source, old
+tests, branches, and imported tasks. `MAP.md` is a navigation aid, not a higher authority.
 
 If source or a legacy test contradicts a spec, do not preserve both paths or weaken the
 test. Surface the conflict and implement the smallest coherent design that satisfies the
@@ -50,15 +55,16 @@ specification and accepted decisions.
   inlining that changes redefinition behavior is explicit final/sealed optimization.
 - `recur` is checked for target, tail position, and arity before host compilation and is
   lowered to bounded-stack native control flow with simultaneous argument reassignment.
-- Loaded application artifacts depend on the runtime ABI, not the compiler or legacy
-  evaluator.
+- A normal application artifact may depend on the runtime ABI but not on the compiler,
+  reader, test harness, or legacy evaluator.
 
 ## Compatibility boundary
 
 Clojure language semantics are the design reference. The vendored official tests are a
 reference corpus, not the North Star and not an acceptance oracle. JVM classes,
 bytecode-specific machinery, and Java interop calls must receive an explicit SBCL/Common
-Lisp adaptation or a source-located unsupported-platform error; never add silent stubs.
+Lisp adaptation or a typed, source-located failure at the earliest reliable phase; never
+add silent stubs.
 
 Priority library targets are `core.match`, `clojure.spec.alpha`, O'Doyle Rules, and an
 adapted `core.async`. Their ports are milestone evidence. They do not imply that arbitrary
@@ -73,10 +79,15 @@ reveals them.
 
 ```bash
 cd /home/w1n5t0n/src/common-clojure
-ergo ready
-ergo show <id>
-ergo claim <id>
+ergo ready --json
+ergo list --status open --part-of f86d60db --json
+ergo show <matching-id>
+ergo claim <matching-id>
 ```
+
+Claim only an ID present in both views. Never claim the epic itself. `ergo ready` is a
+global queue and may contain unrelated projects; `--all` additionally reveals frozen
+migration evidence and is forbidden for native-work selection.
 
 Before implementation, confirm that all blockers are closed, read the exact cited spec
 sections, and keep to the task's file-ownership boundary. If another active task owns a
@@ -100,7 +111,8 @@ task names:
 
 1. Reader/form and analyzer tests, including source-located failure cases.
 2. Runtime semantic tests for values, equality, collections, Vars, and dispatch.
-3. Compilation tests that produce and load FASLs without the compiler/evaluator present.
+3. Fresh-process compilation tests that load only the runtime and produced FASL, with the
+   compiler, reader, test harness, and legacy evaluator absent.
 4. Common Lisp calls proving exported values are SBCL compiled functions.
 5. Disassembly/allocation/performance checks for promised native fast paths.
 6. Adapted-library conformance tests when a milestone reaches that layer.
@@ -127,8 +139,12 @@ to make a gate green.
 ## Documentation is part of done
 
 Before every commit, check `MAP.md`, `ALIGNMENT.md`, the task's cited specs, linked
-decisions, and deeper docs. Update affected documentation in the same commit as behavior.
-Delete resolved strategic defects from `ALIGNMENT.md`; do not turn it into a changelog.
+decisions, and deeper docs. The task owns the minimal documentation edits made necessary
+by its authorized behavior, including the corresponding `MAP.md` inventory line or the
+deletion of a resolved `ALIGNMENT.md` defect. Make those edits in the same commit as the
+behavior and coordinate before touching these shared files; broader map/alignment cleanup
+belongs to an explicitly named integration task. Do not turn `ALIGNMENT.md` into a
+changelog.
 
 Specs describe durable behavior, decisions explain hard-to-reverse choices, Ergo holds
 coding tasks, and `MAP.md` only says where things are. Keep those roles separate.
